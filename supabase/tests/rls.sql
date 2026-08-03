@@ -87,6 +87,13 @@ $$;
 insert into public.assigned_tasks (assigned_to, assigned_by, sector_id, title, scheduled_date, due_time)
 values ((select auth.uid()), (select auth.uid()), public.user_sector((select auth.uid())), 'Tarefa própria RLS', current_date, '09:00');
 
+select case when (select count(*) from public.notifications) = 0 then true else false end as own_task_has_no_notification \gset
+\if :own_task_has_no_notification
+\else
+  \echo 'Falha: tarefa propria gerou notificacao indevida'
+  \quit 1
+\endif
+
 do $$
 begin
   begin
@@ -112,6 +119,38 @@ select case when (select count(*) from public.daily_task_records) = 2 then true 
 
 insert into public.assigned_tasks (assigned_to, assigned_by, sector_id, title, scheduled_date, due_time)
 values ('00000000-0000-0000-0000-00000000a003', (select auth.uid()), (select id from public.sectors where slug = 'recife'), 'Tarefa delegada RLS', current_date, '10:00');
+
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000a003', true);
+
+select case when exists (
+  select 1 from public.notifications
+  where recipient_id = (select auth.uid())
+    and type = 'task_assigned'
+    and message = 'Tarefa delegada RLS'
+    and read_at is null
+) then true else false end as delegated_task_has_notification \gset
+\if :delegated_task_has_notification
+\else
+  \echo 'Falha: tarefa delegada nao gerou notificacao para o supervisor'
+  \quit 1
+\endif
+
+update public.notifications
+set read_at = now()
+where recipient_id = (select auth.uid()) and read_at is null;
+
+select case when not exists (
+  select 1 from public.notifications
+  where recipient_id = (select auth.uid()) and read_at is null
+) then true else false end as recipient_can_mark_notification_read \gset
+\if :recipient_can_mark_notification_read
+\else
+  \echo 'Falha: supervisor nao conseguiu marcar notificacao como lida'
+  \quit 1
+\endif
 
 reset role;
 

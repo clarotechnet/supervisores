@@ -24,6 +24,17 @@ export function formatOverdueTask(task: OverdueTask): string {
   return `${hhmm(task.scheduled_time)} · ${task.title}`;
 }
 
+export function applyCurrentSupervisorNames(
+  tasks: OverdueTask[],
+  currentNames: ReadonlyMap<string, string>,
+): OverdueTask[] {
+  return tasks.flatMap((task) => {
+    if (!task.user_id) return [];
+    const currentName = currentNames.get(task.user_id);
+    return currentName ? [{ ...task, supervisor_name: currentName }] : [];
+  });
+}
+
 export function groupOverdueTasks(tasks: OverdueTask[]): OverdueTaskGroup[] {
   const groups = new Map<string, OverdueTaskGroup>();
 

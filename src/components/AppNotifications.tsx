@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import {
+  applyCurrentSupervisorNames,
   formatAssignmentNotification,
   formatOverdueTask,
   groupOverdueTasks,
@@ -107,23 +108,30 @@ export function AppNotifications() {
 
     let active = true;
     let checking = false;
-    let supervisorIds = new Set<string>();
-    let supervisorIdsLoadedAt = 0;
+    let checkAgain = false;
+    let supervisorNames = new Map<string, string>();
+    let supervisorNamesLoadedAt = 0;
 
     const checkOverdueTasks = async () => {
-      if (!active || checking) return;
+      if (!active) return;
+      if (checking) {
+        checkAgain = true;
+        return;
+      }
       checking = true;
 
       try {
-        if (Date.now() - supervisorIdsLoadedAt > 5 * 60_000) {
+        if (Date.now() - supervisorNamesLoadedAt > 5 * 60_000) {
           const { data: supervisors, error: supervisorsError } = await supabase
             .from("profiles")
-            .select("id")
+            .select("id,full_name")
             .eq("role", "supervisor")
             .eq("status", "active");
           if (supervisorsError) throw supervisorsError;
-          supervisorIds = new Set((supervisors ?? []).map((item) => item.id));
-          supervisorIdsLoadedAt = Date.now();
+          supervisorNames = new Map(
+            (supervisors ?? []).map((item) => [item.id, item.full_name] as const),
+          );
+          supervisorNamesLoadedAt = Date.now();
         }
 
         const { data, error } = await supabase
@@ -136,8 +144,9 @@ export function AppNotifications() {
         if (error) throw error;
         if (!active) return;
 
-        const overdueTasks = (data ?? []).filter((task): task is OverdueTask =>
-          Boolean(task.user_id && supervisorIds.has(task.user_id)),
+        const overdueTasks = applyCurrentSupervisorNames(
+          (data ?? []) as OverdueTask[],
+          supervisorNames,
         );
         const currentIds = new Set(overdueTasks.map((task) => task.id));
         for (const notifiedId of notifiedOverdueIds.current) {
@@ -187,6 +196,10 @@ export function AppNotifications() {
         console.error("Não foi possível verificar as atividades atrasadas.", error);
       } finally {
         checking = false;
+        if (active && checkAgain) {
+          checkAgain = false;
+          void checkOverdueTasks();
+        }
       }
     };
 
@@ -197,6 +210,11 @@ export function AppNotifications() {
         { event: "*", schema: "public", table: "daily_task_records" },
         () => void checkOverdueTasks(),
       )
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "profiles" }, () => {
+        supervisorNamesLoadedAt = 0;
+        notifiedOverdueIds.current.clear();
+        void checkOverdueTasks();
+      })
       .subscribe();
     const intervalId = window.setInterval(() => void checkOverdueTasks(), OVERDUE_CHECK_INTERVAL);
     const handleVisibilityChange = () => {

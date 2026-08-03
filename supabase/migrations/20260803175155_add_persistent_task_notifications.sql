@@ -46,6 +46,7 @@ with check (
   and (select public.is_active_user((select auth.uid())))
 );
 
+
 create schema if not exists private;
 revoke all on schema private from public, anon, authenticated;
 

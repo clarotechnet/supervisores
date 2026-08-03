@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyCurrentSupervisorNames,
   formatAssignmentNotification,
   formatOverdueTask,
   groupOverdueTasks,
@@ -63,5 +64,21 @@ describe("notificação de atraso para o gestor", () => {
 
   it("mostra horário e nome da atividade atrasada", () => {
     expect(formatOverdueTask(overdueTasks[0]!)).toBe("08:00 · Conferir rota do dia");
+  });
+
+  it("substitui o nome histórico pelo nome atual do perfil", () => {
+    const recordsWithOldName = overdueTasks.map((task) => ({
+      ...task,
+      supervisor_name: "Nome antigo",
+    }));
+    const currentNames = new Map([
+      ["supervisor-1", "Ana Lima Atualizado"],
+      ["supervisor-2", "João Silva Atualizado"],
+    ]);
+
+    const updated = applyCurrentSupervisorNames(recordsWithOldName, currentNames);
+
+    expect(updated[0]?.supervisor_name).toBe("Ana Lima Atualizado");
+    expect(updated[2]?.supervisor_name).toBe("João Silva Atualizado");
   });
 });
