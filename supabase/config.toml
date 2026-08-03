@@ -1,0 +1,9 @@
+project_id = "rotina-supervisores"
+
+[db]
+port = 55432
+shadow_port = 55430
+major_version = 17
+
+[functions.admin-delete-user]
+verify_jwt = true
