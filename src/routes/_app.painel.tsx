@@ -7,8 +7,15 @@ import { TaskBoard, splitRecords } from "@/components/TaskBoard";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { cacheChecklistRecords, getCachedChecklistRecords } from "@/lib/checklist-cache";
-import { completeTask, ensureChecklist, reopenTask, saveNote } from "@/services/checklist";
+import {
+  completeTask,
+  ensureChecklist,
+  moveDailyTask,
+  reopenTask,
+  saveNote,
+} from "@/services/checklist";
 import { addDays, formatLongDate, todayKey } from "@/lib/date-utils";
+import { moveTaskRecordToLane, type TaskLane } from "@/lib/task-order";
 import type { Sector, TaskRecord } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -192,6 +199,33 @@ function PainelPage() {
     }
   }
 
+  async function handleMove(sourceId: string, targetLane: TaskLane, targetId?: string) {
+    const previous = records;
+    const reordered = moveTaskRecordToLane(records, sourceId, targetLane, targetId);
+    const moved = reordered.find((record) => record.id === sourceId);
+    const original = previous.find((record) => record.id === sourceId);
+    if (!moved || !original) return;
+    const unchanged = reordered.every(
+      (record, index) =>
+        record.id === previous[index]?.id &&
+        record.status === previous[index]?.status &&
+        record.completed_at === previous[index]?.completed_at,
+    );
+    if (unchanged) return;
+
+    setRecords(reordered);
+    try {
+      await moveDailyTask({
+        recordId: sourceId,
+        targetStatus: moved.status,
+        recordIds: reordered.map((record) => record.id),
+      });
+    } catch {
+      setRecords(previous);
+      toast.error("Não foi possível mover a atividade.");
+    }
+  }
+
   if (!activeSectorId) {
     return (
       <AppShell>
@@ -340,6 +374,7 @@ function PainelPage() {
           view={view}
           onToggle={handleToggle}
           onSaveNote={handleNote}
+          onMove={handleMove}
         />
       )}
     </AppShell>

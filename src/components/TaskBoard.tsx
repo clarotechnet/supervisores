@@ -1,6 +1,7 @@
-import { useState } from "react";
-import { Check, Clock, MessageSquare, RotateCcw } from "lucide-react";
+import { useState, type DragEvent } from "react";
+import { Check, Clock, GripVertical, MessageSquare, RotateCcw } from "lucide-react";
 import { hhmm, isLate, localTime } from "@/lib/date-utils";
+import type { TaskLane } from "@/lib/task-order";
 import type { TaskRecord } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
@@ -22,7 +23,10 @@ export interface TaskColumns {
 
 export function splitRecords(records: TaskRecord[]): TaskColumns {
   const columns: TaskColumns = { pending: [], late: [], done: [] };
-  for (const record of records) {
+  const orderedRecords = [...records].sort(
+    (a, b) => a.display_order - b.display_order || a.scheduled_time.localeCompare(b.scheduled_time),
+  );
+  for (const record of orderedRecords) {
     if (record.status === "completed") columns.done.push(record);
     else if (
       isLate({
@@ -39,12 +43,31 @@ export function splitRecords(records: TaskRecord[]): TaskColumns {
 
 interface CardProps {
   record: TaskRecord;
+  draggable?: boolean | undefined;
+  dragging?: boolean | undefined;
+  dropTarget?: boolean | undefined;
   readOnly?: boolean | undefined;
+  onDragStart?: ((event: DragEvent<HTMLElement>) => void) | undefined;
+  onDragOver?: ((event: DragEvent<HTMLElement>) => void) | undefined;
+  onDrop?: ((event: DragEvent<HTMLElement>) => void) | undefined;
+  onDragEnd?: (() => void) | undefined;
   onToggle?: ((record: TaskRecord) => void) | undefined;
   onNote?: ((record: TaskRecord) => void) | undefined;
 }
 
-function TaskCard({ record, readOnly, onToggle, onNote }: CardProps) {
+function TaskCard({
+  record,
+  draggable,
+  dragging,
+  dropTarget,
+  readOnly,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
+  onToggle,
+  onNote,
+}: CardProps) {
   const done = record.status === "completed";
   const late =
     !done &&
@@ -56,12 +79,27 @@ function TaskCard({ record, readOnly, onToggle, onNote }: CardProps) {
 
   return (
     <article
+      draggable={draggable}
+      aria-grabbed={dragging}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
       className={cn(
-        "grid grid-cols-[32px_minmax(0,1fr)] gap-3 rounded-xl border border-border bg-card p-3 shadow-card transition-all hover:-translate-y-px hover:border-muted-foreground/35 hover:shadow-md",
+        "relative grid grid-cols-[32px_minmax(0,1fr)] gap-3 rounded-xl border border-border bg-card p-3 shadow-card transition-all hover:-translate-y-px hover:border-muted-foreground/35 hover:shadow-md",
+        draggable && "cursor-grab pr-8 active:cursor-grabbing",
+        dragging && "opacity-45",
+        dropTarget && "ring-2 ring-area ring-offset-2",
         late && "border-l-4 border-l-late bg-late-soft/20",
         done && "border-success/35 bg-success-soft/30",
       )}
     >
+      {draggable && (
+        <GripVertical
+          aria-hidden="true"
+          className="absolute right-2 top-3 size-4 text-muted-foreground/60"
+        />
+      )}
       <button
         type="button"
         disabled={readOnly}
@@ -150,6 +188,16 @@ function Column({
   readOnly,
   onToggle,
   onNote,
+  draggedId,
+  draggedTone,
+  dropTargetId,
+  dropTargetTone,
+  onCardDragStart,
+  onCardDragOver,
+  onCardDrop,
+  onColumnDragOver,
+  onColumnDrop,
+  onCardDragEnd,
 }: {
   title: string;
   tone: "pending" | "late" | "done";
@@ -157,9 +205,32 @@ function Column({
   readOnly?: boolean | undefined;
   onToggle?: ((r: TaskRecord) => void) | undefined;
   onNote?: ((r: TaskRecord) => void) | undefined;
+  draggedId?: string | null | undefined;
+  draggedTone?: TaskColumnsTone | null | undefined;
+  dropTargetId?: string | null | undefined;
+  dropTargetTone?: TaskColumnsTone | null | undefined;
+  onCardDragStart?:
+    | ((event: DragEvent<HTMLElement>, record: TaskRecord, tone: TaskColumnsTone) => void)
+    | undefined;
+  onCardDragOver?:
+    | ((event: DragEvent<HTMLElement>, record: TaskRecord, tone: TaskColumnsTone) => void)
+    | undefined;
+  onCardDrop?:
+    | ((event: DragEvent<HTMLElement>, record: TaskRecord, tone: TaskColumnsTone) => void)
+    | undefined;
+  onColumnDragOver?: ((event: DragEvent<HTMLElement>, tone: TaskColumnsTone) => void) | undefined;
+  onColumnDrop?: ((event: DragEvent<HTMLElement>, tone: TaskColumnsTone) => void) | undefined;
+  onCardDragEnd?: (() => void) | undefined;
 }) {
   return (
-    <section className="min-w-0 overflow-hidden rounded-2xl border border-border bg-neutral-soft">
+    <section
+      onDragOver={(event) => onColumnDragOver?.(event, tone)}
+      onDrop={(event) => onColumnDrop?.(event, tone)}
+      className={cn(
+        "min-w-0 overflow-hidden rounded-2xl border border-border bg-neutral-soft transition-shadow",
+        dropTargetTone === tone && !dropTargetId && "ring-2 ring-area ring-offset-2",
+      )}
+    >
       <header className="flex h-12 items-center justify-between border-b border-border bg-card px-4">
         <div className="flex items-center gap-2">
           <i
@@ -178,13 +249,22 @@ function Column({
       </header>
       <div className="grid max-h-[520px] min-h-[126px] content-start gap-2 overflow-auto p-2.5">
         {records.length === 0 ? (
-          <p className="p-8 text-center text-[10px] text-muted-foreground">Nada por aqui.</p>
+          <p className="pointer-events-none p-8 text-center text-[10px] text-muted-foreground">
+            Nada por aqui. Solte uma atividade nesta coluna.
+          </p>
         ) : (
           records.map((record) => (
             <TaskCard
               key={record.id}
               record={record}
+              draggable={!readOnly && Boolean(onCardDragStart)}
+              dragging={draggedId === record.id}
+              dropTarget={dropTargetId === record.id}
               readOnly={readOnly}
+              onDragStart={(event) => onCardDragStart?.(event, record, tone)}
+              onDragOver={(event) => onCardDragOver?.(event, record, tone)}
+              onDrop={(event) => onCardDrop?.(event, record, tone)}
+              onDragEnd={onCardDragEnd}
               onToggle={onToggle}
               onNote={onNote}
             />
@@ -201,17 +281,95 @@ export function TaskBoard({
   readOnly,
   onToggle,
   onSaveNote,
+  onMove,
 }: {
   records: TaskRecord[];
   view: "board" | "list";
   readOnly?: boolean | undefined;
   onToggle?: ((record: TaskRecord) => void) | undefined;
   onSaveNote?: ((record: TaskRecord, note: string) => Promise<void> | void) | undefined;
+  onMove?:
+    | ((sourceId: string, targetLane: TaskLane, targetId?: string) => Promise<void> | void)
+    | undefined;
 }) {
   const columns = splitRecords(records);
+  const orderedRecords = [...records].sort(
+    (a, b) => a.display_order - b.display_order || a.scheduled_time.localeCompare(b.scheduled_time),
+  );
   const [noteFor, setNoteFor] = useState<TaskRecord | null>(null);
   const [noteText, setNoteText] = useState("");
   const [saving, setSaving] = useState(false);
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [draggedTone, setDraggedTone] = useState<TaskColumnsTone | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [dropTargetTone, setDropTargetTone] = useState<TaskColumnsTone | null>(null);
+
+  function handleDragStart(
+    event: DragEvent<HTMLElement>,
+    record: TaskRecord,
+    tone: TaskColumnsTone,
+  ) {
+    if ((event.target as HTMLElement).closest("button, input, textarea")) {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", record.id);
+    setDraggedId(record.id);
+    setDraggedTone(tone);
+  }
+
+  function handleDragOver(
+    event: DragEvent<HTMLElement>,
+    record: TaskRecord,
+    tone: TaskColumnsTone,
+  ) {
+    if (!canDropInTone(tone)) return;
+    if (record.id === draggedId) {
+      event.stopPropagation();
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "move";
+    setDropTargetId(record.id);
+    setDropTargetTone(tone);
+  }
+
+  function handleDrop(event: DragEvent<HTMLElement>, record: TaskRecord, tone: TaskColumnsTone) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (draggedId && canDropInTone(tone) && draggedId !== record.id) {
+      void onMove?.(draggedId, tone, record.id);
+    }
+    clearDrag();
+  }
+
+  function handleColumnDragOver(event: DragEvent<HTMLElement>, tone: TaskColumnsTone) {
+    if (!canDropInTone(tone)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDropTargetId(null);
+    setDropTargetTone(tone);
+  }
+
+  function handleColumnDrop(event: DragEvent<HTMLElement>, tone: TaskColumnsTone) {
+    event.preventDefault();
+    if (draggedId && canDropInTone(tone)) void onMove?.(draggedId, tone);
+    clearDrag();
+  }
+
+  function canDropInTone(tone: TaskColumnsTone) {
+    if (!draggedId || !draggedTone) return false;
+    return draggedTone === tone || draggedTone === "done" || tone === "done";
+  }
+
+  function clearDrag() {
+    setDraggedId(null);
+    setDraggedTone(null);
+    setDropTargetId(null);
+    setDropTargetTone(null);
+  }
 
   function openNote(record: TaskRecord) {
     setNoteFor(record);
@@ -252,6 +410,16 @@ export function TaskBoard({
             readOnly={readOnly}
             onToggle={onToggle}
             onNote={openNote}
+            draggedId={draggedId}
+            draggedTone={draggedTone}
+            dropTargetId={dropTargetId}
+            dropTargetTone={dropTargetTone}
+            onCardDragStart={onMove ? handleDragStart : undefined}
+            onCardDragOver={onMove ? handleDragOver : undefined}
+            onCardDrop={onMove ? handleDrop : undefined}
+            onColumnDragOver={onMove ? handleColumnDragOver : undefined}
+            onColumnDrop={onMove ? handleColumnDrop : undefined}
+            onCardDragEnd={clearDrag}
           />
           <Column
             title="Em atraso"
@@ -260,6 +428,16 @@ export function TaskBoard({
             readOnly={readOnly}
             onToggle={onToggle}
             onNote={openNote}
+            draggedId={draggedId}
+            draggedTone={draggedTone}
+            dropTargetId={dropTargetId}
+            dropTargetTone={dropTargetTone}
+            onCardDragStart={onMove ? handleDragStart : undefined}
+            onCardDragOver={onMove ? handleDragOver : undefined}
+            onCardDrop={onMove ? handleDrop : undefined}
+            onColumnDragOver={onMove ? handleColumnDragOver : undefined}
+            onColumnDrop={onMove ? handleColumnDrop : undefined}
+            onCardDragEnd={clearDrag}
           />
           <Column
             title="Concluídas"
@@ -268,15 +446,32 @@ export function TaskBoard({
             readOnly={readOnly}
             onToggle={onToggle}
             onNote={openNote}
+            draggedId={draggedId}
+            draggedTone={draggedTone}
+            dropTargetId={dropTargetId}
+            dropTargetTone={dropTargetTone}
+            onCardDragStart={onMove ? handleDragStart : undefined}
+            onCardDragOver={onMove ? handleDragOver : undefined}
+            onCardDrop={onMove ? handleDrop : undefined}
+            onColumnDragOver={onMove ? handleColumnDragOver : undefined}
+            onColumnDrop={onMove ? handleColumnDrop : undefined}
+            onCardDragEnd={clearDrag}
           />
         </div>
       ) : (
         <div className="grid gap-2">
-          {records.map((record) => (
+          {orderedRecords.map((record) => (
             <TaskCard
               key={record.id}
               record={record}
+              draggable={!readOnly && Boolean(onMove)}
+              dragging={draggedId === record.id}
+              dropTarget={dropTargetId === record.id}
               readOnly={readOnly}
+              onDragStart={(event) => handleDragStart(event, record, taskTone(record))}
+              onDragOver={(event) => handleDragOver(event, record, taskTone(record))}
+              onDrop={(event) => handleDrop(event, record, taskTone(record))}
+              onDragEnd={clearDrag}
               onToggle={onToggle}
               onNote={openNote}
             />
@@ -312,4 +507,17 @@ export function TaskBoard({
       </Dialog>
     </>
   );
+}
+
+type TaskColumnsTone = "pending" | "late" | "done";
+
+function taskTone(record: TaskRecord): TaskColumnsTone {
+  if (record.status === "completed") return "done";
+  return isLate({
+    scheduledDate: record.scheduled_date,
+    scheduledTime: record.scheduled_time,
+    completed: false,
+  })
+    ? "late"
+    : "pending";
 }

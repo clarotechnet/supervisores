@@ -97,8 +97,19 @@ export interface TaskRecord {
   scheduled_time: string;
   status: TaskStatus;
   completed_at: string | null;
+  display_order: number;
   note: string | null;
   updated_at: string;
+}
+
+export interface ConversationMessage {
+  id: string;
+  supervisor_id: string;
+  sender_id: string | null;
+  sender_role: UserRole;
+  body: string;
+  read_at: string | null;
+  created_at: string;
 }
 
 export interface AuditLog {
@@ -117,7 +128,7 @@ export const SECTOR_OPTIONS = [
   { slug: "desc", label: "COP DESC" },
   { slug: "fortaleza", label: "COP Fortaleza" },
   { slug: "recife", label: "COP Recife" },
-  // { slug: "mdu", label: "MDU" },
+  { slug: "mdu", label: "Supervisor MDU" },
   { slug: "manutencao", label: "Manutenção RN/CE" },
   { slug: "gestor", label: "Gestor" },
 ];

@@ -9,6 +9,8 @@ Aplicação web responsiva para acompanhamento das rotinas dos supervisores e do
 - Aprovação, rejeição, bloqueio, troca de setor e exclusão pelo gestor.
 - Setor próprio para o Gestor, com painel geral e rotina pessoal.
 - Tarefas padrão por setor e tarefas avulsas. O supervisor cria apenas para si; o gestor atribui a qualquer usuário.
+- Ordenação manual das atividades por arrastar e soltar, persistida no banco.
+- Conversa em tempo real entre gestor e supervisor, com respostas, leitura e histórico.
 - Quadro e lista, atrasos, observações, reabertura e histórico.
 - Visão geral com progresso por setor e detalhamento individual.
 - Relatórios por período e setor, com exportação CSV.
@@ -48,6 +50,7 @@ public/.htaccess     fallback SPA para Hostinger/Apache
 - `notifications`: avisos persistentes e não lidos de tarefas delegadas.
 - `daily_checklists`: um checklist por usuário e data.
 - `daily_task_records`: cópia histórica das atividades daquele dia.
+- `conversation_messages`: histórico das mensagens entre a gestão e cada supervisor.
 - `audit_logs`: conclusões, reaberturas, observações e ações administrativas.
 
 Os registros diários guardam título, grupo e horário como uma fotografia. Assim, editar ou desativar uma atividade padrão não altera o histórico.
@@ -67,8 +70,10 @@ Os registros diários guardam título, grupo e horário como uma fotografia. Ass
 11. Supervisor criando tarefa apenas para si.
 12. Gestor atribuindo tarefa a si e a outro supervisor.
 13. Popup de nova tarefa para o supervisor e alerta de atraso para o gestor.
-14. Exclusão de usuário pela Edge Function.
-15. Exportação CSV e responsividade em celular.
+14. Reordenação das atividades arrastando os cartões da rotina.
+15. Troca de mensagens e respostas entre gestor e supervisor.
+16. Exclusão de usuário pela Edge Function.
+17. Exportação CSV e responsividade em celular.
 
 ## Segurança
 

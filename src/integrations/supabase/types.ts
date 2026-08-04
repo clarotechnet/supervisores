@@ -91,6 +91,51 @@ export type Database = {
         };
         Relationships: [];
       };
+      conversation_messages: {
+        Row: {
+          body: string;
+          created_at: string;
+          id: string;
+          read_at: string | null;
+          sender_id: string | null;
+          sender_role: Database["public"]["Enums"]["app_role"];
+          supervisor_id: string;
+        };
+        Insert: {
+          body: string;
+          created_at?: string;
+          id?: string;
+          read_at?: string | null;
+          sender_id?: string | null;
+          sender_role: Database["public"]["Enums"]["app_role"];
+          supervisor_id: string;
+        };
+        Update: {
+          body?: string;
+          created_at?: string;
+          id?: string;
+          read_at?: string | null;
+          sender_id?: string | null;
+          sender_role?: Database["public"]["Enums"]["app_role"];
+          supervisor_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "conversation_messages_sender_id_fkey";
+            columns: ["sender_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "conversation_messages_supervisor_id_fkey";
+            columns: ["supervisor_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       daily_checklists: {
         Row: {
           checklist_date: string;
@@ -144,6 +189,7 @@ export type Database = {
           checklist_id: string;
           completed_at: string | null;
           created_at: string;
+          display_order: number;
           group_name: string;
           id: string;
           note: string | null;
@@ -162,6 +208,7 @@ export type Database = {
           checklist_id: string;
           completed_at?: string | null;
           created_at?: string;
+          display_order?: number;
           group_name?: string;
           id?: string;
           note?: string | null;
@@ -180,6 +227,7 @@ export type Database = {
           checklist_id?: string;
           completed_at?: string | null;
           created_at?: string;
+          display_order?: number;
           group_name?: string;
           id?: string;
           note?: string | null;
@@ -400,6 +448,15 @@ export type Database = {
     Functions: {
       is_active_user: { Args: { _uid: string }; Returns: boolean };
       is_admin: { Args: { _uid: string }; Returns: boolean };
+      move_daily_task: {
+        Args: {
+          p_record_id: string;
+          p_record_ids: string[];
+          p_target_status: Database["public"]["Enums"]["task_status"];
+        };
+        Returns: undefined;
+      };
+      reorder_daily_tasks: { Args: { p_record_ids: string[] }; Returns: undefined };
       user_sector: { Args: { _uid: string }; Returns: string };
     };
     Enums: {

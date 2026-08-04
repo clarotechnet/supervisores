@@ -11,7 +11,7 @@ import {
   type OverdueTask,
 } from "@/lib/assignment-notification";
 import { nowTime, todayKey } from "@/lib/date-utils";
-import type { AppNotification } from "@/lib/types";
+import type { AppNotification, ConversationMessage } from "@/lib/types";
 
 const OVERDUE_CHECK_INTERVAL = 60_000;
 
@@ -22,10 +22,18 @@ async function markNotificationRead(notificationId: string) {
     .eq("id", notificationId);
 }
 
+async function markMessageRead(messageId: string) {
+  await supabase
+    .from("conversation_messages")
+    .update({ read_at: new Date().toISOString() })
+    .eq("id", messageId);
+}
+
 export function AppNotifications() {
   const { profile } = useAuth();
   const navigate = useNavigate();
   const deliveredNotificationIds = useRef(new Set<string>());
+  const deliveredMessageIds = useRef(new Set<string>());
   const notifiedOverdueIds = useRef(new Set<string>());
   const profileId = profile?.id;
   const profileRole = profile?.role;
@@ -96,6 +104,86 @@ export function AppNotifications() {
           deliver(notification as unknown as AppNotification);
         }
       });
+
+    return () => {
+      active = false;
+      void supabase.removeChannel(channel);
+    };
+  }, [navigate, profileId, profileRole, profileStatus]);
+
+  useEffect(() => {
+    if (!profileId || !profileRole || profileStatus !== "active") return;
+
+    let active = true;
+    const deliver = (message: ConversationMessage) => {
+      const isIncoming =
+        message.sender_id !== profileId &&
+        ((profileRole === "supervisor" && message.sender_role === "admin") ||
+          (profileRole === "admin" && message.sender_role === "supervisor"));
+      if (!active || !isIncoming || deliveredMessageIds.current.has(message.id)) return;
+
+      deliveredMessageIds.current.add(message.id);
+      const toastId = `conversation-message-${message.id}`;
+      const markRead = () => void markMessageRead(message.id);
+      toast.info(
+        profileRole === "supervisor" ? "Nova mensagem da gestão" : "Nova resposta de supervisor",
+        {
+          id: toastId,
+          description:
+            message.body.length > 160 ? `${message.body.slice(0, 157)}...` : message.body,
+          duration: Infinity,
+          closeButton: true,
+          onDismiss: markRead,
+          action: {
+            label: "Abrir conversa",
+            onClick: () => {
+              markRead();
+              toast.dismiss(toastId);
+              if (profileRole === "supervisor") {
+                void navigate({ to: "/mensagens" });
+              } else {
+                void navigate({
+                  to: "/admin/supervisor/$profileId",
+                  params: { profileId: message.supervisor_id },
+                });
+              }
+            },
+          },
+        },
+      );
+    };
+
+    const channel = supabase
+      .channel(`conversation-notifications-${profileId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "conversation_messages",
+          ...(profileRole === "supervisor" ? { filter: `supervisor_id=eq.${profileId}` } : {}),
+        },
+        (payload) => deliver(payload.new as unknown as ConversationMessage),
+      )
+      .subscribe();
+
+    let unreadQuery = supabase
+      .from("conversation_messages")
+      .select("*")
+      .is("read_at", null)
+      .neq("sender_id", profileId)
+      .order("created_at", { ascending: true })
+      .limit(50);
+    if (profileRole === "supervisor") unreadQuery = unreadQuery.eq("supervisor_id", profileId);
+    else unreadQuery = unreadQuery.eq("sender_role", "supervisor");
+
+    void unreadQuery.then(({ data, error }) => {
+      if (error) {
+        console.error("Não foi possível carregar mensagens não lidas.", error);
+        return;
+      }
+      for (const message of data ?? []) deliver(message as ConversationMessage);
+    });
 
     return () => {
       active = false;

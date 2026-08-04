@@ -74,6 +74,8 @@ export async function ensureChecklist(params: {
     (task) => !haveAssignments.has(task.id),
   );
 
+  const nextDisplayOrder =
+    Math.max(-1, ...((existing ?? []) as TaskRecord[]).map((record) => record.display_order)) + 1;
   const rowsToInsert = [
     ...missing.map((t) => ({
       checklist_id: (checklist as DailyChecklist).id,
@@ -97,7 +99,9 @@ export async function ensureChecklist(params: {
       scheduled_time: task.due_time,
       note: task.note,
     })),
-  ];
+  ]
+    .sort((a, b) => a.scheduled_time.localeCompare(b.scheduled_time))
+    .map((row, index) => ({ ...row, display_order: nextDisplayOrder + index }));
 
   if (rowsToInsert.length > 0) {
     const { error } = await supabase.from("daily_task_records").insert(rowsToInsert);
@@ -106,14 +110,16 @@ export async function ensureChecklist(params: {
 
   let list: TaskRecord[];
   if (rowsToInsert.length === 0) {
-    list = [...((existing ?? []) as TaskRecord[])].sort((a, b) =>
-      a.scheduled_time.localeCompare(b.scheduled_time),
+    list = [...((existing ?? []) as TaskRecord[])].sort(
+      (a, b) =>
+        a.display_order - b.display_order || a.scheduled_time.localeCompare(b.scheduled_time),
     );
   } else {
     const { data: records, error: finalErr } = await supabase
       .from("daily_task_records")
       .select("*")
       .eq("checklist_id", (checklist as DailyChecklist).id)
+      .order("display_order", { ascending: true })
       .order("scheduled_time", { ascending: true });
     if (finalErr) throw finalErr;
     list = (records ?? []) as TaskRecord[];
@@ -141,6 +147,24 @@ export async function saveNote(record: TaskRecord, note: string) {
     .from("daily_task_records")
     .update({ note: note.trim() || null })
     .eq("id", record.id);
+  if (error) throw error;
+}
+
+export async function reorderDailyTasks(recordIds: string[]) {
+  const { error } = await supabase.rpc("reorder_daily_tasks", { p_record_ids: recordIds });
+  if (error) throw error;
+}
+
+export async function moveDailyTask(params: {
+  recordId: string;
+  targetStatus: TaskRecord["status"];
+  recordIds: string[];
+}) {
+  const { error } = await supabase.rpc("move_daily_task", {
+    p_record_id: params.recordId,
+    p_target_status: params.targetStatus,
+    p_record_ids: params.recordIds,
+  });
   if (error) throw error;
 }
 

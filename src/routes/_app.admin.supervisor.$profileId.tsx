@@ -4,6 +4,7 @@ import { ArrowLeft, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { AdminGate } from "@/components/AdminGate";
 import { AppShell } from "@/components/AppShell";
+import { ConversationPanel } from "@/components/ConversationPanel";
 import { TaskBoard, splitRecords } from "@/components/TaskBoard";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -38,6 +39,7 @@ function SupervisorDetail() {
           .select("*")
           .eq("user_id", profileId)
           .eq("scheduled_date", dateKey)
+          .order("display_order", { ascending: true })
           .order("scheduled_time", { ascending: true }),
         supabase
           .from("audit_logs")
@@ -105,6 +107,15 @@ function SupervisorDetail() {
           />
         </div>
       </header>
+
+      {profile && (
+        <div className="mb-5">
+          <ConversationPanel
+            supervisorId={profile.id}
+            title={`Conversa com ${profile.full_name}`}
+          />
+        </div>
+      )}
 
       <div className="mb-5 grid gap-3 sm:grid-cols-4">
         <Stat label="Total" value={records.length} />

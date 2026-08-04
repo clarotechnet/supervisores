@@ -33,6 +33,20 @@ const notifications = readFileSync(
   ),
   "utf8",
 );
+const conversations = readFileSync(
+  new URL(
+    "../supabase/migrations/20260804111102_add_task_ordering_and_conversations.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const taskMoves = readFileSync(
+  new URL(
+    "../supabase/migrations/20260804113148_move_daily_task_between_columns.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
 describe("carga inicial", () => {
   const codes = [...seed.matchAll(/^\('((?:ntl|desc|ftz|rec|mdu|mnt)-[^']+)'/gm)].map(
@@ -76,6 +90,9 @@ describe("contrato de segurança", () => {
     }
     expect(extensions).toContain("alter table public.assigned_tasks enable row level security");
     expect(notifications).toContain("alter table public.notifications enable row level security");
+    expect(conversations).toContain(
+      "alter table public.conversation_messages enable row level security",
+    );
   });
 
   it("separa políticas próprias e administrativas", () => {
@@ -107,6 +124,33 @@ describe("contrato de segurança", () => {
       "revoke all on function private.notify_assigned_task() from public, anon, authenticated",
     );
     expect(notifications).toContain("after insert on public.assigned_tasks");
+  });
+
+  it("protege as conversas entre gestor e supervisor", () => {
+    expect(conversations).toContain('create policy "conversation_messages_select_participants"');
+    expect(conversations).toContain('create policy "conversation_messages_insert_participants"');
+    expect(conversations).toContain("grant update (read_at) on public.conversation_messages");
+    expect(conversations).toContain(
+      "alter publication supabase_realtime add table public.conversation_messages",
+    );
+  });
+
+  it("restringe a ordenação à rotina do próprio usuário", () => {
+    expect(conversations).toContain("security invoker");
+    expect(conversations).toContain("record.user_id is distinct from caller_id");
+    expect(conversations).toContain(
+      "grant execute on function public.reorder_daily_tasks(uuid[]) to authenticated",
+    );
+  });
+
+  it("move atividades entre colunas em uma operação protegida", () => {
+    expect(taskMoves).toContain("security invoker");
+    expect(taskMoves).toContain("record.user_id = caller_id");
+    expect(taskMoves).toContain("record.checklist_id is distinct from source_checklist_id");
+    expect(taskMoves).toContain("when p_target_status = 'completed'");
+    expect(taskMoves).toContain(
+      "grant execute on function public.move_daily_task(uuid, public.task_status, uuid[])\n  to authenticated",
+    );
   });
 
   it("permite solicitar o setor Gestor sem conceder acesso administrativo", () => {
