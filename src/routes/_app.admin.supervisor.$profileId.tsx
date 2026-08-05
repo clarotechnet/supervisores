@@ -108,7 +108,7 @@ function SupervisorDetail() {
         </div>
       </header>
 
-      {profile && (
+      {profile && profile.role === "supervisor" && (
         <div className="mb-5">
           <ConversationPanel
             supervisorId={profile.id}
