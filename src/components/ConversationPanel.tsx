@@ -16,10 +16,14 @@ import {
 
 export function ConversationPanel({
   supervisorId,
+  managerId,
   title,
+  onChange,
 }: {
   supervisorId: string;
+  managerId: string;
   title: string;
+  onChange?: (() => void) | undefined;
 }) {
   const { profile } = useAuth();
   const currentUserId = profile?.id;
@@ -44,31 +48,36 @@ export function ConversationPanel({
     let active = true;
     setLoading(true);
 
-    void fetchConversation(supervisorId)
+    void fetchConversation(supervisorId, managerId)
       .then((items) => {
         if (!active) return;
         setMessages(items);
-        return markConversationRead(supervisorId, currentUserId);
+        return markConversationRead(supervisorId, managerId, currentUserId).then(onChange);
       })
       .catch(() => toast.error("Não foi possível carregar a conversa."))
       .finally(() => active && setLoading(false));
 
     const channel = supabase
-      .channel(`conversation-${supervisorId}-${currentUserId}`)
+      .channel(`conversation-${supervisorId}-${managerId}-${currentUserId}`)
       .on(
         "postgres_changes",
         {
           event: "*",
           schema: "public",
           table: "conversation_messages",
-          filter: `supervisor_id=eq.${supervisorId}`,
+          filter: `manager_id=eq.${managerId}`,
         },
         (payload) => {
           const message = payload.new as unknown as ConversationMessage;
-          if (!message.id) return;
+          if (
+            !message.id ||
+            message.supervisor_id !== supervisorId ||
+            message.manager_id !== managerId
+          )
+            return;
           appendOrUpdate(message);
           if (message.sender_id !== currentUserId && !message.read_at) {
-            void markConversationRead(supervisorId, currentUserId);
+            void markConversationRead(supervisorId, managerId, currentUserId).then(onChange);
           }
         },
       )
@@ -78,7 +87,7 @@ export function ConversationPanel({
       active = false;
       void supabase.removeChannel(channel);
     };
-  }, [appendOrUpdate, currentUserId, supervisorId]);
+  }, [appendOrUpdate, currentUserId, managerId, onChange, supervisorId]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -91,12 +100,14 @@ export function ConversationPanel({
     try {
       const message = await sendConversationMessage({
         supervisorId,
+        managerId,
         senderId: profile.id,
         senderRole: profile.role,
         body: text,
       });
       appendOrUpdate(message);
       setBody("");
+      onChange?.();
     } catch {
       toast.error("Não foi possível enviar a mensagem.");
     } finally {

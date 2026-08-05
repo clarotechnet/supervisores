@@ -9,6 +9,7 @@ import { TaskBoard, splitRecords } from "@/components/TaskBoard";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 import { formatLongDate, localTime, todayKey } from "@/lib/date-utils";
 import type { AuditLog, Profile, Sector, TaskRecord } from "@/lib/types";
 
@@ -22,6 +23,7 @@ export const Route = createFileRoute("/_app/admin/supervisor/$profileId")({
 
 function SupervisorDetail() {
   const { profileId } = Route.useParams();
+  const { profile: currentUserProfile } = useAuth();
   const [dateKey, setDateKey] = useState(todayKey());
   const [profile, setProfile] = useState<Profile | null>(null);
   const [sector, setSector] = useState<Sector | null>(null);
@@ -108,10 +110,11 @@ function SupervisorDetail() {
         </div>
       </header>
 
-      {profile && profile.role === "supervisor" && (
+      {profile && profile.role === "supervisor" && currentUserProfile && (
         <div className="mb-5">
           <ConversationPanel
             supervisorId={profile.id}
+            managerId={currentUserProfile.id}
             title={`Conversa com ${profile.full_name}`}
           />
         </div>

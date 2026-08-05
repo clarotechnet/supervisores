@@ -96,6 +96,7 @@ export type Database = {
           body: string;
           created_at: string;
           id: string;
+          manager_id: string | null;
           read_at: string | null;
           sender_id: string | null;
           sender_role: Database["public"]["Enums"]["app_role"];
@@ -105,6 +106,7 @@ export type Database = {
           body: string;
           created_at?: string;
           id?: string;
+          manager_id?: string | null;
           read_at?: string | null;
           sender_id?: string | null;
           sender_role: Database["public"]["Enums"]["app_role"];
@@ -114,12 +116,20 @@ export type Database = {
           body?: string;
           created_at?: string;
           id?: string;
+          manager_id?: string | null;
           read_at?: string | null;
           sender_id?: string | null;
           sender_role?: Database["public"]["Enums"]["app_role"];
           supervisor_id?: string;
         };
         Relationships: [
+          {
+            foreignKeyName: "conversation_messages_manager_id_fkey";
+            columns: ["manager_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
           {
             foreignKeyName: "conversation_messages_sender_id_fkey";
             columns: ["sender_id"];
@@ -448,6 +458,15 @@ export type Database = {
     Functions: {
       is_active_user: { Args: { _uid: string }; Returns: boolean };
       is_admin: { Args: { _uid: string }; Returns: boolean };
+      list_my_conversation_managers: {
+        Args: Record<PropertyKey, never>;
+        Returns: {
+          last_message_at: string;
+          manager_id: string;
+          manager_name: string;
+          unread_count: number;
+        }[];
+      };
       move_daily_task: {
         Args: {
           p_record_id: string;

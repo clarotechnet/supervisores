@@ -7,7 +7,8 @@ values
   ('00000000-0000-0000-0000-00000000a001', 'gestor.rls@teste.local', 'authenticated', 'authenticated', '{"full_name":"Gestor RLS","sector_slug":"natal"}', now(), now()),
   ('00000000-0000-0000-0000-00000000a002', 'natal.rls@teste.local', 'authenticated', 'authenticated', '{"full_name":"Supervisor Natal","sector_slug":"natal"}', now(), now()),
   ('00000000-0000-0000-0000-00000000a003', 'recife.rls@teste.local', 'authenticated', 'authenticated', '{"full_name":"Supervisor Recife","sector_slug":"recife"}', now(), now()),
-  ('00000000-0000-0000-0000-00000000a004', 'gestor.pendente@teste.local', 'authenticated', 'authenticated', '{"full_name":"Gestor Pendente","sector_slug":"gestor"}', now(), now());
+  ('00000000-0000-0000-0000-00000000a004', 'gestor.pendente@teste.local', 'authenticated', 'authenticated', '{"full_name":"Gestor Pendente","sector_slug":"gestor"}', now(), now()),
+  ('00000000-0000-0000-0000-00000000a005', 'gestor2.rls@teste.local', 'authenticated', 'authenticated', '{"full_name":"Gestor Dois RLS","sector_slug":"gestor"}', now(), now());
 
 select case when exists (
   select 1
@@ -25,6 +26,7 @@ select case when exists (
 \endif
 
 select private.bootstrap_admin_by_email('gestor.rls@teste.local');
+select private.bootstrap_admin_by_email('gestor2.rls@teste.local');
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000a001', true);
@@ -173,8 +175,14 @@ begin
 end;
 $$;
 
-insert into public.conversation_messages (supervisor_id, sender_id, sender_role, body)
-values ((select auth.uid()), (select auth.uid()), 'supervisor', 'Mensagem do supervisor Natal');
+insert into public.conversation_messages (supervisor_id, manager_id, sender_id, sender_role, body)
+values (
+  (select auth.uid()),
+  '00000000-0000-0000-0000-00000000a001',
+  (select auth.uid()),
+  'supervisor',
+  'Mensagem do supervisor Natal'
+);
 
 -- O supervisor pode criar para si, mas não para outra pessoa.
 insert into public.assigned_tasks (assigned_to, assigned_by, sector_id, title, scheduled_date, due_time)
@@ -213,8 +221,14 @@ select case when (select count(*) from public.daily_task_records) = 3 then true 
 insert into public.assigned_tasks (assigned_to, assigned_by, sector_id, title, scheduled_date, due_time)
 values ('00000000-0000-0000-0000-00000000a003', (select auth.uid()), (select id from public.sectors where slug = 'recife'), 'Tarefa delegada RLS', current_date, '10:00');
 
-insert into public.conversation_messages (supervisor_id, sender_id, sender_role, body)
-values ('00000000-0000-0000-0000-00000000a003', (select auth.uid()), 'admin', 'Mensagem do gestor para Recife');
+insert into public.conversation_messages (supervisor_id, manager_id, sender_id, sender_role, body)
+values (
+  '00000000-0000-0000-0000-00000000a003',
+  (select auth.uid()),
+  (select auth.uid()),
+  'admin',
+  'Mensagem do gestor um para Recife'
+);
 
 reset role;
 
@@ -248,8 +262,14 @@ select case when not exists (
   \quit 1
 \endif
 
-insert into public.conversation_messages (supervisor_id, sender_id, sender_role, body)
-values ((select auth.uid()), (select auth.uid()), 'supervisor', 'Resposta do supervisor Recife');
+insert into public.conversation_messages (supervisor_id, manager_id, sender_id, sender_role, body)
+values (
+  (select auth.uid()),
+  '00000000-0000-0000-0000-00000000a001',
+  (select auth.uid()),
+  'supervisor',
+  'Resposta do supervisor Recife ao gestor um'
+);
 
 select case when (select count(*) from public.conversation_messages) = 2
 then true else false end as supervisor_conversation_isolated \gset
@@ -262,6 +282,7 @@ then true else false end as supervisor_conversation_isolated \gset
 update public.conversation_messages
 set read_at = now()
 where supervisor_id = (select auth.uid())
+  and manager_id = '00000000-0000-0000-0000-00000000a001'
   and sender_id is distinct from (select auth.uid())
   and read_at is null;
 
@@ -274,6 +295,105 @@ select case when exists (
 \if :supervisor_marked_manager_message_read
 \else
   \echo 'Falha: supervisor nao conseguiu marcar mensagem como lida'
+  \quit 1
+\endif
+
+reset role;
+
+-- Um segundo gestor abre uma conversa independente com o mesmo supervisor.
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000a005', true);
+
+insert into public.conversation_messages (supervisor_id, manager_id, sender_id, sender_role, body)
+values (
+  '00000000-0000-0000-0000-00000000a003',
+  (select auth.uid()),
+  (select auth.uid()),
+  'admin',
+  'Mensagem do gestor dois para Recife'
+);
+
+select case when (
+  select count(*) from public.conversation_messages
+  where supervisor_id = '00000000-0000-0000-0000-00000000a003'
+) = 1 then true else false end as manager_two_cannot_read_manager_one \gset
+\if :manager_two_cannot_read_manager_one
+\else
+  \echo 'Falha: gestor dois acessou a conversa do gestor um'
+  \quit 1
+\endif
+
+do $$
+begin
+  begin
+    insert into public.conversation_messages (supervisor_id, manager_id, sender_id, sender_role, body)
+    values (
+      '00000000-0000-0000-0000-00000000a003',
+      '00000000-0000-0000-0000-00000000a001',
+      (select auth.uid()),
+      'admin',
+      'Tentativa de falsificar o gestor da conversa'
+    );
+    raise exception 'O gestor nao deveria conseguir falsificar manager_id';
+  exception when insufficient_privilege then null;
+  end;
+end;
+$$;
+
+reset role;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000a003', true);
+
+insert into public.conversation_messages (supervisor_id, manager_id, sender_id, sender_role, body)
+values (
+  (select auth.uid()),
+  '00000000-0000-0000-0000-00000000a005',
+  (select auth.uid()),
+  'supervisor',
+  'Resposta do supervisor Recife ao gestor dois'
+);
+
+select case when (select count(*) from public.list_my_conversation_managers()) = 2
+then true else false end as supervisor_has_two_separate_manager_threads \gset
+\if :supervisor_has_two_separate_manager_threads
+\else
+  \echo 'Falha: supervisor nao recebeu duas conversas separadas por gestor'
+  \quit 1
+\endif
+
+reset role;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000a001', true);
+
+select case when (
+  select count(*) from public.conversation_messages
+  where supervisor_id = '00000000-0000-0000-0000-00000000a003'
+) = 2
+and not exists (
+  select 1 from public.conversation_messages
+  where manager_id <> (select auth.uid())
+) then true else false end as manager_one_conversation_isolated \gset
+\if :manager_one_conversation_isolated
+\else
+  \echo 'Falha: gestor um acessou mensagens do gestor dois'
+  \quit 1
+\endif
+
+reset role;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000a005', true);
+
+select case when (
+  select count(*) from public.conversation_messages
+  where supervisor_id = '00000000-0000-0000-0000-00000000a003'
+) = 2
+and not exists (
+  select 1 from public.conversation_messages
+  where manager_id <> (select auth.uid())
+) then true else false end as manager_two_conversation_isolated \gset
+\if :manager_two_conversation_isolated
+\else
+  \echo 'Falha: gestor dois acessou mensagens do gestor um'
   \quit 1
 \endif
 

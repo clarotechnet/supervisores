@@ -105,11 +105,19 @@ export interface TaskRecord {
 export interface ConversationMessage {
   id: string;
   supervisor_id: string;
+  manager_id: string;
   sender_id: string | null;
   sender_role: UserRole;
   body: string;
   read_at: string | null;
   created_at: string;
+}
+
+export interface ConversationManagerSummary {
+  manager_id: string;
+  manager_name: string;
+  last_message_at: string;
+  unread_count: number;
 }
 
 export interface AuditLog {

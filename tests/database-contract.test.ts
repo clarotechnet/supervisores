@@ -47,6 +47,20 @@ const taskMoves = readFileSync(
   ),
   "utf8",
 );
+const separatedConversations = readFileSync(
+  new URL(
+    "../supabase/migrations/20260805180000_separate_conversations_by_manager.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const hardenedConversations = readFileSync(
+  new URL(
+    "../supabase/migrations/20260805180717_harden_manager_supervisor_conversations.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
 describe("carga inicial", () => {
   const codes = [...seed.matchAll(/^\('((?:ntl|desc|ftz|rec|mdu|mnt)-[^']+)'/gm)].map(
@@ -132,6 +146,25 @@ describe("contrato de segurança", () => {
     expect(conversations).toContain("grant update (read_at) on public.conversation_messages");
     expect(conversations).toContain(
       "alter publication supabase_realtime add table public.conversation_messages",
+    );
+  });
+
+  it("separa cada conversa pelo par gestor e supervisor", () => {
+    expect(separatedConversations).toContain("add column if not exists manager_id uuid");
+    expect(separatedConversations).toContain("manager_id = (select auth.uid())");
+    expect(separatedConversations).toContain("supervisor_id = (select auth.uid())");
+    expect(separatedConversations).toContain("list_my_conversation_managers");
+    expect(separatedConversations).toContain(
+      "drop function if exists public.is_conversation_participant(uuid, uuid)",
+    );
+  });
+
+  it("reaplica o isolamento mesmo quando a migration anterior já foi executada", () => {
+    expect(hardenedConversations).toContain("manager_id = (select auth.uid())");
+    expect(hardenedConversations).toContain("supervisor_id = (select auth.uid())");
+    expect(hardenedConversations).toContain("set search_path = ''");
+    expect(hardenedConversations).toContain(
+      "drop function if exists public.is_conversation_participant(uuid, uuid)",
     );
   });
 

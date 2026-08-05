@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { MessageCircle } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
-import { ConversationPanel } from "@/components/ConversationPanel";
+import { SupervisorConversationInbox } from "@/components/SupervisorConversationInbox";
 import { useAuth } from "@/hooks/useAuth";
 
 export const Route = createFileRoute("/_app/mensagens")({
@@ -50,7 +50,7 @@ function MessagesPage() {
           Converse com a gestão e consulte todo o histórico.
         </p>
       </header>
-      <ConversationPanel supervisorId={profile.id} title="Conversa com a gestão" />
+      <SupervisorConversationInbox supervisorId={profile.id} />
     </AppShell>
   );
 }
