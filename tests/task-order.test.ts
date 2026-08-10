@@ -19,6 +19,9 @@ function record(id: string, displayOrder: number): TaskRecord {
     completed_at: null,
     display_order: displayOrder,
     note: null,
+    mentioned_supervisor_id: null,
+    mentioned_by: null,
+    mentioned_at: null,
     updated_at: "2026-08-04T00:00:00Z",
   };
 }

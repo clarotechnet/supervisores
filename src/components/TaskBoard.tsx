@@ -2,7 +2,7 @@ import { useState, type DragEvent } from "react";
 import { Check, Clock, GripVertical, MessageSquare, RotateCcw } from "lucide-react";
 import { hhmm, isLate, localTime } from "@/lib/date-utils";
 import type { TaskLane } from "@/lib/task-order";
-import type { TaskRecord } from "@/lib/types";
+import type { MentionableSupervisor, TaskRecord } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
   Dialog,
@@ -14,6 +14,13 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export interface TaskColumns {
   pending: TaskRecord[];
@@ -282,15 +289,25 @@ export function TaskBoard({
   onToggle,
   onSaveNote,
   onMove,
+  allowSupervisorMention,
+  mentionableSupervisors = [],
 }: {
   records: TaskRecord[];
   view: "board" | "list";
   readOnly?: boolean | undefined;
   onToggle?: ((record: TaskRecord) => void) | undefined;
-  onSaveNote?: ((record: TaskRecord, note: string) => Promise<void> | void) | undefined;
+  onSaveNote?:
+    | ((
+        record: TaskRecord,
+        note: string,
+        mentionedSupervisorId?: string | null,
+      ) => Promise<void> | void)
+    | undefined;
   onMove?:
     | ((sourceId: string, targetLane: TaskLane, targetId?: string) => Promise<void> | void)
     | undefined;
+  allowSupervisorMention?: boolean | undefined;
+  mentionableSupervisors?: MentionableSupervisor[] | undefined;
 }) {
   const columns = splitRecords(records);
   const orderedRecords = [...records].sort(
@@ -298,6 +315,7 @@ export function TaskBoard({
   );
   const [noteFor, setNoteFor] = useState<TaskRecord | null>(null);
   const [noteText, setNoteText] = useState("");
+  const [mentionedSupervisorId, setMentionedSupervisorId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [draggedTone, setDraggedTone] = useState<TaskColumnsTone | null>(null);
@@ -374,13 +392,18 @@ export function TaskBoard({
   function openNote(record: TaskRecord) {
     setNoteFor(record);
     setNoteText(record.note ?? "");
+    setMentionedSupervisorId(record.mentioned_supervisor_id);
   }
 
   async function submitNote() {
     if (!noteFor) return;
     setSaving(true);
     try {
-      await onSaveNote?.(noteFor, noteText);
+      await onSaveNote?.(
+        noteFor,
+        noteText,
+        allowSupervisorMention ? mentionedSupervisorId : undefined,
+      );
       setNoteFor(null);
     } finally {
       setSaving(false);
@@ -493,12 +516,46 @@ export function TaskBoard({
             placeholder="Registre um detalhe sobre esta atividade..."
             className="min-h-28"
           />
+          {allowSupervisorMention && !readOnly && (
+            <div className="grid gap-1.5 rounded-xl border border-border bg-secondary/50 p-3">
+              <label className="text-[11px] font-bold" htmlFor="mentioned-supervisor">
+                Marcar um supervisor
+              </label>
+              <Select
+                value={mentionedSupervisorId ?? "none"}
+                onValueChange={(value) => setMentionedSupervisorId(value === "none" ? null : value)}
+              >
+                <SelectTrigger id="mentioned-supervisor">
+                  <SelectValue placeholder="Selecione um supervisor" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Não marcar ninguém</SelectItem>
+                  {mentionableSupervisors.map((supervisor) => (
+                    <SelectItem key={supervisor.id} value={supervisor.id}>
+                      {supervisor.full_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] leading-relaxed text-muted-foreground">
+                O supervisor receberá uma notificação contendo somente o texto desta observação.
+              </p>
+              {mentionedSupervisorId && !noteText.trim() && (
+                <p className="text-[10px] font-semibold text-destructive">
+                  Escreva a observação para enviar a marcação.
+                </p>
+              )}
+            </div>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setNoteFor(null)}>
               Fechar
             </Button>
             {!readOnly && (
-              <Button onClick={submitNote} disabled={saving}>
+              <Button
+                onClick={submitNote}
+                disabled={saving || Boolean(mentionedSupervisorId && !noteText.trim())}
+              >
                 {saving ? "Salvando..." : "Salvar observação"}
               </Button>
             )}

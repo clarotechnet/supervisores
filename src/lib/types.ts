@@ -43,14 +43,17 @@ export interface AssignedTask {
 export interface NotificationMetadata {
   due_time?: string;
   group_name?: string;
+  manager_id?: string;
+  record_id?: string;
   scheduled_date?: string;
   sector_id?: string;
+  task_title?: string;
 }
 
 export interface AppNotification {
   id: string;
   recipient_id: string;
-  type: "task_assigned";
+  type: "task_assigned" | "task_note_mention";
   title: string;
   message: string;
   entity_id: string | null;
@@ -63,6 +66,7 @@ export interface TaskTemplate {
   id: string;
   code: string | null;
   sector_id: string;
+  owner_id: string | null;
   title: string;
   group_name: string;
   due_time: string;
@@ -99,7 +103,15 @@ export interface TaskRecord {
   completed_at: string | null;
   display_order: number;
   note: string | null;
+  mentioned_supervisor_id: string | null;
+  mentioned_by: string | null;
+  mentioned_at: string | null;
   updated_at: string;
+}
+
+export interface MentionableSupervisor {
+  id: string;
+  full_name: string;
 }
 
 export interface ConversationMessage {

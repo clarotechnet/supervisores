@@ -61,6 +61,27 @@ const hardenedConversations = readFileSync(
   ),
   "utf8",
 );
+const isolatedManagerRoutines = readFileSync(
+  new URL(
+    "../supabase/migrations/20260810143528_isolate_manager_routine_templates.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const noteMentions = readFileSync(
+  new URL(
+    "../supabase/migrations/20260810150829_add_task_note_supervisor_mentions.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const noteMentionTitles = readFileSync(
+  new URL(
+    "../supabase/migrations/20260810152618_add_task_title_to_note_mentions.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
 describe("carga inicial", () => {
   const codes = [...seed.matchAll(/^\('((?:ntl|desc|ftz|rec|mdu|mnt)-[^']+)'/gm)].map(
@@ -165,6 +186,36 @@ describe("contrato de segurança", () => {
     expect(hardenedConversations).toContain("set search_path = ''");
     expect(hardenedConversations).toContain(
       "drop function if exists public.is_conversation_participant(uuid, uuid)",
+    );
+  });
+
+  it("isola os modelos da rotina pessoal pelo gestor proprietário", () => {
+    expect(isolatedManagerRoutines).toContain("add column if not exists owner_id uuid");
+    expect(isolatedManagerRoutines).toContain("owner_id = (select auth.uid())");
+    expect(isolatedManagerRoutines).toContain("owner_id is null");
+    expect(isolatedManagerRoutines).toContain("slug = 'gestor'");
+    expect(isolatedManagerRoutines).toContain(
+      'create policy "templates_admin_update" on public.task_templates',
+    );
+  });
+
+  it("permite somente ao gestor marcar supervisor em observação da própria rotina", () => {
+    expect(noteMentions).toContain("mentioned_supervisor_id uuid");
+    expect(noteMentions).toContain("new.user_id is distinct from caller_id");
+    expect(noteMentions).toContain("private.protect_task_note_mention()");
+    expect(noteMentions).toContain("private.notify_task_note_mention()");
+    expect(noteMentions).toContain("'task_note_mention'");
+    expect(noteMentions).toContain("revoke all on function private.notify_task_note_mention()");
+  });
+
+  it("copia o nome da atividade para a notificação sem expor a rotina do gestor", () => {
+    expect(noteMentionTitles).toContain(
+      "create or replace function private.notify_task_note_mention()",
+    );
+    expect(noteMentionTitles).toContain("'task_title', new.title");
+    expect(noteMentionTitles).toContain("notification.entity_id = record.id");
+    expect(noteMentionTitles).toContain(
+      "revoke all on function private.notify_task_note_mention()",
     );
   });
 

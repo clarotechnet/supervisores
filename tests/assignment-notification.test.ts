@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   applyCurrentSupervisorNames,
   formatAssignmentNotification,
+  formatNotificationDescription,
   formatOverdueTask,
   groupOverdueTasks,
+  notificationTaskTitle,
 } from "../src/lib/assignment-notification";
 
 const assignmentNotification = {
@@ -26,6 +28,40 @@ describe("notificação de nova atividade", () => {
     expect(formatAssignmentNotification(assignmentNotification)).toBe(
       "Conferir indicadores do turno · 04/08/2026 às 14:30",
     );
+  });
+});
+
+describe("marcação de supervisor em observação", () => {
+  it("mostra somente o texto da observação na notificação", () => {
+    expect(
+      formatNotificationDescription({
+        ...assignmentNotification,
+        type: "task_note_mention",
+        title: "Você foi marcado em uma observação",
+        message: "Atenção ao básico durante o turno.",
+        metadata: {
+          manager_id: "manager-id",
+          record_id: "record-id",
+          scheduled_date: "2026-08-10",
+        },
+      }),
+    ).toBe("Atenção ao básico durante o turno.");
+  });
+});
+
+describe("nome da atividade na observação marcada", () => {
+  it("mostra o nome da atividade ao abrir a notificação", () => {
+    expect(
+      notificationTaskTitle({
+        ...assignmentNotification,
+        type: "task_note_mention",
+        metadata: {
+          manager_id: "manager-id",
+          record_id: "record-id",
+          task_title: "teste",
+        },
+      }),
+    ).toBe("teste");
   });
 });
 

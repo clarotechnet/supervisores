@@ -73,7 +73,7 @@ const EMPTY: FormState = {
 };
 
 function AtividadesPage() {
-  const { sector } = useAuth();
+  const { profile, sector } = useAuth();
   const [sectors, setSectors] = useState<Sector[]>([]);
   const [templates, setTemplates] = useState<TaskTemplate[]>([]);
   const [activeSector, setActiveSector] = useState<string>("");
@@ -88,14 +88,19 @@ function AtividadesPage() {
       setSectors(secs);
       const current = activeSector || secs[0]?.id || "";
       setActiveSector(current);
-      const list = (await fetchTemplates(current)) as TaskTemplate[];
+      const currentSector = secs.find((item) => item.id === current);
+      const personalOwnerId = currentSector?.slug === "gestor" ? profile?.id : undefined;
+      if (currentSector?.slug === "gestor" && !personalOwnerId) {
+        throw new Error("Gestor autenticado não encontrado.");
+      }
+      const list = (await fetchTemplates(current, personalOwnerId)) as TaskTemplate[];
       setTemplates(list);
     } catch {
       toast.error("Não foi possível carregar as atividades.");
     } finally {
       setLoading(false);
     }
-  }, [activeSector]);
+  }, [activeSector, profile?.id]);
 
   useEffect(() => {
     void load();
@@ -132,6 +137,10 @@ function AtividadesPage() {
     try {
       const payload = {
         sector_id: form.sector_id,
+        owner_id:
+          sectors.find((item) => item.id === form.sector_id)?.slug === "gestor"
+            ? (profile?.id ?? null)
+            : null,
         title: form.title.trim(),
         group_name: form.group_name.trim() || "Geral",
         due_time: `${form.due_time}:00`,
@@ -139,6 +148,12 @@ function AtividadesPage() {
         sort_order: form.sort_order,
         is_active: form.is_active,
       };
+      if (
+        sectors.find((item) => item.id === form.sector_id)?.slug === "gestor" &&
+        !payload.owner_id
+      ) {
+        throw new Error("Gestor autenticado não encontrado.");
+      }
       if (form.id) await updateTemplate(form.id, payload);
       else await createTemplate(payload);
       toast.success("Atividade salva.");
@@ -162,13 +177,18 @@ function AtividadesPage() {
     }
   }
 
+  const selectedSector = sectors.find((item) => item.id === activeSector);
+  const isPersonalManagerRoutine = selectedSector?.slug === "gestor";
+
   return (
     <AppShell areaColor={sector?.color}>
       <header className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-black">Atividades</h1>
           <p className="mt-1 text-xs text-muted-foreground">
-            Modelos que geram o checklist diário de cada setor.
+            {isPersonalManagerRoutine
+              ? "Atividades pessoais que aparecem somente na sua rotina de gestor."
+              : "Modelos que geram o checklist diário de cada setor."}
           </p>
         </div>
         <Button onClick={openNew}>
@@ -202,8 +222,9 @@ function AtividadesPage() {
             <div className="grid place-items-center gap-2 rounded-2xl border border-dashed border-border bg-card p-8 text-center">
               <p className="text-xs font-bold">Nenhuma atividade cadastrada neste setor</p>
               <p className="max-w-sm text-[11px] text-muted-foreground">
-                Cadastre as atividades deste setor para que o checklist diário seja gerado
-                automaticamente para os supervisores dele.
+                {isPersonalManagerRoutine
+                  ? "Cadastre aqui apenas as atividades da sua própria rotina. Outros gestores não terão acesso a elas."
+                  : "Cadastre as atividades deste setor para que o checklist diário seja gerado automaticamente para os supervisores dele."}
               </p>
               <Button onClick={openNew} className="mt-1">
                 <Plus className="size-4" /> Nova atividade

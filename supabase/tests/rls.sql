@@ -35,13 +35,87 @@ set status = 'active', approved_at = now(), approved_by = '00000000-0000-0000-00
 where id in ('00000000-0000-0000-0000-00000000a002', '00000000-0000-0000-0000-00000000a003');
 reset role;
 
+-- Cada gestor possui modelos próprios no setor Gestor. Os modelos dos setores
+-- operacionais continuam compartilhados e administráveis.
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000a001', true);
+
+insert into public.task_templates (sector_id, owner_id, title, group_name, due_time)
+values (
+  (select id from public.sectors where slug = 'gestor'),
+  (select auth.uid()),
+  'Rotina pessoal do gestor um',
+  'Gestão',
+  '08:00'
+);
+
+do $$
+begin
+  begin
+    insert into public.task_templates (sector_id, owner_id, title, group_name, due_time)
+    values (
+      (select id from public.sectors where slug = 'gestor'),
+      '00000000-0000-0000-0000-00000000a005',
+      'Tentativa de criar atividade para outro gestor',
+      'Gestão',
+      '08:10'
+    );
+    raise exception 'O gestor nao deveria conseguir falsificar owner_id';
+  exception when insufficient_privilege then null;
+  end;
+end;
+$$;
+
+reset role;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000a005', true);
+
+insert into public.task_templates (sector_id, owner_id, title, group_name, due_time)
+values (
+  (select id from public.sectors where slug = 'gestor'),
+  (select auth.uid()),
+  'Rotina pessoal do gestor dois',
+  'Gestão',
+  '08:20'
+);
+
+select case when (
+  select count(*)
+  from public.task_templates
+  where sector_id = (select id from public.sectors where slug = 'gestor')
+) = 1
+and not exists (
+  select 1 from public.task_templates
+  where owner_id <> (select auth.uid())
+) then true else false end as manager_templates_are_isolated \gset
+\if :manager_templates_are_isolated
+\else
+  \echo 'Falha: gestor dois acessou atividades pessoais do gestor um'
+  \quit 1
+\endif
+
+select case when (
+  select count(*)
+  from public.task_templates
+  where owner_id is null
+) = 109 then true else false end as manager_still_sees_shared_templates \gset
+\if :manager_still_sees_shared_templates
+\else
+  \echo 'Falha: gestor perdeu acesso aos modelos dos setores operacionais'
+  \quit 1
+\endif
+
+reset role;
+
 insert into public.daily_checklists (id, user_id, sector_id, checklist_date)
 values
+  ('10000000-0000-0000-0000-00000000a001', '00000000-0000-0000-0000-00000000a001', (select id from public.sectors where slug = 'gestor'), current_date),
   ('10000000-0000-0000-0000-00000000a002', '00000000-0000-0000-0000-00000000a002', (select id from public.sectors where slug = 'natal'), current_date),
   ('10000000-0000-0000-0000-00000000a003', '00000000-0000-0000-0000-00000000a003', (select id from public.sectors where slug = 'recife'), current_date);
 
 insert into public.daily_task_records (checklist_id, user_id, sector_id, title, group_name, scheduled_date, scheduled_time)
 values
+  ('10000000-0000-0000-0000-00000000a001', '00000000-0000-0000-0000-00000000a001', (select id from public.sectors where slug = 'gestor'), 'Rotina privada do gestor', 'RLS', current_date, '07:50'),
   ('10000000-0000-0000-0000-00000000a002', '00000000-0000-0000-0000-00000000a002', (select id from public.sectors where slug = 'natal'), 'Teste Natal', 'RLS', current_date, '08:00'),
   ('10000000-0000-0000-0000-00000000a003', '00000000-0000-0000-0000-00000000a003', (select id from public.sectors where slug = 'recife'), 'Teste Recife', 'RLS', current_date, '08:00');
 
@@ -160,6 +234,20 @@ select case when (select count(*) from public.task_templates) = 20 then true els
   \quit 1
 \endif
 
+do $$
+begin
+  begin
+    update public.daily_task_records
+    set note = 'Tentativa indevida de marcação',
+        mentioned_supervisor_id = '00000000-0000-0000-0000-00000000a003'
+    where user_id = (select auth.uid())
+      and title = 'Teste Natal';
+    raise exception 'O supervisor nao deveria conseguir marcar outro supervisor';
+  exception when insufficient_privilege then null;
+  end;
+end;
+$$;
+
 -- A tentativa de elevar o próprio papel deve falhar no gatilho de proteção.
 do $$
 begin
@@ -211,7 +299,7 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000a001', true);
 
 -- O gestor vê tudo e consegue delegar.
-select case when (select count(*) from public.daily_task_records) = 3 then true else false end as admin_sees_all \gset
+select case when (select count(*) from public.daily_task_records) = 4 then true else false end as admin_sees_all \gset
 \if :admin_sees_all
 \else
   \echo 'Falha: gestor não acessou todos os registros'
@@ -220,6 +308,12 @@ select case when (select count(*) from public.daily_task_records) = 3 then true 
 
 insert into public.assigned_tasks (assigned_to, assigned_by, sector_id, title, scheduled_date, due_time)
 values ('00000000-0000-0000-0000-00000000a003', (select auth.uid()), (select id from public.sectors where slug = 'recife'), 'Tarefa delegada RLS', current_date, '10:00');
+
+update public.daily_task_records
+set note = 'Atenção ao básico durante o turno.',
+    mentioned_supervisor_id = '00000000-0000-0000-0000-00000000a003'
+where user_id = (select auth.uid())
+  and title = 'Rotina privada do gestor';
 
 insert into public.conversation_messages (supervisor_id, manager_id, sender_id, sender_role, body)
 values (
@@ -245,6 +339,32 @@ select case when exists (
 \if :delegated_task_has_notification
 \else
   \echo 'Falha: tarefa delegada nao gerou notificacao para o supervisor'
+  \quit 1
+\endif
+
+select case when exists (
+  select 1 from public.notifications
+  where recipient_id = (select auth.uid())
+    and type = 'task_note_mention'
+    and title = 'Você foi marcado em uma observação'
+    and message = 'Atenção ao básico durante o turno.'
+    and metadata ->> 'manager_id' = '00000000-0000-0000-0000-00000000a001'
+    and metadata ->> 'task_title' = 'Rotina privada do gestor'
+    and read_at is null
+) then true else false end as note_mention_has_private_notification \gset
+\if :note_mention_has_private_notification
+\else
+  \echo 'Falha: observacao marcada nao notificou somente o supervisor escolhido'
+  \quit 1
+\endif
+
+select case when not exists (
+  select 1 from public.daily_task_records
+  where title = 'Rotina privada do gestor'
+) then true else false end as mentioned_supervisor_cannot_read_manager_record \gset
+\if :mentioned_supervisor_cannot_read_manager_record
+\else
+  \echo 'Falha: supervisor marcado acessou a atividade privada do gestor'
   \quit 1
 \endif
 
@@ -303,6 +423,19 @@ reset role;
 -- Um segundo gestor abre uma conversa independente com o mesmo supervisor.
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000a005', true);
+
+do $$
+begin
+  begin
+    update public.daily_task_records
+    set note = 'Tentativa de marcação em rotina alheia',
+        mentioned_supervisor_id = '00000000-0000-0000-0000-00000000a002'
+    where title = 'Rotina privada do gestor';
+    raise exception 'O gestor nao deveria marcar supervisor na rotina de outro gestor';
+  exception when insufficient_privilege then null;
+  end;
+end;
+$$;
 
 insert into public.conversation_messages (supervisor_id, manager_id, sender_id, sender_role, body)
 values (

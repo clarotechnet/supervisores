@@ -1,13 +1,24 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import {
   applyCurrentSupervisorNames,
   formatAssignmentNotification,
+  formatNotificationDescription,
   formatOverdueTask,
   groupOverdueTasks,
+  notificationTaskTitle,
   type OverdueTask,
 } from "@/lib/assignment-notification";
 import { nowTime, todayKey } from "@/lib/date-utils";
@@ -32,6 +43,7 @@ async function markMessageRead(messageId: string) {
 export function AppNotifications() {
   const { profile } = useAuth();
   const navigate = useNavigate();
+  const [openedMention, setOpenedMention] = useState<AppNotification | null>(null);
   const deliveredNotificationIds = useRef(new Set<string>());
   const deliveredMessageIds = useRef(new Set<string>());
   const notifiedOverdueIds = useRef(new Set<string>());
@@ -47,15 +59,34 @@ export function AppNotifications() {
     const deliver = (notification: AppNotification) => {
       if (
         !active ||
-        notification.type !== "task_assigned" ||
+        !["task_assigned", "task_note_mention"].includes(notification.type) ||
         deliveredNotificationIds.current.has(notification.id)
       ) {
         return;
       }
 
       deliveredNotificationIds.current.add(notification.id);
-      const toastId = `assignment-${notification.id}`;
+      const toastId = `${notification.type}-${notification.id}`;
       const markRead = () => void markNotificationRead(notification.id);
+
+      if (notification.type === "task_note_mention") {
+        toast.info(notification.title, {
+          id: toastId,
+          description: formatNotificationDescription(notification),
+          duration: Infinity,
+          closeButton: true,
+          onDismiss: markRead,
+          action: {
+            label: "Abrir",
+            onClick: () => {
+              setOpenedMention(notification);
+              markRead();
+              toast.dismiss(toastId);
+            },
+          },
+        });
+        return;
+      }
 
       toast.info(notification.title, {
         id: toastId,
@@ -319,5 +350,40 @@ export function AppNotifications() {
     };
   }, [navigate, profileId, profileRole, profileStatus]);
 
-  return null;
+  return (
+    <Dialog open={openedMention !== null} onOpenChange={(open) => !open && setOpenedMention(null)}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Observação marcada para você</DialogTitle>
+          <DialogDescription>
+            O gestor marcou você em uma observação da rotina dele.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-4">
+          <div className="grid gap-1 rounded-xl border border-border bg-secondary/50 p-4">
+            <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+              Atividade
+            </span>
+            <p className="font-semibold text-foreground">
+              {openedMention ? notificationTaskTitle(openedMention) : ""}
+            </p>
+          </div>
+
+          <div className="grid gap-1 rounded-xl border border-border p-4">
+            <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+              Observação
+            </span>
+            <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+              {openedMention?.message}
+            </p>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button onClick={() => setOpenedMention(null)}>Fechar</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }

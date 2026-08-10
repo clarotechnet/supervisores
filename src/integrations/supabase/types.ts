@@ -202,6 +202,9 @@ export type Database = {
           display_order: number;
           group_name: string;
           id: string;
+          mentioned_at: string | null;
+          mentioned_by: string | null;
+          mentioned_supervisor_id: string | null;
           note: string | null;
           scheduled_date: string;
           scheduled_time: string;
@@ -221,6 +224,9 @@ export type Database = {
           display_order?: number;
           group_name?: string;
           id?: string;
+          mentioned_at?: string | null;
+          mentioned_by?: string | null;
+          mentioned_supervisor_id?: string | null;
           note?: string | null;
           scheduled_date: string;
           scheduled_time: string;
@@ -240,6 +246,9 @@ export type Database = {
           display_order?: number;
           group_name?: string;
           id?: string;
+          mentioned_at?: string | null;
+          mentioned_by?: string | null;
+          mentioned_supervisor_id?: string | null;
           note?: string | null;
           scheduled_date?: string;
           scheduled_time?: string;
@@ -264,6 +273,20 @@ export type Database = {
             columns: ["checklist_id"];
             isOneToOne: false;
             referencedRelation: "daily_checklists";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "daily_task_records_mentioned_by_fkey";
+            columns: ["mentioned_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "daily_task_records_mentioned_supervisor_id_fkey";
+            columns: ["mentioned_supervisor_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
             referencedColumns: ["id"];
           },
           {
@@ -409,6 +432,7 @@ export type Database = {
           group_name: string;
           id: string;
           is_active: boolean;
+          owner_id: string | null;
           sector_id: string;
           sort_order: number;
           title: string;
@@ -422,6 +446,7 @@ export type Database = {
           group_name?: string;
           id?: string;
           is_active?: boolean;
+          owner_id?: string | null;
           sector_id: string;
           sort_order?: number;
           title: string;
@@ -435,6 +460,7 @@ export type Database = {
           group_name?: string;
           id?: string;
           is_active?: boolean;
+          owner_id?: string | null;
           sector_id?: string;
           sort_order?: number;
           title?: string;
@@ -442,6 +468,13 @@ export type Database = {
           weekdays?: number[];
         };
         Relationships: [
+          {
+            foreignKeyName: "task_templates_owner_id_fkey";
+            columns: ["owner_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
           {
             foreignKeyName: "task_templates_sector_id_fkey";
             columns: ["sector_id"];

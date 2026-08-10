@@ -20,6 +20,16 @@ export function formatAssignmentNotification(notification: AppNotification): str
   return `${notification.message} · ${formatShortDate(date)} às ${hhmm(time)}`;
 }
 
+export function formatNotificationDescription(notification: AppNotification): string {
+  return notification.type === "task_note_mention"
+    ? notification.message
+    : formatAssignmentNotification(notification);
+}
+
+export function notificationTaskTitle(notification: AppNotification): string {
+  return notification.metadata.task_title?.trim() || "Atividade da rotina do gestor";
+}
+
 export function formatOverdueTask(task: OverdueTask): string {
   return `${hhmm(task.scheduled_time)} · ${task.title}`;
 }

@@ -37,6 +37,7 @@ export async function ensureChecklist(params: {
       .from("task_templates")
       .select("id, title, group_name, due_time, weekdays")
       .eq("sector_id", sectorId)
+      .or(`owner_id.is.null,owner_id.eq.${userId}`)
       .eq("is_active", true)
       .contains("weekdays", [dow])
       .order("sort_order", { ascending: true }),
@@ -142,12 +143,26 @@ export async function reopenTask(record: TaskRecord) {
   if (error) throw error;
 }
 
-export async function saveNote(record: TaskRecord, note: string) {
-  const { error } = await supabase
+export async function saveNote(
+  record: TaskRecord,
+  note: string,
+  mentionedSupervisorId?: string | null,
+) {
+  const patch: { note: string | null; mentioned_supervisor_id?: string | null } = {
+    note: note.trim() || null,
+  };
+  if (mentionedSupervisorId !== undefined) {
+    patch.mentioned_supervisor_id = note.trim() ? mentionedSupervisorId : null;
+  }
+
+  const { data, error } = await supabase
     .from("daily_task_records")
-    .update({ note: note.trim() || null })
-    .eq("id", record.id);
+    .update(patch)
+    .eq("id", record.id)
+    .select("*")
+    .single();
   if (error) throw error;
+  return data as TaskRecord;
 }
 
 export async function reorderDailyTasks(recordIds: string[]) {

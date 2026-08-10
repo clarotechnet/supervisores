@@ -16,7 +16,7 @@ import {
 } from "@/services/checklist";
 import { addDays, formatLongDate, todayKey } from "@/lib/date-utils";
 import { moveTaskRecordToLane, type TaskLane } from "@/lib/task-order";
-import type { Sector, TaskRecord } from "@/lib/types";
+import type { MentionableSupervisor, Sector, TaskRecord } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app/painel")({
@@ -38,12 +38,13 @@ export const Route = createFileRoute("/_app/painel")({
 const PICK_KEY = "rotina:painel-setor";
 
 function PainelPage() {
-  const { user, profile, sector } = useAuth();
+  const { user, profile, sector, isAdmin } = useAuth();
   const userId = user?.id;
   const [dateKey, setDateKey] = useState(todayKey());
   const [view, setView] = useState<"board" | "list">("board");
   const [sectors, setSectors] = useState<Sector[]>([]);
   const [pickedSectorId, setPickedSectorId] = useState<string | null>(null);
+  const [mentionableSupervisors, setMentionableSupervisors] = useState<MentionableSupervisor[]>([]);
 
   const activeSectorId = profile?.sector_id ?? pickedSectorId;
   const activeSector = sector ?? sectors.find((s) => s.id === activeSectorId) ?? null;
@@ -73,6 +74,33 @@ function PainelPage() {
       .order("sort_order", { ascending: true })
       .then(({ data }) => setSectors((data ?? []) as Sector[]));
   }, [profile?.sector_id]);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setMentionableSupervisors([]);
+      return;
+    }
+
+    let active = true;
+    void supabase
+      .from("profiles")
+      .select("id, full_name")
+      .eq("role", "supervisor")
+      .eq("status", "active")
+      .order("full_name", { ascending: true })
+      .then(({ data, error }) => {
+        if (!active) return;
+        if (error) {
+          toast.error("Não foi possível carregar os supervisores para marcação.");
+          return;
+        }
+        setMentionableSupervisors((data ?? []) as MentionableSupervisor[]);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [isAdmin]);
 
   const load = useCallback(async () => {
     const requestId = ++loadRequestId.current;
@@ -187,13 +215,19 @@ function PainelPage() {
     }
   }
 
-  async function handleNote(record: TaskRecord, note: string) {
+  async function handleNote(
+    record: TaskRecord,
+    note: string,
+    mentionedSupervisorId?: string | null,
+  ) {
     try {
-      await saveNote(record, note);
-      setRecords((prev) =>
-        prev.map((r) => (r.id === record.id ? { ...r, note: note.trim() || null } : r)),
+      const updated = await saveNote(record, note, isAdmin ? mentionedSupervisorId : undefined);
+      setRecords((prev) => prev.map((current) => (current.id === record.id ? updated : current)));
+      toast.success(
+        updated.mentioned_supervisor_id
+          ? "Observação salva e supervisor notificado."
+          : "Observação salva.",
       );
-      toast.success("Observação salva.");
     } catch {
       toast.error("Não foi possível salvar a observação.");
     }
@@ -375,6 +409,8 @@ function PainelPage() {
           onToggle={handleToggle}
           onSaveNote={handleNote}
           onMove={handleMove}
+          allowSupervisorMention={isAdmin}
+          mentionableSupervisors={mentionableSupervisors}
         />
       )}
     </AppShell>

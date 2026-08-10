@@ -98,9 +98,10 @@ export async function deleteUserAccount(profileId: string) {
   if (data?.error) throw new Error(String(data.error));
 }
 
-export async function fetchTemplates(sectorId?: string) {
+export async function fetchTemplates(sectorId?: string, personalOwnerId?: string) {
   let query = supabase.from("task_templates").select("*").order("sort_order", { ascending: true });
   if (sectorId) query = query.eq("sector_id", sectorId);
+  query = personalOwnerId ? query.eq("owner_id", personalOwnerId) : query.is("owner_id", null);
   const { data, error } = await query;
   if (error) throw error;
   return data ?? [];
@@ -108,6 +109,7 @@ export async function fetchTemplates(sectorId?: string) {
 
 export interface TemplateInput {
   sector_id: string;
+  owner_id: string | null;
   title: string;
   group_name: string;
   due_time: string;

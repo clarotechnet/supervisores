@@ -18,6 +18,9 @@ function record(id: string): TaskRecord {
     status: "pending",
     completed_at: null,
     note: null,
+    mentioned_supervisor_id: null,
+    mentioned_by: null,
+    mentioned_at: null,
     updated_at: "2026-08-03T08:00:00Z",
   };
 }
