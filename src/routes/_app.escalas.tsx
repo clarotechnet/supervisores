@@ -5,7 +5,6 @@ import {
   FileSpreadsheet,
   Lightbulb,
   Loader2,
-  Search,
   StickyNote,
   Trash2,
   Upload,
@@ -15,6 +14,8 @@ import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
 import { ScheduleDateNoteDialog } from "@/components/ScheduleDateNoteDialog";
 import { ScheduleSuggestionsDialog } from "@/components/ScheduleSuggestionsDialog";
+import { ScheduleComparisonTable } from "@/components/ScheduleComparisonTable";
+import { SchedulePeoplePicker } from "@/components/SchedulePeoplePicker";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -59,6 +60,11 @@ import {
 import { cn } from "@/lib/utils";
 import { todayKey } from "@/lib/date-utils";
 import { canManageSchedulesForRole } from "@/lib/access";
+import {
+  reconcileScheduleSelection,
+  scheduleMonthDates,
+  SCHEDULE_KIND_STYLE,
+} from "@/lib/schedule-view";
 
 export const Route = createFileRoute("/_app/escalas")({
   head: () => ({
@@ -90,13 +96,6 @@ function sectorLabel(value: string): string {
   return SCHEDULE_SECTOR_OPTIONS.find((option) => option.value === value)?.label ?? value;
 }
 
-const KIND_STYLE = {
-  work: "border-primary/30 bg-primary/10 text-primary",
-  off: "border-border bg-secondary text-muted-foreground",
-  vacation: "border-warning/40 bg-warning-soft text-warning-foreground",
-  leave: "border-info/40 bg-info-soft text-info-foreground",
-} as const;
-
 function SchedulesPage() {
   const { profile, isAdmin, isController } = useAuth();
   const [summaries, setSummaries] = useState<ScheduleUploadSummary[]>([]);
@@ -106,7 +105,7 @@ function SchedulesPage() {
   const [city, setCity] = useState("");
   const [sector, setSector] = useState("");
   const [month, setMonth] = useState("");
-  const [personName, setPersonName] = useState("");
+  const [selectedPersonNames, setSelectedPersonNames] = useState<string[]>([]);
   const [personSearch, setPersonSearch] = useState("");
   const [importOpen, setImportOpen] = useState(false);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
@@ -160,12 +159,9 @@ function SchedulesPage() {
         if (!active) return;
         setSchedule(data);
         setDateNotes(notes);
-        setPersonName((current) => {
-          const people = data?.payload.people ?? [];
-          return people.some((person) => person.name === current)
-            ? current
-            : (people[0]?.name ?? "");
-        });
+        setSelectedPersonNames((current) =>
+          reconcileScheduleSelection(current, data?.payload.people ?? []),
+        );
       })
       .catch(() => toast.error("Não foi possível abrir esta escala."))
       .finally(() => {
@@ -198,7 +194,12 @@ function SchedulesPage() {
     );
   }, [schedule, personSearch]);
 
-  const person = schedule?.payload.people.find((item) => item.name === personName) ?? null;
+  const selectedPeople = useMemo(() => {
+    const names = new Set(selectedPersonNames);
+    return (schedule?.payload.people ?? []).filter((person) => names.has(person.name));
+  }, [schedule, selectedPersonNames]);
+  const person = selectedPeople[0] ?? null;
+  const multiplePeople = selectedPeople.length > 1;
 
   function chooseCity(value: string) {
     setCity(value);
@@ -373,47 +374,35 @@ function SchedulesPage() {
             </div>
           </section>
 
-          <section className="grid gap-4 rounded-2xl border border-border bg-card p-5 shadow-card lg:grid-cols-[300px_minmax(0,1fr)]">
-            <aside className="min-w-0 border-b border-border pb-4 lg:border-b-0 lg:border-r lg:pb-0 lg:pr-4">
-              <Label htmlFor="person-search">Colaborador</Label>
-              <div className="relative mt-2">
-                <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  id="person-search"
-                  value={personSearch}
-                  onChange={(event) => setPersonSearch(event.target.value)}
-                  placeholder="Buscar por nome ou função"
-                  className="pl-9"
-                />
-              </div>
-              <div className="mt-3 max-h-[540px] space-y-1 overflow-y-auto pr-1">
-                {people.map((item) => (
-                  <button
-                    key={item.name}
-                    type="button"
-                    onClick={() => setPersonName(item.name)}
-                    className={cn(
-                      "w-full rounded-xl border px-3 py-2.5 text-left transition-colors",
-                      personName === item.name
-                        ? "border-primary bg-primary/10"
-                        : "border-transparent hover:border-border hover:bg-secondary/60",
-                    )}
-                  >
-                    <b className="block truncate text-xs">{item.name}</b>
-                    <small className="mt-0.5 block truncate text-[9px] text-muted-foreground">
-                      {item.jobTitle || "Função não informada"}
-                    </small>
-                  </button>
-                ))}
-                {people.length === 0 && (
-                  <p className="p-4 text-center text-xs text-muted-foreground">
-                    Nenhum colaborador encontrado.
-                  </p>
-                )}
-              </div>
-            </aside>
+          <section
+            className={cn(
+              "grid min-w-0 gap-4 rounded-2xl border border-border bg-card p-5 shadow-card",
+              !multiplePeople && "lg:grid-cols-[300px_minmax(0,1fr)]",
+            )}
+          >
+            <SchedulePeoplePicker
+              people={people}
+              selectedNames={selectedPersonNames}
+              search={personSearch}
+              onSearchChange={setPersonSearch}
+              onSelectionChange={setSelectedPersonNames}
+            />
 
-            {person ? (
+            {multiplePeople ? (
+              <ScheduleComparisonTable
+                people={selectedPeople}
+                month={schedule.schedule_month}
+                city={cityLabel(schedule.city)}
+                sector={sectorLabel(schedule.sector)}
+                notes={dateNotes}
+                isAdmin={isAdmin}
+                onOpenNote={openDateNote}
+                onShowPerson={(name) => {
+                  setSelectedPersonNames([name]);
+                  setPersonSearch("");
+                }}
+              />
+            ) : person ? (
               <PersonSchedule
                 person={person}
                 month={schedule.schedule_month}
@@ -423,7 +412,7 @@ function SchedulesPage() {
               />
             ) : (
               <div className="grid min-h-[360px] place-items-center text-center text-xs text-muted-foreground">
-                Selecione um colaborador para consultar a escala.
+                Selecione uma ou mais pessoas para consultar a escala.
               </div>
             )}
           </section>
@@ -547,12 +536,8 @@ function PersonSchedule({
   const firstDay = dateFromIso(month);
   const year = firstDay.getFullYear();
   const monthIndex = firstDay.getMonth();
-  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
   const leadingDays = new Date(year, monthIndex, 1).getDay();
-  const dates = Array.from({ length: daysInMonth }, (_, index) => {
-    const date = new Date(year, monthIndex, index + 1, 12);
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-  });
+  const dates = scheduleMonthDates(month);
   const entries = dates
     .map((date) => ({ date, code: person.assignments[date] ?? "" }))
     .filter((entry) => entry.code);
@@ -631,7 +616,7 @@ function PersonSchedule({
                   <span
                     className={cn(
                       "mt-2 block rounded-lg border px-2 py-1.5 text-center text-[9px] font-black",
-                      KIND_STYLE[kind],
+                      SCHEDULE_KIND_STYLE[kind],
                     )}
                   >
                     {code}
@@ -657,7 +642,7 @@ function PersonSchedule({
         <Legend color="bg-primary" label="Trabalho / turno" />
         <Legend color="bg-muted-foreground" label="Folga" />
         <Legend color="bg-warning" label="Férias" />
-        <Legend color="bg-info" label="Licença / afastamento" />
+        <Legend color="bg-navy" label="Licença / afastamento" />
       </div>
     </div>
   );

@@ -212,8 +212,8 @@ export async function parseScheduleWorkbook(file: File): Promise<ParsedScheduleS
 
 export function scheduleCodeKind(code: string): "work" | "off" | "vacation" | "leave" {
   const value = normalized(code);
-  if (value.includes("folga")) return "off";
-  if (value.includes("ferias")) return "vacation";
-  if (/\b(lcc|lic|licenca|afast)/.test(value)) return "leave";
+  if (value === "f" || value.includes("folga")) return "off";
+  if (value === "fe" || value.includes("ferias")) return "vacation";
+  if (value === "l" || /\b(lcc|lic|licenca|afast)/.test(value)) return "leave";
   return "work";
 }
