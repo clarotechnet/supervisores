@@ -9,9 +9,11 @@ import {
   LogOut,
   Menu,
   MessageCircle,
+  Moon,
   PanelLeftClose,
   PanelLeftOpen,
   ShieldCheck,
+  Sun,
   UserCog,
   Users,
   X,
@@ -19,6 +21,7 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
 import { BrandMark } from "@/components/BrandMark";
+import { useTheme } from "@/hooks/useTheme";
 
 interface NavItem {
   to: string;
@@ -66,6 +69,7 @@ export function AppShell({
   progressLabel?: string | undefined;
 }) {
   const { profile, isAdmin, isController, signOut } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(
@@ -243,6 +247,16 @@ export function AppShell({
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={toggleTheme}
+              aria-label={theme === "dark" ? "Ativar tema claro" : "Ativar tema escuro"}
+              title={theme === "dark" ? "Ativar tema claro" : "Ativar tema escuro"}
+              className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-2 text-[11px] font-bold text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground sm:px-3"
+            >
+              {theme === "dark" ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}
+              <span className="hidden sm:inline">{theme === "dark" ? "Claro" : "Escuro"}</span>
+            </button>
             <button
               type="button"
               onClick={handleSignOut}

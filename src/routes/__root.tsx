@@ -8,6 +8,7 @@ import {
 } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { AuthProvider } from "@/hooks/useAuth";
+import { ThemeProvider } from "@/hooks/useTheme";
 import { Toaster } from "@/components/ui/sonner";
 
 function NotFoundComponent() {
@@ -95,10 +96,12 @@ function RootComponent() {
     <>
       <HeadContent />
       <QueryClientProvider client={queryClient}>
-        <AuthProvider>
-          <Outlet />
-          <Toaster position="top-right" richColors />
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <Outlet />
+            <Toaster position="top-right" richColors />
+          </AuthProvider>
+        </ThemeProvider>
       </QueryClientProvider>
     </>
   );

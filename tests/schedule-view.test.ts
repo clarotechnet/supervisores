@@ -23,7 +23,7 @@ const people: SchedulePerson[] = [
 ];
 
 describe("comparação mensal de escalas", () => {
-  it("pagina a exportação Full HD sem perder ou duplicar colaboradores", () => {
+  it("pagina a exportação sem perder ou duplicar colaboradores", () => {
     const many = Array.from({ length: 43 }, (_, index) => ({
       name: `Pessoa ${index}`,
       jobTitle: "Controle",

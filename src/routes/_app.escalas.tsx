@@ -640,7 +640,7 @@ function PersonSchedule({
 
       <div className="mt-4 flex flex-wrap gap-3 text-[10px] text-muted-foreground">
         <Legend color="bg-primary" label="Trabalho / turno" />
-        <Legend color="bg-muted-foreground" label="Folga" />
+        <Legend color="bg-slate-700 dark:bg-slate-200" label="Folga" />
         <Legend color="bg-warning" label="Férias" />
         <Legend color="bg-navy" label="Licença / afastamento" />
       </div>

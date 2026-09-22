@@ -43,7 +43,8 @@ export function compactScheduleCode(code: string): string {
 
 export const SCHEDULE_KIND_STYLE = {
   work: "border-primary/30 bg-primary/10 text-primary",
-  off: "border-border bg-secondary text-muted-foreground",
+  off: "border-slate-700 bg-slate-700 text-white shadow-sm dark:border-slate-200 dark:bg-slate-200 dark:text-slate-950",
   vacation: "border-warning/40 bg-warning-soft text-warning-foreground",
-  leave: "border-navy/20 bg-navy/10 text-navy",
+  leave:
+    "border-navy/20 bg-navy/10 text-navy dark:border-sky-400/30 dark:bg-sky-400/15 dark:text-sky-200",
 } as const;

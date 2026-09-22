@@ -12,6 +12,7 @@ import {
   SCHEDULE_KIND_STYLE,
 } from "@/lib/schedule-view";
 import { cn } from "@/lib/utils";
+import { useTheme } from "@/hooks/useTheme";
 
 const WEEKDAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
@@ -35,6 +36,7 @@ export function ScheduleComparisonTable({
   onShowPerson: (name: string) => void;
 }) {
   const [exporting, setExporting] = useState(false);
+  const { theme } = useTheme();
   const dates = scheduleMonthDates(month);
   const today = todayKey();
   const totals = scheduleDayTotals(people, dates);
@@ -49,7 +51,7 @@ export function ScheduleComparisonTable({
     setExporting(true);
     try {
       const { downloadScheduleImage } = await import("@/lib/schedule-image");
-      const pageCount = await downloadScheduleImage({ people, month, city, sector, notes });
+      const pageCount = await downloadScheduleImage({ people, month, city, sector, notes, theme });
       toast.success(
         pageCount === 1
           ? "Download da imagem iniciado."
@@ -194,7 +196,8 @@ export function ScheduleComparisonTable({
                           kind
                             ? SCHEDULE_KIND_STYLE[kind]
                             : "border-transparent bg-secondary/30 text-muted-foreground",
-                          label === "T2" && "border-navy/20 bg-navy text-white",
+                          label === "T2" &&
+                            "border-navy/20 bg-navy text-white dark:border-blue-400/40 dark:bg-blue-600",
                         )}
                       >
                         <span className="max-w-16 truncate">{label}</span>
@@ -233,7 +236,7 @@ export function ScheduleComparisonTable({
               {totals.map((total) => (
                 <td
                   key={total.date}
-                  className="border-l border-t border-border py-2 font-bold text-muted-foreground"
+                  className="border-l border-t border-border py-2 font-black text-slate-700 dark:text-slate-200"
                 >
                   {total.off}
                 </td>
@@ -247,16 +250,19 @@ export function ScheduleComparisonTable({
           <b className="text-primary">T1</b> · Turno 1
         </span>
         <span>
-          <b className="text-navy">T2</b> · Turno 2
+          <b className="text-navy dark:text-blue-400">T2</b> · Turno 2
         </span>
         <span>
-          <b>F</b> · Folga
+          <b className="rounded bg-slate-700 px-1.5 py-0.5 text-white dark:bg-slate-200 dark:text-slate-950">
+            F
+          </b>{" "}
+          · Folga
         </span>
         <span>
           <b className="text-warning-foreground">Fé</b> · Férias
         </span>
         <span>
-          <b className="text-navy">L</b> · Licença / afastamento
+          <b className="text-navy dark:text-sky-300">L</b> · Licença / afastamento
         </span>
         <span>
           <b>—</b> · Sem marcação
