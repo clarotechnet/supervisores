@@ -356,7 +356,11 @@ function AdminOverview() {
                   </td>
                   <td className="py-2 pr-3 text-muted-foreground">{sectorName(p.sector_id)}</td>
                   <td className="py-2 pr-3">
-                    {p.role === "admin" ? "Administrador" : "Supervisor"}
+                    {p.role === "admin"
+                      ? "Administrador"
+                      : p.role === "controller"
+                        ? "Controlador"
+                        : "Supervisor"}
                   </td>
                   <td className="py-2 pr-3 text-muted-foreground">{STATUS_LABELS[p.status]}</td>
                   <td className="py-2 pr-3">{pending}</td>

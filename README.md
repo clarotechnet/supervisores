@@ -6,6 +6,7 @@ Aplicação web responsiva para acompanhamento das rotinas dos supervisores e do
 
 - Login, confirmação de e-mail, recuperação e troca de senha.
 - Cadastro público para supervisores e para o setor Gestor, sempre como `pending` e sem concessão automática de acesso administrativo.
+- Cadastro do papel `controller`, aprovado pelo gestor e restrito exclusivamente à aba Escalas.
 - Aprovação, rejeição, bloqueio, troca de setor e exclusão pelo gestor.
 - Setor próprio para o Gestor, com painel geral e rotina pessoal.
 - Tarefas padrão por setor e tarefas avulsas. O supervisor cria apenas para si; o gestor atribui a qualquer usuário.
@@ -14,6 +15,7 @@ Aplicação web responsiva para acompanhamento das rotinas dos supervisores e do
 - Quadro e lista, atrasos, observações, reabertura e histórico.
 - Visão geral com progresso por setor e detalhamento individual.
 - Relatórios por período e setor, com exportação CSV.
+- Escalas por cidade, setor e mês, com importação validada de arquivos `.xlsx`/`.xlsm`, prévia por aba e consulta em calendário.
 - Supabase Realtime para checklists, registros, perfis e tarefas atribuídas.
 - Popups persistentes para tarefas delegadas e alertas de atraso para o gestor.
 - RLS em todas as tabelas expostas.
@@ -51,6 +53,7 @@ public/.htaccess     fallback SPA para Hostinger/Apache
 - `daily_checklists`: um checklist por usuário e data.
 - `daily_task_records`: cópia histórica das atividades daquele dia.
 - `conversation_messages`: histórico das mensagens entre a gestão e cada supervisor.
+- `schedule_uploads`: escala importada, identificada de forma única por cidade, setor e mês.
 - `audit_logs`: conclusões, reaberturas, observações e ações administrativas.
 
 Os registros diários guardam título, grupo e horário como uma fotografia. Assim, editar ou desativar uma atividade padrão não altera o histórico.
@@ -74,6 +77,8 @@ Os registros diários guardam título, grupo e horário como uma fotografia. Ass
 15. Troca de mensagens e respostas entre gestor e supervisor.
 16. Exclusão de usuário pela Edge Function.
 17. Exportação CSV e responsividade em celular.
+18. Cadastro e aprovação de um controlador, verificando que somente a aba Escalas fica disponível.
+19. Importação da planilha de escalas com cidade, setor e aba selecionados; depois, consulta por colaborador.
 
 ## Segurança
 

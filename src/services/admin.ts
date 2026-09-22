@@ -79,7 +79,10 @@ export async function updateProfileSector(profileId: string, sectorId: string, a
 }
 
 export async function updateProfileRole(profileId: string, role: UserRole, adminId: string) {
-  const { error } = await supabase.from("profiles").update({ role }).eq("id", profileId);
+  const { error } = await supabase
+    .from("profiles")
+    .update(role === "controller" ? { role, sector_id: null } : { role })
+    .eq("id", profileId);
   if (error) throw error;
   await supabase.from("audit_logs").insert({
     user_id: adminId,

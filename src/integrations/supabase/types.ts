@@ -388,6 +388,180 @@ export type Database = {
           },
         ];
       };
+      schedule_date_notes: {
+        Row: {
+          author_id: string | null;
+          body: string;
+          created_at: string;
+          id: string;
+          note_date: string;
+          schedule_upload_id: string;
+          updated_at: string;
+        };
+        Insert: {
+          author_id?: string | null;
+          body: string;
+          created_at?: string;
+          id?: string;
+          note_date: string;
+          schedule_upload_id: string;
+          updated_at?: string;
+        };
+        Update: {
+          author_id?: string | null;
+          body?: string;
+          created_at?: string;
+          id?: string;
+          note_date?: string;
+          schedule_upload_id?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "schedule_date_notes_author_id_fkey";
+            columns: ["author_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "schedule_date_notes_schedule_upload_id_fkey";
+            columns: ["schedule_upload_id"];
+            isOneToOne: false;
+            referencedRelation: "schedule_uploads";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      schedule_suggestions: {
+        Row: {
+          author_id: string;
+          category: string;
+          city: string | null;
+          created_at: string;
+          id: string;
+          manager_response: string | null;
+          message: string;
+          reviewed_at: string | null;
+          reviewed_by: string | null;
+          schedule_month: string | null;
+          schedule_upload_id: string | null;
+          sector: string | null;
+          status: string;
+          title: string;
+          updated_at: string;
+        };
+        Insert: {
+          author_id: string;
+          category: string;
+          city?: string | null;
+          created_at?: string;
+          id?: string;
+          manager_response?: string | null;
+          message: string;
+          reviewed_at?: string | null;
+          reviewed_by?: string | null;
+          schedule_month?: string | null;
+          schedule_upload_id?: string | null;
+          sector?: string | null;
+          status?: string;
+          title: string;
+          updated_at?: string;
+        };
+        Update: {
+          author_id?: string;
+          category?: string;
+          city?: string | null;
+          created_at?: string;
+          id?: string;
+          manager_response?: string | null;
+          message?: string;
+          reviewed_at?: string | null;
+          reviewed_by?: string | null;
+          schedule_month?: string | null;
+          schedule_upload_id?: string | null;
+          sector?: string | null;
+          status?: string;
+          title?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "schedule_suggestions_author_id_fkey";
+            columns: ["author_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "schedule_suggestions_reviewed_by_fkey";
+            columns: ["reviewed_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "schedule_suggestions_schedule_upload_id_fkey";
+            columns: ["schedule_upload_id"];
+            isOneToOne: false;
+            referencedRelation: "schedule_uploads";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      schedule_uploads: {
+        Row: {
+          city: string;
+          employee_count: number;
+          entry_count: number;
+          id: string;
+          imported_at: string;
+          imported_by: string | null;
+          payload: Json;
+          schedule_month: string;
+          sector: string;
+          source_file: string;
+          source_sheet: string;
+          updated_at: string;
+        };
+        Insert: {
+          city: string;
+          employee_count?: number;
+          entry_count?: number;
+          id?: string;
+          imported_at?: string;
+          imported_by?: string | null;
+          payload: Json;
+          schedule_month: string;
+          sector: string;
+          source_file: string;
+          source_sheet: string;
+          updated_at?: string;
+        };
+        Update: {
+          city?: string;
+          employee_count?: number;
+          entry_count?: number;
+          id?: string;
+          imported_at?: string;
+          imported_by?: string | null;
+          payload?: Json;
+          schedule_month?: string;
+          sector?: string;
+          source_file?: string;
+          source_sheet?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "schedule_uploads_imported_by_fkey";
+            columns: ["imported_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       sectors: {
         Row: {
           code: string;
@@ -489,8 +663,11 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
+      can_access_schedules: { Args: { _uid: string }; Returns: boolean };
+      can_manage_schedules: { Args: { _uid: string }; Returns: boolean };
       is_active_user: { Args: { _uid: string }; Returns: boolean };
       is_admin: { Args: { _uid: string }; Returns: boolean };
+      is_controller: { Args: { _uid: string }; Returns: boolean };
       list_my_conversation_managers: {
         Args: Record<PropertyKey, never>;
         Returns: {
@@ -512,7 +689,7 @@ export type Database = {
       user_sector: { Args: { _uid: string }; Returns: string };
     };
     Enums: {
-      app_role: "supervisor" | "admin";
+      app_role: "supervisor" | "controller" | "admin";
       task_status: "pending" | "completed" | "reopened";
       user_status: "pending" | "active" | "rejected" | "inactive";
     };
@@ -636,7 +813,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      app_role: ["supervisor", "admin"],
+      app_role: ["supervisor", "controller", "admin"],
       task_status: ["pending", "completed", "reopened"],
       user_status: ["pending", "active", "rejected", "inactive"],
     },

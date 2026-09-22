@@ -30,6 +30,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { userRoleLabel } from "@/lib/access";
 
 export const Route = createFileRoute("/_app/admin/usuarios")({
   head: () => ({
@@ -112,7 +113,7 @@ function UsuariosPage() {
     }
     try {
       await updateProfileRole(target.id, role, me.id);
-      toast.success(role === "admin" ? "Agora é administrador." : "Agora é supervisor.");
+      toast.success(`Agora é ${userRoleLabel(role).toLowerCase()}.`);
       await load();
     } catch {
       toast.error("Não foi possível atualizar o papel.");
@@ -139,7 +140,7 @@ function UsuariosPage() {
   return (
     <AppShell areaColor={sector?.color}>
       <header className="mb-5">
-        <h1 className="text-2xl font-black">Supervisores</h1>
+        <h1 className="text-2xl font-black">Usuários</h1>
         <p className="mt-1 text-xs text-muted-foreground">
           Aprove solicitações, ajuste setores e controle o acesso ao sistema.
         </p>
@@ -192,6 +193,11 @@ function UsuariosPage() {
                       Admin
                     </span>
                   )}
+                  {p.role === "controller" && (
+                    <span className="rounded-full bg-info-soft px-2 py-0.5 text-[9px] font-black uppercase text-info-foreground">
+                      Controlador
+                    </span>
+                  )}
                 </div>
                 <small className="mt-1 block text-[10px] text-muted-foreground">
                   {p.email ?? "E-mail não informado"} · Cadastrado em{" "}
@@ -201,6 +207,7 @@ function UsuariosPage() {
 
               <Select
                 value={p.sector_id ?? ""}
+                disabled={p.role === "controller"}
                 onValueChange={(value) => void changeSector(p, value)}
               >
                 <SelectTrigger className="h-9 text-[11px]">
@@ -225,6 +232,7 @@ function UsuariosPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="supervisor">Supervisor</SelectItem>
+                  <SelectItem value="controller">Controlador</SelectItem>
                   <SelectItem value="admin">Administrador</SelectItem>
                 </SelectContent>
               </Select>

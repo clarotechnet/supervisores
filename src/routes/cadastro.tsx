@@ -14,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { BrandMark } from "@/components/BrandMark";
 
 export const Route = createFileRoute("/cadastro")({
   head: () => ({
@@ -37,6 +38,7 @@ export const Route = createFileRoute("/cadastro")({
 function SignupPage() {
   const navigate = useNavigate();
   const [fullName, setFullName] = useState("");
+  const [requestedRole, setRequestedRole] = useState<"supervisor" | "controller">("supervisor");
   const [sectorSlug, setSectorSlug] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -50,7 +52,7 @@ function SignupPage() {
       toast.error("Informe seu nome completo.");
       return;
     }
-    if (!sectorSlug) {
+    if (requestedRole === "supervisor" && !sectorSlug) {
       toast.error("Selecione o seu setor.");
       return;
     }
@@ -69,7 +71,11 @@ function SignupPage() {
       password,
       options: {
         emailRedirectTo: window.location.origin,
-        data: { full_name: fullName.trim(), sector_slug: sectorSlug },
+        data: {
+          full_name: fullName.trim(),
+          requested_role: requestedRole,
+          sector_slug: requestedRole === "supervisor" ? sectorSlug : "",
+        },
       },
     });
     setBusy(false);
@@ -90,11 +96,9 @@ function SignupPage() {
     <div className="flex min-h-screen items-center justify-center bg-background px-5 py-12">
       <div className="w-full max-w-md rounded-2xl border border-border bg-card p-8 shadow-card">
         <div className="mb-6 flex items-center gap-3">
-          <div className="grid size-10 place-items-center rounded-xl bg-primary text-lg font-black text-primary-foreground">
-            R
-          </div>
+          <BrandMark className="size-10" />
           <div>
-            <strong className="block text-sm">Rotina de Supervisores</strong>
+            <strong className="block text-sm">TechNET</strong>
             <small className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
               Solicitação de acesso
             </small>
@@ -120,20 +124,44 @@ function SignupPage() {
           </div>
 
           <div className="grid gap-1.5">
-            <Label htmlFor="sector">Setor</Label>
-            <Select value={sectorSlug} onValueChange={setSectorSlug}>
-              <SelectTrigger id="sector">
-                <SelectValue placeholder="Selecione o setor" />
+            <Label htmlFor="access-type">Tipo de acesso</Label>
+            <Select
+              value={requestedRole}
+              onValueChange={(value) => {
+                setRequestedRole(value as "supervisor" | "controller");
+                if (value === "controller") setSectorSlug("");
+              }}
+            >
+              <SelectTrigger id="access-type">
+                <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {SECTOR_OPTIONS.map((option) => (
-                  <SelectItem key={option.slug} value={option.slug}>
-                    {option.label}
-                  </SelectItem>
-                ))}
+                <SelectItem value="supervisor">Supervisor / Gestor</SelectItem>
+                <SelectItem value="controller">Controlador de escalas</SelectItem>
               </SelectContent>
             </Select>
+            <small className="text-[10px] text-muted-foreground">
+              O controlador aprovado acessa exclusivamente a página de escalas.
+            </small>
           </div>
+
+          {requestedRole === "supervisor" && (
+            <div className="grid gap-1.5">
+              <Label htmlFor="sector">Setor</Label>
+              <Select value={sectorSlug} onValueChange={setSectorSlug}>
+                <SelectTrigger id="sector">
+                  <SelectValue placeholder="Selecione o setor" />
+                </SelectTrigger>
+                <SelectContent>
+                  {SECTOR_OPTIONS.map((option) => (
+                    <SelectItem key={option.slug} value={option.slug}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           <div className="grid gap-1.5">
             <Label htmlFor="email">E-mail corporativo</Label>

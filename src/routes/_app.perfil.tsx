@@ -86,7 +86,11 @@ function PerfilPage() {
             <div className="flex justify-between">
               <dt className="text-muted-foreground">Perfil</dt>
               <dd className="font-semibold">
-                {profile?.role === "admin" ? "Administrador" : "Supervisor"}
+                {profile?.role === "admin"
+                  ? "Administrador"
+                  : profile?.role === "controller"
+                    ? "Controlador"
+                    : "Supervisor"}
               </dd>
             </div>
             <div className="flex justify-between">

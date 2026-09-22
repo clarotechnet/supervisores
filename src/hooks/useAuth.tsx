@@ -20,6 +20,7 @@ interface AuthValue {
   profile: Profile | null;
   sector: Sector | null;
   isAdmin: boolean;
+  isController: boolean;
   refresh: () => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -147,6 +148,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       profile,
       sector,
       isAdmin: profile?.role === "admin" && profile.status === "active",
+      isController: profile?.role === "controller" && profile.status === "active",
       refresh,
       signOut,
     }),

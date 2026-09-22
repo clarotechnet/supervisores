@@ -82,6 +82,28 @@ const noteMentionTitles = readFileSync(
   ),
   "utf8",
 );
+const controllerRole = readFileSync(
+  new URL("../supabase/migrations/20260922124256_add_controller_role.sql", import.meta.url),
+  "utf8",
+);
+const schedules = readFileSync(
+  new URL("../supabase/migrations/20260922124401_create_schedule_uploads.sql", import.meta.url),
+  "utf8",
+);
+const scheduleCollaboration = readFileSync(
+  new URL(
+    "../supabase/migrations/20260922135118_add_schedule_suggestions_and_date_notes.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const scheduleMutationPermissions = readFileSync(
+  new URL(
+    "../supabase/migrations/20260922141345_restrict_schedule_mutations_to_managers_and_supervisors.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
 describe("carga inicial", () => {
   const codes = [...seed.matchAll(/^\('((?:ntl|desc|ftz|rec|mdu|mnt)-[^']+)'/gm)].map(
@@ -249,5 +271,76 @@ describe("contrato de segurança", () => {
   it("mantém o bootstrap do admin fora do schema público", () => {
     expect(extensions).toContain("private.bootstrap_admin_by_email");
     expect(extensions).toContain("revoke all on schema private from public, anon, authenticated");
+  });
+
+  it("cria o controlador e mantém seu acesso isolado da rotina", () => {
+    expect(controllerRole).toContain("add value if not exists 'controller'");
+    expect(schedules).toContain("requested_role = 'controller'");
+    expect(schedules).toContain(
+      "p.role in ('supervisor'::public.app_role, 'admin'::public.app_role)",
+    );
+    expect(schedules).toContain(
+      "p.role in ('controller'::public.app_role, 'admin'::public.app_role)",
+    );
+  });
+
+  it("protege a tabela de escalas por RLS e pelo escopo cidade, setor e mês", () => {
+    expect(schedules).toContain("create table public.schedule_uploads");
+    expect(schedules).toContain("unique (city, sector, schedule_month)");
+    expect(schedules).toContain("alter table public.schedule_uploads enable row level security");
+    expect(schedules).toContain('create policy "schedule_uploads_select_authorized"');
+    expect(schedules).toContain('create policy "schedule_uploads_insert_authorized"');
+    expect(schedules).toContain('create policy "schedule_uploads_update_authorized"');
+    expect(schedules).toContain('create policy "schedule_uploads_delete_authorized"');
+  });
+
+  it("isola sugestões por controlador e permite a gestão administrativa", () => {
+    expect(scheduleCollaboration).toContain("create table public.schedule_suggestions");
+    expect(scheduleCollaboration).toContain(
+      "alter table public.schedule_suggestions enable row level security",
+    );
+    expect(scheduleCollaboration).toContain("author_id = (select auth.uid())");
+    expect(scheduleCollaboration).toContain("public.is_controller((select auth.uid()))");
+    expect(scheduleCollaboration).toContain(
+      'create policy "schedule_suggestions_select_authorized"',
+    );
+    expect(scheduleCollaboration).toContain(
+      'create policy "schedule_suggestions_insert_controller"',
+    );
+    expect(scheduleCollaboration).toContain('create policy "schedule_suggestions_update_admin"');
+    expect(scheduleCollaboration).toContain('create policy "schedule_suggestions_delete_admin"');
+  });
+
+  it("limita a escrita de observações das datas aos gestores", () => {
+    expect(scheduleCollaboration).toContain("create table public.schedule_date_notes");
+    expect(scheduleCollaboration).toContain(
+      "alter table public.schedule_date_notes enable row level security",
+    );
+    expect(scheduleCollaboration).toContain("unique (schedule_upload_id, note_date)");
+    expect(scheduleCollaboration).toContain(
+      'create policy "schedule_date_notes_select_authorized"',
+    );
+    expect(scheduleCollaboration).toContain('create policy "schedule_date_notes_insert_admin"');
+    expect(scheduleCollaboration).toContain('create policy "schedule_date_notes_update_admin"');
+    expect(scheduleCollaboration).toContain('create policy "schedule_date_notes_delete_admin"');
+    expect(scheduleCollaboration).toContain("grant select, insert, update, delete");
+  });
+
+  it("deixa o controlador somente com leitura das escalas", () => {
+    expect(scheduleMutationPermissions).toContain(
+      "create or replace function public.can_manage_schedules",
+    );
+    expect(scheduleMutationPermissions).toContain(
+      "p.role in ('supervisor'::public.app_role, 'admin'::public.app_role)",
+    );
+    expect(scheduleMutationPermissions).toContain(
+      "and (select public.can_manage_schedules((select auth.uid())))",
+    );
+    expect(scheduleMutationPermissions).toContain(
+      "using ((select public.can_manage_schedules((select auth.uid()))))",
+    );
+    expect(scheduleMutationPermissions).toContain(
+      'drop policy if exists "schedule_uploads_delete_authorized"',
+    );
   });
 });

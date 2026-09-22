@@ -4,9 +4,11 @@ import { toast } from "sonner";
 import { Eye, EyeOff } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { landingPathForRole } from "@/lib/access";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { BrandMark } from "@/components/BrandMark";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -28,7 +30,7 @@ export const Route = createFileRoute("/")({
 });
 
 function LoginPage() {
-  const { session, profile, isAdmin, loading } = useAuth();
+  const { session, profile, loading } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -39,8 +41,8 @@ function LoginPage() {
     if (loading || !session) return;
     if (!profile) return;
     if (profile.status !== "active") void navigate({ to: "/aguardando", replace: true });
-    else void navigate({ to: isAdmin ? "/admin" : "/painel", replace: true });
-  }, [loading, session, profile, isAdmin, navigate]);
+    else void navigate({ to: landingPathForRole(profile.role), replace: true });
+  }, [loading, session, profile, navigate]);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -65,11 +67,9 @@ function LoginPage() {
     <div className="grid min-h-screen lg:grid-cols-[1.1fr_1fr]">
       <section className="hero-surface hidden flex-col justify-between p-12 lg:flex">
         <div className="flex items-center gap-3">
-          <div className="grid size-11 place-items-center rounded-xl bg-primary text-xl font-black text-primary-foreground">
-            R
-          </div>
+          <BrandMark className="size-11" />
           <div>
-            <strong className="block text-lg">Rotina de Supervisores</strong>
+            <strong className="block text-lg">TechNET</strong>
             <small className="text-[11px] uppercase tracking-[0.16em] opacity-70">
               Operação · COP · MDU · Manutenção
             </small>

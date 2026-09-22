@@ -15,6 +15,7 @@ import { Route as AguardandoRouteImport } from './routes/aguardando'
 import { Route as CadastroRouteImport } from './routes/cadastro'
 import { Route as RecuperarSenhaRouteImport } from './routes/recuperar-senha'
 import { Route as RedefinirSenhaRouteImport } from './routes/redefinir-senha'
+import { Route as AppEscalasRouteImport } from './routes/_app.escalas'
 import { Route as AppHistoricoRouteImport } from './routes/_app.historico'
 import { Route as AppMensagensRouteImport } from './routes/_app.mensagens'
 import { Route as AppPainelRouteImport } from './routes/_app.painel'
@@ -54,6 +55,11 @@ const RedefinirSenhaRoute = RedefinirSenhaRouteImport.update({
   id: '/redefinir-senha',
   path: '/redefinir-senha',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AppEscalasRoute = AppEscalasRouteImport.update({
+  id: '/escalas',
+  path: '/escalas',
+  getParentRoute: () => AppRoute,
 } as any)
 const AppHistoricoRoute = AppHistoricoRouteImport.update({
   id: '/historico',
@@ -113,6 +119,7 @@ export interface FileRoutesByFullPath {
   '/cadastro': typeof CadastroRoute
   '/recuperar-senha': typeof RecuperarSenhaRoute
   '/redefinir-senha': typeof RedefinirSenhaRoute
+  '/escalas': typeof AppEscalasRoute
   '/historico': typeof AppHistoricoRoute
   '/mensagens': typeof AppMensagensRoute
   '/painel': typeof AppPainelRoute
@@ -130,6 +137,7 @@ export interface FileRoutesByTo {
   '/cadastro': typeof CadastroRoute
   '/recuperar-senha': typeof RecuperarSenhaRoute
   '/redefinir-senha': typeof RedefinirSenhaRoute
+  '/escalas': typeof AppEscalasRoute
   '/historico': typeof AppHistoricoRoute
   '/mensagens': typeof AppMensagensRoute
   '/painel': typeof AppPainelRoute
@@ -149,6 +157,7 @@ export interface FileRoutesById {
   '/cadastro': typeof CadastroRoute
   '/recuperar-senha': typeof RecuperarSenhaRoute
   '/redefinir-senha': typeof RedefinirSenhaRoute
+  '/_app/escalas': typeof AppEscalasRoute
   '/_app/historico': typeof AppHistoricoRoute
   '/_app/mensagens': typeof AppMensagensRoute
   '/_app/painel': typeof AppPainelRoute
@@ -168,6 +177,7 @@ export interface FileRouteTypes {
     | '/cadastro'
     | '/recuperar-senha'
     | '/redefinir-senha'
+    | '/escalas'
     | '/historico'
     | '/mensagens'
     | '/painel'
@@ -185,6 +195,7 @@ export interface FileRouteTypes {
     | '/cadastro'
     | '/recuperar-senha'
     | '/redefinir-senha'
+    | '/escalas'
     | '/historico'
     | '/mensagens'
     | '/painel'
@@ -203,6 +214,7 @@ export interface FileRouteTypes {
     | '/cadastro'
     | '/recuperar-senha'
     | '/redefinir-senha'
+    | '/_app/escalas'
     | '/_app/historico'
     | '/_app/mensagens'
     | '/_app/painel'
@@ -267,6 +279,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/redefinir-senha'
       preLoaderRoute: typeof RedefinirSenhaRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/_app/escalas': {
+      id: '/_app/escalas'
+      path: '/escalas'
+      fullPath: '/escalas'
+      preLoaderRoute: typeof AppEscalasRouteImport
+      parentRoute: typeof AppRoute
     }
     '/_app/historico': {
       id: '/_app/historico'
@@ -342,6 +361,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AppRouteChildren {
+  AppEscalasRoute: typeof AppEscalasRoute
   AppHistoricoRoute: typeof AppHistoricoRoute
   AppMensagensRoute: typeof AppMensagensRoute
   AppPainelRoute: typeof AppPainelRoute
@@ -355,6 +375,7 @@ interface AppRouteChildren {
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppEscalasRoute: AppEscalasRoute,
   AppHistoricoRoute: AppHistoricoRoute,
   AppMensagensRoute: AppMensagensRoute,
   AppPainelRoute: AppPainelRoute,

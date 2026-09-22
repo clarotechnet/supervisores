@@ -1,4 +1,4 @@
-export type UserRole = "supervisor" | "admin";
+export type UserRole = "supervisor" | "controller" | "admin";
 export type UserStatus = "pending" | "active" | "rejected" | "inactive";
 export type TaskStatus = "pending" | "completed" | "reopened";
 
@@ -142,6 +142,101 @@ export interface AuditLog {
   new_data: Record<string, unknown> | null;
   created_at: string;
 }
+
+export interface SchedulePerson {
+  name: string;
+  jobTitle: string;
+  assignments: Record<string, string>;
+}
+
+export interface SchedulePayload {
+  dates: string[];
+  people: SchedulePerson[];
+  codes: string[];
+}
+
+export interface ScheduleUpload {
+  id: string;
+  city: string;
+  sector: string;
+  schedule_month: string;
+  source_file: string;
+  source_sheet: string;
+  employee_count: number;
+  entry_count: number;
+  payload: SchedulePayload;
+  imported_by: string | null;
+  imported_at: string;
+  updated_at: string;
+}
+
+export type ScheduleUploadSummary = Omit<ScheduleUpload, "payload">;
+
+export type ScheduleSuggestionCategory = "improvement" | "addition" | "correction" | "other";
+export type ScheduleSuggestionStatus = "open" | "reviewing" | "completed";
+
+export interface ScheduleSuggestion {
+  id: string;
+  author_id: string;
+  author_name: string;
+  schedule_upload_id: string | null;
+  city: string | null;
+  sector: string | null;
+  schedule_month: string | null;
+  category: ScheduleSuggestionCategory;
+  title: string;
+  message: string;
+  status: ScheduleSuggestionStatus;
+  manager_response: string | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ScheduleDateNote {
+  id: string;
+  schedule_upload_id: string;
+  note_date: string;
+  body: string;
+  author_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export const SCHEDULE_SUGGESTION_CATEGORIES: ReadonlyArray<{
+  value: ScheduleSuggestionCategory;
+  label: string;
+}> = [
+  { value: "improvement", label: "Melhoria" },
+  { value: "addition", label: "Adicionar algo" },
+  { value: "correction", label: "Correção" },
+  { value: "other", label: "Outro" },
+];
+
+export const SCHEDULE_SUGGESTION_STATUS_LABELS: Record<ScheduleSuggestionStatus, string> = {
+  open: "Aberta",
+  reviewing: "Em análise",
+  completed: "Concluída",
+};
+
+export const SCHEDULE_CITY_OPTIONS = [
+  { value: "natal", label: "Natal" },
+  { value: "mossoro", label: "Mossoró" },
+  { value: "fortaleza", label: "Fortaleza" },
+  { value: "recife", label: "Recife" },
+] as const;
+
+export const SCHEDULE_SECTOR_OPTIONS = [
+  { value: "adesao", label: "Adesão" },
+  { value: "servico", label: "Serviço" },
+  { value: "desconexao", label: "Desconexão" },
+  { value: "mdu", label: "MDU" },
+  { value: "vt", label: "VT" },
+  { value: "construcao", label: "Construção" },
+  { value: "manutencao", label: "Manutenção" },
+  { value: "controle-operacional", label: "Controle operacional" },
+] as const;
 
 export const SECTOR_OPTIONS = [
   { slug: "natal", label: "COP Natal" },
