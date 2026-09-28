@@ -9,6 +9,10 @@ export function landingPathForRole(role: UserRole): "/admin" | "/escalas" | "/pa
 export function isPathAllowedForRole(role: UserRole, pathname: string): boolean {
   if (role === "admin") return true;
   if (role === "controller") return pathname === "/escalas" || pathname.startsWith("/escalas/");
+
+  // Os supervisores atuais são supervisores de controle e têm acesso completo
+  // ao módulo Quark. Outras páginas administrativas continuam bloqueadas.
+  if (pathname === "/admin/quark" || pathname.startsWith("/admin/quark/")) return true;
   return !pathname.startsWith("/admin");
 }
 

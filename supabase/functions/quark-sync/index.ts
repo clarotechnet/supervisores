@@ -15,7 +15,7 @@ const MAX_PERIOD_DAYS = 60;
 
 const UNITS = [
   { id: 9417839, name: "VNA TELECOM LTDA - NATAL", city: "Natal" },
-  { id: 9417838, name: "VNA TELECOM LTDA - Mossoro", city: "Mossoró" },
+  { id: 9417838, name: "VNA TELECOM LTDA - Mossoro", city: "Mossor\u00f3" },
   { id: 9417837, name: "RDT TELECOM LTDA - RECIFE", city: "Recife" },
   { id: 9417836, name: "RDT TELECOM LTDA - FORTALEZA", city: "Fortaleza" },
   { id: 9417834, name: "DMV DINIZ - RECIFE", city: "Recife" },
@@ -54,7 +54,7 @@ function boolValue(value: unknown, fallback = false): boolean {
   if (typeof value === "number") return value !== 0;
   const normalized = textValue(value)?.toLocaleLowerCase("pt-BR");
   if (["true", "sim", "s", "1", "ativo"].includes(normalized ?? "")) return true;
-  if (["false", "não", "nao", "n", "0", "inativo"].includes(normalized ?? "")) return false;
+  if (["false", "n\u00e3o", "nao", "n", "0", "inativo"].includes(normalized ?? "")) return false;
   return fallback;
 }
 
@@ -206,7 +206,7 @@ async function fetchAllCollaborators(unit: QuarkUnit, token: string): Promise<Js
   if (firstRows.length < COLLABORATOR_PAGE_SIZE) return all;
 
   // O endpoint /v1/colaboradores/ usa page + page_size iniciando em 1.
-  // A primeira chamada sem parâmetros corresponde à página 1.
+  // A primeira chamada sem par\u00e2metros corresponde \u00e0 p\u00e1gina 1.
   for (let page = 2; page <= MAX_COLLABORATOR_PAGES; page += 1) {
     const url = new URL(`${QUARK_BASE_URL}/v1/colaboradores/`);
     url.searchParams.set("page", String(page));
@@ -226,7 +226,7 @@ async function fetchAllCollaborators(unit: QuarkUnit, token: string): Promise<Js
 
     if (!added || rows.length < COLLABORATOR_PAGE_SIZE) break;
     if (page === MAX_COLLABORATOR_PAGES) {
-      throw new Error("A paginação de colaboradores atingiu o limite de segurança.");
+      throw new Error("A pagina\u00e7\u00e3o de colaboradores atingiu o limite de seguran\u00e7a.");
     }
   }
 
@@ -302,7 +302,7 @@ async function fetchMirror(unit: QuarkUnit, startDate: string, endDate: string, 
     }
     if (!added || rows.length < PAGE_SIZE || (totalPages !== null && page + 1 >= totalPages)) break;
     if (page === MAX_PAGES - 1)
-      throw new Error("A paginação do Quark atingiu o limite de segurança.");
+      throw new Error("A pagina\u00e7\u00e3o do Quark atingiu o limite de seguran\u00e7a.");
   }
   return all;
 }
@@ -380,7 +380,7 @@ function normalizeUnitRows(unit: QuarkUnit, rows: JsonRecord[]) {
         unexcused_absence_minutes: unexcused,
         late_minutes: /atras/.test(treatmentText) ? durationMinutes(day["horasAusencia"]) : 0,
         // Movimento do banco no dia. O painel soma estes valores dentro
-        // do período selecionado para obter o saldo do colaborador no recorte.
+        // do per\u00edodo selecionado para obter o saldo do colaborador no recorte.
         bank_balance_minutes: durationMinutes(day["saldoBancoHoras"]),
         bank_operation: textValue(day["operacaoBancoHoras"]),
         observation: textValue(day["observacoes"]),
@@ -435,43 +435,46 @@ async function upsertChunks(
 
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: CORS_HEADERS });
-  if (request.method !== "POST") return json(405, { error: "Método não permitido" });
+  if (request.method !== "POST") return json(405, { error: "M\u00e9todo n\u00e3o permitido" });
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   const quarkToken = Deno.env.get("QUARK_AUTH_TOKEN");
   const authorization = request.headers.get("Authorization");
   if (!supabaseUrl || !serviceRoleKey || !authorization) {
-    return json(401, { error: "Requisição não autorizada" });
+    return json(401, { error: "Requisi\u00e7\u00e3o n\u00e3o autorizada" });
   }
   if (!quarkToken)
-    return json(503, { error: "A credencial da API Quark ainda não foi configurada." });
+    return json(503, { error: "A credencial da API Quark ainda n\u00e3o foi configurada." });
 
   const adminClient = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
   const token = authorization.replace(/^Bearer\s+/i, "");
   const { data: authData, error: authError } = await adminClient.auth.getUser(token);
-  if (authError || !authData.user) return json(401, { error: "Sessão inválida" });
+  if (authError || !authData.user) return json(401, { error: "Sess\u00e3o inv\u00e1lida" });
   const { data: requester } = await adminClient
     .from("profiles")
     .select("role,status")
     .eq("id", authData.user.id)
     .maybeSingle();
-  if (requester?.role !== "admin" || requester.status !== "active") {
-    return json(403, { error: "Apenas gestores ativos podem atualizar o Quark." });
+  const canManageQuark =
+    requester?.status === "active" &&
+    (requester.role === "admin" || requester.role === "supervisor");
+  if (!canManageQuark) {
+    return json(403, { error: "Apenas gestores e supervisores ativos podem atualizar o Quark." });
   }
 
   let payload: SyncPayload;
   try {
     payload = (await request.json()) as SyncPayload;
   } catch {
-    return json(400, { error: "Corpo da requisição inválido." });
+    return json(400, { error: "Corpo da requisi\u00e7\u00e3o inv\u00e1lido." });
   }
   const startDate = payload.startDate ?? "";
   const endDate = payload.endDate ?? "";
   if (!validPeriod(startDate, endDate)) {
-    return json(400, { error: "Informe um período válido de até 60 dias." });
+    return json(400, { error: "Informe um per\u00edodo v\u00e1lido de at\u00e9 60 dias." });
   }
 
   const { data: run, error: runError } = await adminClient
@@ -479,13 +482,14 @@ Deno.serve(async (request) => {
     .insert({ requested_by: authData.user.id, period_start: startDate, period_end: endDate })
     .select("id")
     .single();
-  if (runError || !run) return json(500, { error: "Não foi possível iniciar a atualização." });
+  if (runError || !run)
+    return json(500, { error: "N\u00e3o foi poss\u00edvel iniciar a atualiza\u00e7\u00e3o." });
 
   const counters = { units: 0, people: 0, days: 0, punches: 0 };
   try {
     for (const unit of UNITS) {
-      // Cadastro completo da unidade: não depende de o colaborador possuir
-      // batidas no período selecionado.
+      // Cadastro completo da unidade: n\u00e3o depende de o colaborador possuir
+      // batidas no per\u00edodo selecionado.
       const collaboratorRows = await fetchAllCollaborators(unit, quarkToken);
       const collaboratorPeople = normalizeCollaboratorPeople(unit, collaboratorRows);
       await upsertChunks(
@@ -495,8 +499,8 @@ Deno.serve(async (request) => {
         "unit_id,collaborator_id",
       );
 
-      // Espelho: alimenta horas, ocorrências e batidas do período e também
-      // enriquece o cadastro com cargo/setor quando disponível.
+      // Espelho: alimenta horas, ocorr\u00eancias e batidas do per\u00edodo e tamb\u00e9m
+      // enriquece o cadastro com cargo/setor quando dispon\u00edvel.
       const rows = await fetchMirror(unit, startDate, endDate, quarkToken);
       const normalized = normalizeUnitRows(unit, rows);
       await upsertChunks(adminClient, "quark_people", normalized.people, "unit_id,collaborator_id");

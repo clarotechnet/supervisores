@@ -58,8 +58,10 @@ O período máximo por atualização é de 60 dias.
 
 ## Segurança
 
-- A função aceita somente sessões de gestores ativos.
+- As funções aceitam sessões ativas de gestores e supervisores.
+- Os supervisores atuais são supervisores de controle e têm acesso completo ao módulo Quark.
+- O papel `controller` continua sem acesso ao Quark.
 - A credencial externa existe somente como secret do Supabase.
 - CPF, PIS e fotos de ponto não são persistidos.
-- As seis tabelas possuem RLS e são visíveis somente à gestão.
+- As seis tabelas possuem RLS e ficam disponíveis somente para gestores e supervisores ativos.
 - A API Quark não sobrescreve cidade, setor, supervisor nem moradia cadastrados manualmente.

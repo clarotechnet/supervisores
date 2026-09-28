@@ -48,7 +48,7 @@ function boolValue(value: unknown, fallback = false): boolean {
   if (typeof value === "number") return value !== 0;
   const normalized = textValue(value)?.toLocaleLowerCase("pt-BR") ?? "";
   if (["true", "sim", "s", "1", "ativo"].includes(normalized)) return true;
-  if (["false", "não", "nao", "n", "0", "inativo"].includes(normalized)) return false;
+  if (["false", "n\u00e3o", "nao", "n", "0", "inativo"].includes(normalized)) return false;
   return fallback;
 }
 
@@ -214,7 +214,7 @@ function normalizePoint(
     parsedDateTime.workDate ??
     parseWorkDate(findValue(rawPoint, ["data", "dia", "dataPonto", "data_ponto"]));
   const punchTime =
-    parsedDateTime.time ?? normalizeTime(findValue(rawPoint, ["hora", "horario", "horário"]));
+    parsedDateTime.time ?? normalizeTime(findValue(rawPoint, ["hora", "horario", "hor\u00e1rio"]));
   if (!workDate) return null;
 
   const pointId =
@@ -229,11 +229,11 @@ function normalizePoint(
     punched_at: parsedDateTime.timestamp ?? (punchTime ? `${workDate}T${punchTime}-03:00` : null),
     punch_time: punchTime,
     location: textValue(
-      findValue(rawPoint, ["localizacao", "localização", "endereco", "endereço"]),
+      findValue(rawPoint, ["localizacao", "localiza\u00e7\u00e3o", "endereco", "endere\u00e7o"]),
     ),
     latitude: numberValue(findValue(rawPoint, ["latitude", "lat"])),
     longitude: numberValue(findValue(rawPoint, ["longitude", "lng", "lon"])),
-    observation: textValue(findValue(rawPoint, ["observacao", "observação"])),
+    observation: textValue(findValue(rawPoint, ["observacao", "observa\u00e7\u00e3o"])),
     record_type: textValue(findValue(rawPoint, ["tipoRegistroPonto", "tipo_registro_ponto"])),
     is_offline: boolValue(findValue(rawPoint, ["pontoOffline", "offline"])),
     is_out_of_tolerance: boolValue(
@@ -245,17 +245,17 @@ function normalizePoint(
 
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: CORS_HEADERS });
-  if (request.method !== "POST") return json(405, { error: "Método não permitido" });
+  if (request.method !== "POST") return json(405, { error: "M\u00e9todo n\u00e3o permitido" });
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   const quarkToken = Deno.env.get("QUARK_AUTH_TOKEN");
   const authorization = request.headers.get("Authorization");
   if (!supabaseUrl || !serviceRoleKey || !authorization) {
-    return json(401, { error: "Requisição não autorizada" });
+    return json(401, { error: "Requisi\u00e7\u00e3o n\u00e3o autorizada" });
   }
   if (!quarkToken) {
-    return json(503, { error: "A credencial da API Quark ainda não foi configurada." });
+    return json(503, { error: "A credencial da API Quark ainda n\u00e3o foi configurada." });
   }
 
   const adminClient = createClient(supabaseUrl, serviceRoleKey, {
@@ -263,22 +263,27 @@ Deno.serve(async (request) => {
   });
   const userToken = authorization.replace(/^Bearer\s+/i, "");
   const { data: authData, error: authError } = await adminClient.auth.getUser(userToken);
-  if (authError || !authData.user) return json(401, { error: "Sessão inválida" });
+  if (authError || !authData.user) return json(401, { error: "Sess\u00e3o inv\u00e1lida" });
 
   const { data: requester } = await adminClient
     .from("profiles")
     .select("role,status")
     .eq("id", authData.user.id)
     .maybeSingle();
-  if (requester?.role !== "admin" || requester.status !== "active") {
-    return json(403, { error: "Apenas gestores ativos podem consultar localizações." });
+  const canManageQuark =
+    requester?.status === "active" &&
+    (requester.role === "admin" || requester.role === "supervisor");
+  if (!canManageQuark) {
+    return json(403, {
+      error: "Apenas gestores e supervisores ativos podem consultar localiza\u00e7\u00f5es.",
+    });
   }
 
   let payload: LocationPayload;
   try {
     payload = (await request.json()) as LocationPayload;
   } catch {
-    return json(400, { error: "Corpo da requisição inválido." });
+    return json(400, { error: "Corpo da requisi\u00e7\u00e3o inv\u00e1lido." });
   }
 
   const unitId = Number(payload.unitId);
@@ -286,7 +291,9 @@ Deno.serve(async (request) => {
   const startDate = textValue(payload.startDate) ?? "";
   const endDate = textValue(payload.endDate) ?? "";
   if (!ALLOWED_UNITS.has(unitId) || !collaboratorId || !validPeriod(startDate, endDate)) {
-    return json(400, { error: "Colaborador, unidade ou período inválido. O limite é 60 dias." });
+    return json(400, {
+      error: "Colaborador, unidade ou per\u00edodo inv\u00e1lido. O limite \u00e9 60 dias.",
+    });
   }
 
   const { data: person, error: personError } = await adminClient
@@ -295,8 +302,8 @@ Deno.serve(async (request) => {
     .eq("unit_id", unitId)
     .eq("collaborator_id", collaboratorId)
     .maybeSingle();
-  if (personError) return json(500, { error: "Não foi possível validar o colaborador." });
-  if (!person) return json(404, { error: "Colaborador não encontrado no cadastro Quark." });
+  if (personError) return json(500, { error: "N\u00e3o foi poss\u00edvel validar o colaborador." });
+  if (!person) return json(404, { error: "Colaborador n\u00e3o encontrado no cadastro Quark." });
 
   try {
     const url = new URL(
@@ -342,7 +349,9 @@ Deno.serve(async (request) => {
     });
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Falha ao consultar as localizações do Quark.";
+      error instanceof Error
+        ? error.message
+        : "Falha ao consultar as localiza\u00e7\u00f5es do Quark.";
     return json(502, { error: message.slice(0, 1000) });
   }
 });

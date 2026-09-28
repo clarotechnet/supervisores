@@ -19,8 +19,8 @@ import {
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
-import { AdminGate } from "@/components/AdminGate";
 import { AppShell } from "@/components/AppShell";
+import { QuarkGate } from "@/components/QuarkGate";
 import { QuarkLocationMap } from "@/components/QuarkLocationMap";
 import { Button } from "@/components/ui/button";
 import {
@@ -97,9 +97,9 @@ export const Route = createFileRoute("/_app/admin/quark")({
     ],
   }),
   component: () => (
-    <AdminGate>
+    <QuarkGate>
       <QuarkPage />
-    </AdminGate>
+    </QuarkGate>
   ),
 });
 

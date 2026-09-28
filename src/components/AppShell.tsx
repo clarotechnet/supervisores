@@ -35,6 +35,7 @@ const SUPERVISOR_NAV: NavItem[] = [
   { to: "/painel", label: "Minha rotina", hint: "Checklist do dia", icon: CalendarCheck },
   { to: "/tarefas", label: "Minhas tarefas", hint: "Criar tarefa avulsa", icon: ListPlus },
   { to: "/escalas", label: "Escalas", hint: "Cidades, setores e equipes", icon: CalendarDays },
+  { to: "/admin/quark", label: "Quark", hint: "Ponto, banco de horas e equipe", icon: Database },
   { to: "/mensagens", label: "Mensagens", hint: "Conversa com a gestão", icon: MessageCircle },
   { to: "/historico", label: "Histórico", hint: "Dias anteriores", icon: ClipboardList },
   { to: "/perfil", label: "Meu perfil", hint: "Senha e preferências", icon: UserCog },
