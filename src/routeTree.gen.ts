@@ -23,6 +23,7 @@ import { Route as AppPerfilRouteImport } from './routes/_app.perfil'
 import { Route as AppTarefasRouteImport } from './routes/_app.tarefas'
 import { Route as AppAdminIndexRouteImport } from './routes/_app.admin.index'
 import { Route as AppAdminAtividadesRouteImport } from './routes/_app.admin.atividades'
+import { Route as AppAdminQuarkRouteImport } from './routes/_app.admin.quark'
 import { Route as AppAdminRelatoriosRouteImport } from './routes/_app.admin.relatorios'
 import { Route as AppAdminUsuariosRouteImport } from './routes/_app.admin.usuarios'
 import { Route as AppAdminSupervisorProfileIdRouteImport } from './routes/_app.admin.supervisor.$profileId'
@@ -96,6 +97,11 @@ const AppAdminAtividadesRoute = AppAdminAtividadesRouteImport.update({
   path: '/admin/atividades',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAdminQuarkRoute = AppAdminQuarkRouteImport.update({
+  id: '/admin/quark',
+  path: '/admin/quark',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppAdminRelatoriosRoute = AppAdminRelatoriosRouteImport.update({
   id: '/admin/relatorios',
   path: '/admin/relatorios',
@@ -126,6 +132,7 @@ export interface FileRoutesByFullPath {
   '/perfil': typeof AppPerfilRoute
   '/tarefas': typeof AppTarefasRoute
   '/admin/atividades': typeof AppAdminAtividadesRoute
+  '/admin/quark': typeof AppAdminQuarkRoute
   '/admin/relatorios': typeof AppAdminRelatoriosRoute
   '/admin/usuarios': typeof AppAdminUsuariosRoute
   '/admin/': typeof AppAdminIndexRoute
@@ -144,6 +151,7 @@ export interface FileRoutesByTo {
   '/perfil': typeof AppPerfilRoute
   '/tarefas': typeof AppTarefasRoute
   '/admin/atividades': typeof AppAdminAtividadesRoute
+  '/admin/quark': typeof AppAdminQuarkRoute
   '/admin/relatorios': typeof AppAdminRelatoriosRoute
   '/admin/usuarios': typeof AppAdminUsuariosRoute
   '/admin': typeof AppAdminIndexRoute
@@ -164,6 +172,7 @@ export interface FileRoutesById {
   '/_app/perfil': typeof AppPerfilRoute
   '/_app/tarefas': typeof AppTarefasRoute
   '/_app/admin/atividades': typeof AppAdminAtividadesRoute
+  '/_app/admin/quark': typeof AppAdminQuarkRoute
   '/_app/admin/relatorios': typeof AppAdminRelatoriosRoute
   '/_app/admin/usuarios': typeof AppAdminUsuariosRoute
   '/_app/admin/': typeof AppAdminIndexRoute
@@ -184,6 +193,7 @@ export interface FileRouteTypes {
     | '/perfil'
     | '/tarefas'
     | '/admin/atividades'
+    | '/admin/quark'
     | '/admin/relatorios'
     | '/admin/usuarios'
     | '/admin/'
@@ -202,6 +212,7 @@ export interface FileRouteTypes {
     | '/perfil'
     | '/tarefas'
     | '/admin/atividades'
+    | '/admin/quark'
     | '/admin/relatorios'
     | '/admin/usuarios'
     | '/admin'
@@ -221,6 +232,7 @@ export interface FileRouteTypes {
     | '/_app/perfil'
     | '/_app/tarefas'
     | '/_app/admin/atividades'
+    | '/_app/admin/quark'
     | '/_app/admin/relatorios'
     | '/_app/admin/usuarios'
     | '/_app/admin/'
@@ -336,6 +348,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAdminAtividadesRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/admin/quark': {
+      id: '/_app/admin/quark'
+      path: '/admin/quark'
+      fullPath: '/admin/quark'
+      preLoaderRoute: typeof AppAdminQuarkRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/admin/relatorios': {
       id: '/_app/admin/relatorios'
       path: '/admin/relatorios'
@@ -368,6 +387,7 @@ interface AppRouteChildren {
   AppPerfilRoute: typeof AppPerfilRoute
   AppTarefasRoute: typeof AppTarefasRoute
   AppAdminAtividadesRoute: typeof AppAdminAtividadesRoute
+  AppAdminQuarkRoute: typeof AppAdminQuarkRoute
   AppAdminRelatoriosRoute: typeof AppAdminRelatoriosRoute
   AppAdminUsuariosRoute: typeof AppAdminUsuariosRoute
   AppAdminIndexRoute: typeof AppAdminIndexRoute
@@ -382,6 +402,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppPerfilRoute: AppPerfilRoute,
   AppTarefasRoute: AppTarefasRoute,
   AppAdminAtividadesRoute: AppAdminAtividadesRoute,
+  AppAdminQuarkRoute: AppAdminQuarkRoute,
   AppAdminRelatoriosRoute: AppAdminRelatoriosRoute,
   AppAdminUsuariosRoute: AppAdminUsuariosRoute,
   AppAdminIndexRoute: AppAdminIndexRoute,

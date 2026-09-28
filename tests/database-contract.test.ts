@@ -104,6 +104,10 @@ const scheduleMutationPermissions = readFileSync(
   ),
   "utf8",
 );
+const quarkDashboard = readFileSync(
+  new URL("../supabase/migrations/20260924180910_add_quark_dashboard.sql", import.meta.url),
+  "utf8",
+);
 
 describe("carga inicial", () => {
   const codes = [...seed.matchAll(/^\('((?:ntl|desc|ftz|rec|mdu|mnt)-[^']+)'/gm)].map(
@@ -342,5 +346,24 @@ describe("contrato de segurança", () => {
     expect(scheduleMutationPermissions).toContain(
       'drop policy if exists "schedule_uploads_delete_authorized"',
     );
+  });
+
+  it("isola os dados do Quark para gestores e separa os cadastros manuais", () => {
+    for (const table of [
+      "quark_sync_runs",
+      "quark_people",
+      "quark_people_directory",
+      "quark_home_locations",
+      "quark_daily_records",
+      "quark_punches",
+    ]) {
+      expect(quarkDashboard).toContain(`alter table public.${table} enable row level security`);
+    }
+    expect(quarkDashboard).toContain('create policy "quark_people_select_admin"');
+    expect(quarkDashboard).toContain('create policy "quark_people_directory_update_admin"');
+    expect(quarkDashboard).toContain('create policy "quark_home_locations_update_admin"');
+    expect(quarkDashboard).toContain("public.is_admin((select auth.uid()))");
+    expect(quarkDashboard).not.toContain("cpf");
+    expect(quarkDashboard).not.toContain("pis");
   });
 });

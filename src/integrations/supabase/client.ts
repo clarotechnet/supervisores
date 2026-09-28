@@ -3,7 +3,15 @@ import { normalizeSupabaseUrl } from "@/lib/supabase-url";
 import type { Database } from "./types";
 
 function isNewSupabaseApiKey(value: string): boolean {
-  return value.startsWith("sb_publishable_") || value.startsWith("sb_secret_");
+  return value.startsWith("sb_publishable_");
+}
+
+function assertSafeBrowserKey(value: string): void {
+  if (value.startsWith("sb_secret_")) {
+    throw new Error(
+      "Chave Supabase secreta detectada no frontend. Use somente uma chave publishable/anon.",
+    );
+  }
 }
 
 function createSupabaseFetch(supabaseKey: string): typeof fetch {
@@ -46,6 +54,7 @@ function createSupabaseClient() {
     throw new Error(message);
   }
 
+  assertSafeBrowserKey(SUPABASE_PUBLISHABLE_KEY);
   const SUPABASE_URL = normalizeSupabaseUrl(RAW_SUPABASE_URL);
 
   return createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
