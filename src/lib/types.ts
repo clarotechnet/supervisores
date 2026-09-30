@@ -145,6 +145,7 @@ export interface AuditLog {
 
 export interface SchedulePerson {
   name: string;
+  login?: string;
   jobTitle: string;
   assignments: Record<string, string>;
 }
@@ -228,15 +229,45 @@ export const SCHEDULE_CITY_OPTIONS = [
 ] as const;
 
 export const SCHEDULE_SECTOR_OPTIONS = [
-  { value: "adesao", label: "Adesão" },
-  { value: "servico", label: "Serviço" },
-  { value: "desconexao", label: "Desconexão" },
+  { value: "adesao-servico", label: "Adesão-Serviço" },
   { value: "mdu", label: "MDU" },
   { value: "vt", label: "VT" },
   { value: "construcao", label: "Construção" },
-  { value: "manutencao", label: "Manutenção" },
+  { value: "mossoro", label: "Mossoró" },
+  { value: "desconexao", label: "Desconexão" },
   { value: "controle-operacional", label: "Controle operacional" },
+  { value: "instalacao", label: "Instalação" },
+  { value: "manutencao", label: "Manutenção" },
+  { value: "supervisao", label: "Supervisão" },
+  { value: "adesao", label: "Adesão" },
+  { value: "servico", label: "Serviço" },
 ] as const;
+
+export function scheduleFrontOptionsForCity(
+  city: string,
+): ReadonlyArray<{ value: string; label: string }> {
+  if (city === "natal") {
+    return SCHEDULE_SECTOR_OPTIONS.filter((option) =>
+      ["adesao-servico", "mdu", "vt", "construcao", "desconexao", "controle-operacional"].includes(
+        option.value,
+      ),
+    );
+  }
+  if (city === "mossoro") {
+    return SCHEDULE_SECTOR_OPTIONS.filter((option) => option.value === "mossoro");
+  }
+  if (city === "fortaleza") {
+    return SCHEDULE_SECTOR_OPTIONS.filter((option) =>
+      ["instalacao", "manutencao", "desconexao", "supervisao"].includes(option.value),
+    );
+  }
+  if (city === "recife") {
+    return SCHEDULE_SECTOR_OPTIONS.filter((option) =>
+      ["instalacao", "desconexao"].includes(option.value),
+    );
+  }
+  return SCHEDULE_SECTOR_OPTIONS;
+}
 
 export const SECTOR_OPTIONS = [
   { slug: "natal", label: "COP Natal" },

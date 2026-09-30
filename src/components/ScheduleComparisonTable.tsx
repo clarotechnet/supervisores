@@ -174,8 +174,9 @@ export function ScheduleComparisonTable({
                     <span className="block truncate text-[11px] font-bold">{person.name}</span>
                     <span
                       className="mt-0.5 block truncate text-[9px] font-normal text-muted-foreground"
-                      title={person.jobTitle}
+                      title={[person.login, person.jobTitle].filter(Boolean).join(" · ")}
                     >
+                      {person.login ? `${person.login} · ` : ""}
                       {person.jobTitle || "Função não informada"}
                     </span>
                   </button>

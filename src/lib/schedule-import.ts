@@ -88,6 +88,7 @@ function parseMatrix(rows: unknown[][], sheetName: string): ParsedScheduleSheet 
 
   let headerRow = -1;
   let nameColumn = -1;
+  let loginColumn = -1;
   let roleColumn = -1;
   for (let rowIndex = 0; rowIndex < Math.min(rows.length, 30); rowIndex += 1) {
     const row = rows[rowIndex] ?? [];
@@ -97,7 +98,8 @@ function parseMatrix(rows: unknown[][], sheetName: string): ParsedScheduleSheet 
     if (possibleName < 0) continue;
     headerRow = rowIndex;
     nameColumn = possibleName;
-    roleColumn = row.findIndex((cell) => /^(funcao|cargo|setor)$/.test(normalized(cell)));
+    loginColumn = row.findIndex((cell) => /^login$/.test(normalized(cell)));
+    roleColumn = row.findIndex((cell) => /^(funcao|cargo|setor|area)$/.test(normalized(cell)));
     break;
   }
   if (headerRow < 0 || nameColumn < 0) return null;
@@ -107,7 +109,7 @@ function parseMatrix(rows: unknown[][], sheetName: string): ParsedScheduleSheet 
   for (let rowIndex = 0; rowIndex < Math.min(rows.length, 20); rowIndex += 1) {
     const row = rows[rowIndex] ?? [];
     const candidates = row.flatMap((cell, column) => {
-      if (column <= Math.max(nameColumn, roleColumn)) return [];
+      if (column <= Math.max(nameColumn, loginColumn, roleColumn)) return [];
       const date = excelDate(cell);
       return date ? [{ column, date }] : [];
     });
@@ -153,8 +155,10 @@ function parseMatrix(rows: unknown[][], sheetName: string): ParsedScheduleSheet 
     if (Object.keys(assignments).length === 0) continue;
 
     seenNames.add(nameKey);
+    const login = loginColumn >= 0 ? text(row[loginColumn]) : "";
     people.push({
       name,
+      ...(login ? { login } : {}),
       jobTitle: roleColumn >= 0 ? text(row[roleColumn]) : "",
       assignments,
     });
@@ -210,9 +214,13 @@ export async function parseScheduleWorkbook(file: File): Promise<ParsedScheduleS
   return parsed.sort((a, b) => b.month.localeCompare(a.month) || b.entryCount - a.entryCount);
 }
 
-export function scheduleCodeKind(code: string): "work" | "off" | "vacation" | "leave" {
+export type ScheduleCodeKind = "work" | "off" | "vacation" | "leave" | "absence" | "certificate";
+
+export function scheduleCodeKind(code: string): ScheduleCodeKind {
   const value = normalized(code);
-  if (value === "f" || value.includes("folga")) return "off";
+  if (value === "f" || value.includes("folga") || value === "bh") return "off";
+  if (value.includes("falta")) return "absence";
+  if (value === "at" || value.includes("atest")) return "certificate";
   if (value === "fe" || value.includes("ferias")) return "vacation";
   if (value === "l" || /\b(lcc|lic|licenca|afast)/.test(value)) return "leave";
   return "work";

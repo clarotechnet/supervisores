@@ -54,10 +54,10 @@ export function SchedulePeoplePicker({
           <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             id="person-search"
-            aria-label="Buscar colaboradores por nome ou função"
+            aria-label="Buscar colaboradores por nome, login ou função"
             value={search}
             onChange={(event) => onSearchChange(event.target.value)}
-            placeholder="Buscar por nome ou função"
+            placeholder="Buscar por nome, login ou função"
             className="pl-9"
           />
         </div>
@@ -117,8 +117,9 @@ export function SchedulePeoplePicker({
               </b>
               <small
                 className="mt-0.5 block truncate text-[9px] text-muted-foreground"
-                title={person.jobTitle}
+                title={[person.login, person.jobTitle].filter(Boolean).join(" · ")}
               >
+                {person.login ? `${person.login} · ` : ""}
                 {person.jobTitle || "Função não informada"}
               </small>
             </span>

@@ -38,6 +38,8 @@ export function compactScheduleCode(code: string): string {
   if (kind === "off") return "F";
   if (kind === "vacation") return "Fé";
   if (kind === "leave") return "L";
+  if (kind === "absence") return "FALTA";
+  if (kind === "certificate") return "AT";
   return code.trim().replace(/^t\.?\s*(\d+)$/i, "T$1");
 }
 
@@ -47,4 +49,8 @@ export const SCHEDULE_KIND_STYLE = {
   vacation: "border-warning/40 bg-warning-soft text-warning-foreground",
   leave:
     "border-navy/20 bg-navy/10 text-navy dark:border-sky-400/30 dark:bg-sky-400/15 dark:text-sky-200",
+  absence:
+    "border-red-600/50 bg-red-600/15 text-red-600 dark:border-red-400/50 dark:bg-red-500/20 dark:text-red-300",
+  certificate:
+    "border-teal-600/45 bg-teal-500/15 text-teal-700 dark:border-teal-400/45 dark:bg-teal-400/15 dark:text-teal-300",
 } as const;

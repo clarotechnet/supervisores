@@ -13,3 +13,6 @@ verify_jwt = true
 
 [functions.quark-location-sync]
 verify_jwt = true
+
+[functions.schedule-sync]
+verify_jwt = false
