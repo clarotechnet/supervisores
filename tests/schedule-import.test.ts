@@ -41,10 +41,13 @@ describe("importação de escalas", () => {
     });
   });
 
-  it("classifica trabalho, folga, férias e licença", () => {
+  it("classifica trabalho, folga, férias, licença, falta e atestado", () => {
     expect(scheduleCodeKind("T. 1")).toBe("work");
     expect(scheduleCodeKind("Folga")).toBe("off");
     expect(scheduleCodeKind("FÉRIAS")).toBe("vacation");
     expect(scheduleCodeKind("LCC.")).toBe("leave");
+    expect(scheduleCodeKind("FALTA")).toBe("absence");
+    expect(scheduleCodeKind("AT")).toBe("certificate");
+    expect(scheduleCodeKind("Atestado")).toBe("certificate");
   });
 });

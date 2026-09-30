@@ -56,7 +56,7 @@ describe("comparação mensal de escalas", () => {
     expect(reconcileScheduleSelection(["Ana"], [])).toEqual([]);
   });
 
-  it("contabiliza apenas os selecionados e não trata licença ou célula vazia como trabalho", () => {
+  it("contabiliza apenas os selecionados e não trata licença, falta, atestado ou célula vazia como trabalho", () => {
     const selected = people.filter((person) => person.name !== "Carla");
     expect(scheduleDayTotals(selected, ["2026-10-01", "2026-10-02", "2026-10-03"])).toEqual([
       { date: "2026-10-01", work: 1, off: 0 },
@@ -64,6 +64,13 @@ describe("comparação mensal de escalas", () => {
       { date: "2026-10-03", work: 0, off: 0 },
     ]);
     expect(scheduleDayTotals(people, ["2026-10-02"])[0]?.off).toBe(2);
+    const withAbsences: SchedulePerson[] = [
+      { name: "Falta", jobTitle: "", assignments: { "2026-10-01": "FALTA" } },
+      { name: "Atestado", jobTitle: "", assignments: { "2026-10-01": "AT" } },
+    ];
+    expect(scheduleDayTotals(withAbsences, ["2026-10-01"])).toEqual([
+      { date: "2026-10-01", work: 0, off: 0 },
+    ]);
   });
 
   it("abrevia os códigos conhecidos e preserva horários e códigos personalizados", () => {
@@ -79,5 +86,7 @@ describe("comparação mensal de escalas", () => {
     expect(compactScheduleCode("PLANTÃO")).toBe("PLANTÃO");
     expect(compactScheduleCode("Fé")).toBe("Fé");
     expect(compactScheduleCode("L")).toBe("L");
+    expect(compactScheduleCode("FALTA")).toBe("FALTA");
+    expect(compactScheduleCode("AT")).toBe("AT");
   });
 });

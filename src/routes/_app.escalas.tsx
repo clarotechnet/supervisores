@@ -5,6 +5,7 @@ import {
   FileSpreadsheet,
   Lightbulb,
   Loader2,
+  RefreshCw,
   StickyNote,
   Trash2,
   Upload,
@@ -38,6 +39,7 @@ import { useAuth } from "@/hooks/useAuth";
 import {
   SCHEDULE_CITY_OPTIONS,
   SCHEDULE_SECTOR_OPTIONS,
+  scheduleFrontOptionsForCity,
   type ScheduleDateNote,
   type SchedulePerson,
   type ScheduleUpload,
@@ -56,6 +58,7 @@ import {
   fetchScheduleUploadSummaries,
   saveScheduleDateNote,
   saveScheduleUpload,
+  syncScheduleFromSheets,
 } from "@/services/schedules";
 import { cn } from "@/lib/utils";
 import { todayKey } from "@/lib/date-utils";
@@ -65,6 +68,7 @@ import {
   scheduleMonthDates,
   SCHEDULE_KIND_STYLE,
 } from "@/lib/schedule-view";
+import { downloadScheduleReport, isLunchExcludedM2 } from "@/lib/schedule-report";
 
 export const Route = createFileRoute("/_app/escalas")({
   head: () => ({
@@ -72,7 +76,7 @@ export const Route = createFileRoute("/_app/escalas")({
       { title: "Escalas | Rotina de Supervisores" },
       {
         name: "description",
-        content: "Consulta e importação de escalas por cidade, setor, mês e colaborador.",
+        content: "Consulta e atualização de escalas por cidade, frente, mês e colaborador.",
       },
     ],
   }),
@@ -86,6 +90,11 @@ function dateFromIso(value: string): Date {
 
 function monthLabel(value: string): string {
   return dateFromIso(value).toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+}
+
+function currentScheduleMonth(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
 }
 
 function cityLabel(value: string): string {
@@ -113,6 +122,8 @@ function SchedulesPage() {
   const [noteDate, setNoteDate] = useState<string | null>(null);
   const [noteOpen, setNoteOpen] = useState(false);
   const [savingNote, setSavingNote] = useState(false);
+  const [syncingSheets, setSyncingSheets] = useState(false);
+  const [exportingReport, setExportingReport] = useState(false);
   const canManageSchedules = profile ? canManageSchedulesForRole(profile.role) : false;
   const canUseSuggestions = isAdmin || isController;
 
@@ -126,6 +137,10 @@ function SchedulesPage() {
         setCity((current) => current || first.city);
         setSector((current) => current || first.sector);
         setMonth((current) => current || first.schedule_month);
+      } else {
+        setCity((current) => current || "natal");
+        setSector((current) => current || "adesao-servico");
+        setMonth((current) => current || currentScheduleMonth());
       }
     } catch {
       toast.error("Não foi possível carregar as escalas.");
@@ -172,17 +187,16 @@ function SchedulesPage() {
     };
   }, [selectedSummaryId]);
 
-  const availableMonths = useMemo(
-    () =>
-      [
-        ...new Set(
-          summaries
-            .filter((item) => (!city || item.city === city) && (!sector || item.sector === sector))
-            .map((item) => item.schedule_month),
-        ),
-      ].sort((a, b) => b.localeCompare(a)),
-    [summaries, city, sector],
-  );
+  const frontOptions = useMemo(() => {
+    const options = [...scheduleFrontOptionsForCity(city)];
+    const known = new Set(options.map((option) => option.value));
+    for (const item of summaries) {
+      if (item.city !== city || known.has(item.sector)) continue;
+      options.push({ value: item.sector, label: sectorLabel(item.sector) });
+      known.add(item.sector);
+    }
+    return options;
+  }, [city, summaries]);
 
   const people = useMemo(() => {
     const query = personSearch.trim().toLocaleLowerCase("pt-BR");
@@ -190,6 +204,7 @@ function SchedulesPage() {
       (person) =>
         !query ||
         person.name.toLocaleLowerCase("pt-BR").includes(query) ||
+        (person.login ?? "").toLocaleLowerCase("pt-BR").includes(query) ||
         person.jobTitle.toLocaleLowerCase("pt-BR").includes(query),
     );
   }, [schedule, personSearch]);
@@ -204,14 +219,59 @@ function SchedulesPage() {
   function chooseCity(value: string) {
     setCity(value);
     const next = summaries.find((item) => item.city === value);
-    setSector(next?.sector ?? "");
-    setMonth(next?.schedule_month ?? "");
+    const firstFront = scheduleFrontOptionsForCity(value)[0]?.value ?? "";
+    setSector(next?.sector ?? firstFront);
+    setMonth(next?.schedule_month ?? currentScheduleMonth());
   }
 
   function chooseSector(value: string) {
     setSector(value);
     const next = summaries.find((item) => item.city === city && item.sector === value);
-    setMonth(next?.schedule_month ?? "");
+    setMonth(next?.schedule_month ?? currentScheduleMonth());
+  }
+
+  async function updateFromSheets() {
+    if (!city || !sector || !month) {
+      toast.error("Selecione cidade, frente e mês.");
+      return;
+    }
+    setSyncingSheets(true);
+    try {
+      const result = await syncScheduleFromSheets(city, sector, month);
+      await loadSummaries();
+      setCity(result.city);
+      setSector(result.front);
+      setMonth(result.scheduleMonth);
+      toast.success(
+        `Google Sheets atualizado: ${result.employeeCount} colaboradores e ${result.entryCount} marcações.`,
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível atualizar a escala pelo Google Sheets.",
+      );
+    } finally {
+      setSyncingSheets(false);
+    }
+  }
+
+  async function exportExcelReport() {
+    if (!schedule) {
+      toast.error("Selecione uma escala para gerar o relatório.");
+      return;
+    }
+    setExportingReport(true);
+    try {
+      await downloadScheduleReport(schedule);
+      toast.success("Relatório Excel gerado com sucesso.");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Não foi possível gerar o relatório Excel.",
+      );
+    } finally {
+      setExportingReport(false);
+    }
   }
 
   async function removeCurrentSchedule() {
@@ -284,8 +344,8 @@ function SchedulesPage() {
           <h1 className="mt-1 text-2xl font-black">Escalas</h1>
           <p className="mt-1 text-xs text-muted-foreground">
             {canManageSchedules
-              ? "Consulte e importe a programação por cidade, setor e mês."
-              : "Consulte a programação por cidade, setor e mês."}
+              ? "Consulte, sincronize ou importe a programação por cidade, frente e mês."
+              : "Consulte a programação por cidade, frente e mês."}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -295,9 +355,39 @@ function SchedulesPage() {
             </Button>
           )}
           {canManageSchedules && (
-            <Button onClick={() => setImportOpen(true)}>
-              <Upload className="size-4" /> Importar planilha
-            </Button>
+            <>
+              <Button
+                onClick={() => void updateFromSheets()}
+                disabled={syncingSheets || loading || !city || !sector || !month}
+              >
+                {syncingSheets ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="size-4" />
+                )}
+                {syncingSheets ? "Atualizando..." : "Atualizar via API"}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => void exportExcelReport()}
+                disabled={syncingSheets || exportingReport || !schedule}
+                title="Gera o resumo mensal de todos os colaboradores desta escala"
+              >
+                {exportingReport ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <FileSpreadsheet className="size-4" />
+                )}
+                {exportingReport ? "Gerando..." : "Relatório Excel"}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setImportOpen(true)}
+                disabled={syncingSheets || exportingReport}
+              >
+                <Upload className="size-4" /> Importar Excel
+              </Button>
+            </>
           )}
         </div>
       </header>
@@ -311,19 +401,21 @@ function SchedulesPage() {
           onChange={chooseCity}
         />
         <FilterSelect
-          label="Setor"
+          label="Frente"
           value={sector}
-          placeholder="Selecione o setor"
-          options={SCHEDULE_SECTOR_OPTIONS}
+          placeholder="Selecione a frente"
+          options={frontOptions}
           onChange={chooseSector}
         />
-        <FilterSelect
-          label="Mês"
-          value={month}
-          placeholder="Selecione o mês"
-          options={availableMonths.map((value) => ({ value, label: monthLabel(value) }))}
-          onChange={setMonth}
-        />
+        <div className="grid gap-1.5">
+          <Label htmlFor="schedule-month">Mês</Label>
+          <Input
+            id="schedule-month"
+            type="month"
+            value={month.slice(0, 7)}
+            onChange={(event) => setMonth(event.target.value ? `${event.target.value}-01` : "")}
+          />
+        </div>
       </section>
 
       {loading ? (
@@ -340,8 +432,8 @@ function SchedulesPage() {
           <h2 className="mt-3 text-sm font-bold">Nenhuma escala para este filtro</h2>
           <p className="mt-1 text-xs text-muted-foreground">
             {canManageSchedules
-              ? "Importe a planilha desta cidade e setor ou escolha outra combinação."
-              : "Escolha outra combinação de cidade, setor e mês."}
+              ? "Atualize via API, importe o Excel desta cidade e frente ou escolha outra combinação."
+              : "Escolha outra combinação de cidade, frente e mês."}
           </p>
         </section>
       ) : loadingSchedule || !schedule ? (
@@ -358,8 +450,12 @@ function SchedulesPage() {
                   Escala de {monthLabel(schedule.schedule_month)}
                 </h2>
                 <p className="mt-1 text-xs text-white/65">
-                  {schedule.employee_count} colaboradores · {schedule.entry_count} marcações · aba “
-                  {schedule.source_sheet}”
+                  {schedule.employee_count} colaboradores · {schedule.entry_count} marcações ·{" "}
+                  {schedule.source_file.startsWith("Google Sheets") ? "Google Sheets" : "Excel"} ·
+                  aba “{schedule.source_sheet}”
+                </p>
+                <p className="mt-1 text-[10px] text-white/55">
+                  Atualizado em {new Date(schedule.imported_at).toLocaleString("pt-BR")}
                 </p>
               </div>
               {canManageSchedules && (
@@ -406,6 +502,7 @@ function SchedulesPage() {
               <PersonSchedule
                 person={person}
                 month={schedule.schedule_month}
+                sector={schedule.sector}
                 notes={dateNotes}
                 isAdmin={isAdmin}
                 onOpenNote={openDateNote}
@@ -508,8 +605,8 @@ function EmptySchedule({ onImport }: { onImport?: () => void }) {
       <h2 className="mt-4 text-base font-black">Nenhuma escala importada</h2>
       <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground">
         {onImport
-          ? "Selecione a cidade, o setor e uma aba da planilha Excel. A prévia será exibida antes da gravação."
-          : "Assim que um gestor ou supervisor importar uma escala, ela ficará disponível aqui para consulta."}
+          ? "Atualize pelo Google Sheets ou selecione cidade, frente e uma aba do Excel para importação manual."
+          : "Assim que um gestor ou supervisor atualizar uma escala, ela ficará disponível aqui para consulta."}
       </p>
       {onImport && (
         <Button className="mt-5" onClick={onImport}>
@@ -523,12 +620,14 @@ function EmptySchedule({ onImport }: { onImport?: () => void }) {
 function PersonSchedule({
   person,
   month,
+  sector,
   notes,
   isAdmin,
   onOpenNote,
 }: {
   person: SchedulePerson;
   month: string;
+  sector: string;
   notes: ScheduleDateNote[];
   isAdmin: boolean;
   onOpenNote: (date: string) => void;
@@ -541,9 +640,13 @@ function PersonSchedule({
   const entries = dates
     .map((date) => ({ date, code: person.assignments[date] ?? "" }))
     .filter((entry) => entry.code);
-  const workDays = entries.filter((entry) => scheduleCodeKind(entry.code) === "work");
+  const activityDays = entries.filter((entry) => scheduleCodeKind(entry.code) === "work");
+  const m2ExcludedDays = activityDays.filter((entry) => isLunchExcludedM2(sector, entry.code));
+  const workDays = activityDays.filter((entry) => !isLunchExcludedM2(sector, entry.code));
   const offDays = entries.filter((entry) => scheduleCodeKind(entry.code) === "off");
-  const nextWork = workDays.find((entry) => entry.date >= todayKey());
+  const absenceDays = entries.filter((entry) => scheduleCodeKind(entry.code) === "absence");
+  const certificateDays = entries.filter((entry) => scheduleCodeKind(entry.code) === "certificate");
+  const nextWork = activityDays.find((entry) => entry.date >= todayKey());
 
   return (
     <div className="min-w-0">
@@ -551,7 +654,7 @@ function PersonSchedule({
         <div>
           <h3 className="text-lg font-black">{person.name}</h3>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            {person.jobTitle || "Função não informada"}
+            {[person.login, person.jobTitle || "Função não informada"].filter(Boolean).join(" · ")}
           </p>
         </div>
         {nextWork && (
@@ -562,10 +665,13 @@ function PersonSchedule({
         )}
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-3 xl:grid-cols-4">
+      <div className="mt-4 grid grid-cols-2 gap-3 xl:grid-cols-7">
         <MiniKpi label="Dias com marcação" value={entries.length} />
         <MiniKpi label="Dias de trabalho" value={workDays.length} />
+        <MiniKpi label="M.2 até 12h" value={m2ExcludedDays.length} />
         <MiniKpi label="Folgas" value={offDays.length} />
+        <MiniKpi label="Faltas" value={absenceDays.length} />
+        <MiniKpi label="Atestados" value={certificateDays.length} />
         <MiniKpi label="Função" value={person.jobTitle || "—"} compact />
       </div>
 
@@ -643,6 +749,8 @@ function PersonSchedule({
         <Legend color="bg-slate-700 dark:bg-slate-200" label="Folga" />
         <Legend color="bg-warning" label="Férias" />
         <Legend color="bg-navy" label="Licença / afastamento" />
+        <Legend color="bg-red-600" label="FALTA · Falta no dia" />
+        <Legend color="bg-teal-600" label="AT · Atestado" />
       </div>
     </div>
   );
@@ -700,6 +808,7 @@ function ImportScheduleDialog({
   const [sheetName, setSheetName] = useState("");
   const [parsing, setParsing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const frontOptions = useMemo(() => scheduleFrontOptionsForCity(city), [city]);
 
   useEffect(() => {
     if (!open) return;
@@ -743,12 +852,12 @@ function ImportScheduleDialog({
 
   async function save() {
     if (!city || !sector || !selected || !userId) {
-      toast.error("Selecione cidade, setor, arquivo e aba.");
+      toast.error("Selecione cidade, frente, arquivo e aba.");
       return;
     }
     if (
       willReplace &&
-      !window.confirm("Já existe uma escala para esta cidade, setor e mês. Deseja substituí-la?")
+      !window.confirm("Já existe uma escala para esta cidade, frente e mês. Deseja substituí-la?")
     )
       return;
 
@@ -790,7 +899,7 @@ function ImportScheduleDialog({
         <DialogHeader>
           <DialogTitle>Importar escala</DialogTitle>
           <DialogDescription>
-            Cidade e setor fazem parte da identificação da escala. Uma nova importação no mesmo mês
+            Cidade e frente fazem parte da identificação da escala. Uma nova importação no mesmo mês
             substitui a anterior.
           </DialogDescription>
         </DialogHeader>
@@ -801,13 +910,19 @@ function ImportScheduleDialog({
             value={city}
             placeholder="Selecione a cidade"
             options={SCHEDULE_CITY_OPTIONS}
-            onChange={setCity}
+            onChange={(value) => {
+              setCity(value);
+              const options = scheduleFrontOptionsForCity(value);
+              if (!options.some((option) => option.value === sector)) {
+                setSector(options[0]?.value ?? "");
+              }
+            }}
           />
           <FilterSelect
-            label="Setor"
+            label="Frente"
             value={sector}
-            placeholder="Selecione o setor"
-            options={SCHEDULE_SECTOR_OPTIONS}
+            placeholder="Selecione a frente"
+            options={frontOptions}
             onChange={setSector}
           />
           <div className="grid gap-1.5 md:col-span-2">
@@ -866,7 +981,7 @@ function ImportScheduleDialog({
             )}
             {willReplace && (
               <p className="mt-3 rounded-lg border border-primary/25 bg-primary/10 p-3 text-[10px] font-bold text-primary">
-                Já existe uma escala nesta cidade, setor e mês. A confirmação substituirá os dados
+                Já existe uma escala nesta cidade, frente e mês. A confirmação substituirá os dados
                 anteriores.
               </p>
             )}

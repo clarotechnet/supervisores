@@ -69,6 +69,48 @@ export async function saveScheduleUpload(input: SaveScheduleUploadInput): Promis
   return data.id;
 }
 
+export interface ScheduleSyncResult {
+  ok: boolean;
+  city: string;
+  front: string;
+  scheduleMonth: string;
+  employeeCount: number;
+  entryCount: number;
+  sourceSheets: string[];
+}
+
+async function throwScheduleFunctionError(error: unknown): Promise<never> {
+  if (error && typeof error === "object" && "context" in error) {
+    const context = (error as { context?: unknown }).context;
+    if (context instanceof Response) {
+      try {
+        const body = (await context.json()) as { error?: string };
+        if (body.error) throw new Error(body.error);
+      } catch (contextError) {
+        if (
+          contextError instanceof Error &&
+          contextError.message !== "Unexpected end of JSON input"
+        ) {
+          throw contextError;
+        }
+      }
+    }
+  }
+  throw error;
+}
+
+export async function syncScheduleFromSheets(
+  city: string,
+  front: string,
+  scheduleMonth: string,
+): Promise<ScheduleSyncResult> {
+  const { data, error } = await supabase.functions.invoke("schedule-sync", {
+    body: { city, front, scheduleMonth },
+  });
+  if (error) await throwScheduleFunctionError(error);
+  return data as ScheduleSyncResult;
+}
+
 export async function deleteScheduleUpload(id: string): Promise<void> {
   const { error } = await supabase.from("schedule_uploads").delete().eq("id", id);
   if (error) throw error;

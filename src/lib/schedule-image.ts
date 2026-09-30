@@ -33,6 +33,10 @@ const LIGHT_COLORS = {
   leaveText: "#0a1829",
   t2: "#0a1829",
   t2Text: "#ffffff",
+  absence: "#dc2626",
+  absenceSoft: "#fee2e2",
+  certificate: "#0f766e",
+  certificateSoft: "#ccfbf1",
 };
 
 const DARK_COLORS: typeof LIGHT_COLORS = {
@@ -53,6 +57,10 @@ const DARK_COLORS: typeof LIGHT_COLORS = {
   leaveText: "#bfdbfe",
   t2: "#2563eb",
   t2Text: "#ffffff",
+  absence: "#f87171",
+  absenceSoft: "#451a1a",
+  certificate: "#5eead4",
+  certificateSoft: "#134e4a",
 };
 
 export function scheduleImagePages(people: SchedulePerson[]): SchedulePerson[][] {
@@ -253,6 +261,14 @@ function drawPage(input: ScheduleImageInput, page: number, pageCount: number): H
         background = colors.leave;
         foreground = colors.leaveText;
       }
+      if (kind === "absence") {
+        background = colors.absenceSoft;
+        foreground = colors.absence;
+      }
+      if (kind === "certificate") {
+        background = colors.certificateSoft;
+        foreground = colors.certificate;
+      }
       if (label === "T2") {
         background = colors.t2;
         foreground = colors.t2Text;
@@ -299,6 +315,8 @@ function drawPage(input: ScheduleImageInput, page: number, pageCount: number): H
   legendPart("F · Folga", colors.off, 800);
   legendPart("Fé · Férias", colors.amber, 700);
   legendPart("L · Licença / afastamento", colors.leaveText, 700);
+  legendPart("FALTA · Falta no dia", colors.absence, 700);
+  legendPart("AT · Atestado", colors.certificate, 700);
   legendPart("— · Sem marcação", colors.muted);
   if (marked.size)
     text(
