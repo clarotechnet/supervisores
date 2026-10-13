@@ -16,6 +16,7 @@ describe("acesso do controlador", () => {
     expect(isPathAllowedForRole("controller", "/escalas")).toBe(true);
     expect(isPathAllowedForRole("controller", "/painel")).toBe(false);
     expect(isPathAllowedForRole("controller", "/admin")).toBe(false);
+    expect(isPathAllowedForRole("controller", "/visita-tecnica")).toBe(false);
   });
 
   it("permite ao supervisor consultar e gerenciar escalas e acessar o Quark", () => {
@@ -23,6 +24,8 @@ describe("acesso do controlador", () => {
     expect(isPathAllowedForRole("supervisor", "/painel")).toBe(true);
     expect(isPathAllowedForRole("supervisor", "/admin/quark")).toBe(true);
     expect(isPathAllowedForRole("supervisor", "/admin/quark/mapa")).toBe(true);
+    expect(isPathAllowedForRole("supervisor", "/visita-tecnica")).toBe(true);
+    expect(isPathAllowedForRole("admin", "/visita-tecnica")).toBe(true);
     expect(isPathAllowedForRole("supervisor", "/admin/usuarios")).toBe(false);
     expect(isPathAllowedForRole("admin", "/escalas")).toBe(true);
   });

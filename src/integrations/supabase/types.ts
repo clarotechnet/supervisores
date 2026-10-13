@@ -1,5 +1,25 @@
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
+type QualityImportRow = {
+  id: string;
+  kind: string;
+  source_file: string;
+  imported_by: string;
+  created_at: string;
+  published_at: string | null;
+  row_count: number;
+  chunk_count: number;
+  metadata: Json;
+  base_import_id: string | null;
+};
+type QualityBlockRow = { import_id: string; kind: string; chunk_index: number; records: Json };
+type QualityTable<Row, Insert = Row, Update = Partial<Insert>> = {
+  Row: Row;
+  Insert: Insert;
+  Update: Update;
+  Relationships: [];
+};
+
 export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
@@ -8,6 +28,56 @@ export type Database = {
   };
   public: {
     Tables: {
+      quality_technician_directory: QualityTable<
+        {
+          login: string;
+          full_name: string;
+          city: string;
+          sector: string;
+          supervisor: string;
+          created_by: string;
+          updated_by: string;
+          created_at: string;
+          updated_at: string;
+        },
+        {
+          login: string;
+          full_name: string;
+          city?: string;
+          sector?: string;
+          supervisor?: string;
+          created_by: string;
+          updated_by: string;
+          created_at?: string;
+          updated_at?: string;
+        }
+      >;
+      quality_imports: QualityTable<
+        QualityImportRow,
+        Omit<QualityImportRow, "id" | "created_at" | "published_at"> & {
+          id?: string;
+          created_at?: string;
+          published_at?: string | null;
+        }
+      >;
+      quality_quebra_data: QualityTable<
+        QualityBlockRow,
+        Omit<QualityBlockRow, "kind"> & { kind?: string }
+      >;
+      quality_certification_data: QualityTable<
+        QualityBlockRow,
+        Omit<QualityBlockRow, "kind"> & { kind?: string }
+      >;
+      quality_technical_visit_data: QualityTable<
+        QualityBlockRow,
+        Omit<QualityBlockRow, "kind"> & { kind?: string }
+      >;
+      quality_supervisor_registry: QualityTable<{
+        singleton: boolean;
+        registry: Json;
+        updated_by: string;
+        updated_at: string;
+      }>;
       assigned_tasks: {
         Row: {
           assigned_by: string | null;
@@ -877,6 +947,8 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
+      save_quality_directory: { Args: { p_entries: Json }; Returns: undefined };
+      publish_quality_import: { Args: { p_import_id: string }; Returns: undefined };
       can_access_schedules: { Args: { _uid: string }; Returns: boolean };
       can_manage_schedules: { Args: { _uid: string }; Returns: boolean };
       is_active_user: { Args: { _uid: string }; Returns: boolean };

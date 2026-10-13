@@ -20,7 +20,9 @@ import { Route as AppHistoricoRouteImport } from './routes/_app.historico'
 import { Route as AppMensagensRouteImport } from './routes/_app.mensagens'
 import { Route as AppPainelRouteImport } from './routes/_app.painel'
 import { Route as AppPerfilRouteImport } from './routes/_app.perfil'
+import { Route as AppQualidadeRouteImport } from './routes/_app.qualidade'
 import { Route as AppTarefasRouteImport } from './routes/_app.tarefas'
+import { Route as AppVisitaTecnicaRouteImport } from './routes/_app.visita-tecnica'
 import { Route as AppAdminIndexRouteImport } from './routes/_app.admin.index'
 import { Route as AppAdminAtividadesRouteImport } from './routes/_app.admin.atividades'
 import { Route as AppAdminQuarkRouteImport } from './routes/_app.admin.quark'
@@ -82,9 +84,19 @@ const AppPerfilRoute = AppPerfilRouteImport.update({
   path: '/perfil',
   getParentRoute: () => AppRoute,
 } as any)
+const AppQualidadeRoute = AppQualidadeRouteImport.update({
+  id: '/qualidade',
+  path: '/qualidade',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppTarefasRoute = AppTarefasRouteImport.update({
   id: '/tarefas',
   path: '/tarefas',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppVisitaTecnicaRoute = AppVisitaTecnicaRouteImport.update({
+  id: '/visita-tecnica',
+  path: '/visita-tecnica',
   getParentRoute: () => AppRoute,
 } as any)
 const AppAdminIndexRoute = AppAdminIndexRouteImport.update({
@@ -130,7 +142,9 @@ export interface FileRoutesByFullPath {
   '/mensagens': typeof AppMensagensRoute
   '/painel': typeof AppPainelRoute
   '/perfil': typeof AppPerfilRoute
+  '/qualidade': typeof AppQualidadeRoute
   '/tarefas': typeof AppTarefasRoute
+  '/visita-tecnica': typeof AppVisitaTecnicaRoute
   '/admin/atividades': typeof AppAdminAtividadesRoute
   '/admin/quark': typeof AppAdminQuarkRoute
   '/admin/relatorios': typeof AppAdminRelatoriosRoute
@@ -149,7 +163,9 @@ export interface FileRoutesByTo {
   '/mensagens': typeof AppMensagensRoute
   '/painel': typeof AppPainelRoute
   '/perfil': typeof AppPerfilRoute
+  '/qualidade': typeof AppQualidadeRoute
   '/tarefas': typeof AppTarefasRoute
+  '/visita-tecnica': typeof AppVisitaTecnicaRoute
   '/admin/atividades': typeof AppAdminAtividadesRoute
   '/admin/quark': typeof AppAdminQuarkRoute
   '/admin/relatorios': typeof AppAdminRelatoriosRoute
@@ -170,7 +186,9 @@ export interface FileRoutesById {
   '/_app/mensagens': typeof AppMensagensRoute
   '/_app/painel': typeof AppPainelRoute
   '/_app/perfil': typeof AppPerfilRoute
+  '/_app/qualidade': typeof AppQualidadeRoute
   '/_app/tarefas': typeof AppTarefasRoute
+  '/_app/visita-tecnica': typeof AppVisitaTecnicaRoute
   '/_app/admin/atividades': typeof AppAdminAtividadesRoute
   '/_app/admin/quark': typeof AppAdminQuarkRoute
   '/_app/admin/relatorios': typeof AppAdminRelatoriosRoute
@@ -191,7 +209,9 @@ export interface FileRouteTypes {
     | '/mensagens'
     | '/painel'
     | '/perfil'
+    | '/qualidade'
     | '/tarefas'
+    | '/visita-tecnica'
     | '/admin/atividades'
     | '/admin/quark'
     | '/admin/relatorios'
@@ -210,7 +230,9 @@ export interface FileRouteTypes {
     | '/mensagens'
     | '/painel'
     | '/perfil'
+    | '/qualidade'
     | '/tarefas'
+    | '/visita-tecnica'
     | '/admin/atividades'
     | '/admin/quark'
     | '/admin/relatorios'
@@ -230,7 +252,9 @@ export interface FileRouteTypes {
     | '/_app/mensagens'
     | '/_app/painel'
     | '/_app/perfil'
+    | '/_app/qualidade'
     | '/_app/tarefas'
+    | '/_app/visita-tecnica'
     | '/_app/admin/atividades'
     | '/_app/admin/quark'
     | '/_app/admin/relatorios'
@@ -327,11 +351,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppPerfilRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/qualidade': {
+      id: '/_app/qualidade'
+      path: '/qualidade'
+      fullPath: '/qualidade'
+      preLoaderRoute: typeof AppQualidadeRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/tarefas': {
       id: '/_app/tarefas'
       path: '/tarefas'
       fullPath: '/tarefas'
       preLoaderRoute: typeof AppTarefasRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/visita-tecnica': {
+      id: '/_app/visita-tecnica'
+      path: '/visita-tecnica'
+      fullPath: '/visita-tecnica'
+      preLoaderRoute: typeof AppVisitaTecnicaRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/admin/': {
@@ -385,7 +423,9 @@ interface AppRouteChildren {
   AppMensagensRoute: typeof AppMensagensRoute
   AppPainelRoute: typeof AppPainelRoute
   AppPerfilRoute: typeof AppPerfilRoute
+  AppQualidadeRoute: typeof AppQualidadeRoute
   AppTarefasRoute: typeof AppTarefasRoute
+  AppVisitaTecnicaRoute: typeof AppVisitaTecnicaRoute
   AppAdminAtividadesRoute: typeof AppAdminAtividadesRoute
   AppAdminQuarkRoute: typeof AppAdminQuarkRoute
   AppAdminRelatoriosRoute: typeof AppAdminRelatoriosRoute
@@ -400,7 +440,9 @@ const AppRouteChildren: AppRouteChildren = {
   AppMensagensRoute: AppMensagensRoute,
   AppPainelRoute: AppPainelRoute,
   AppPerfilRoute: AppPerfilRoute,
+  AppQualidadeRoute: AppQualidadeRoute,
   AppTarefasRoute: AppTarefasRoute,
+  AppVisitaTecnicaRoute: AppVisitaTecnicaRoute,
   AppAdminAtividadesRoute: AppAdminAtividadesRoute,
   AppAdminQuarkRoute: AppAdminQuarkRoute,
   AppAdminRelatoriosRoute: AppAdminRelatoriosRoute,

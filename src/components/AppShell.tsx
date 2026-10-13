@@ -18,6 +18,7 @@ import {
   UserCog,
   Users,
   X,
+  Wrench,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
@@ -36,7 +37,14 @@ const SUPERVISOR_NAV: NavItem[] = [
   { to: "/tarefas", label: "Minhas tarefas", hint: "Criar tarefa avulsa", icon: ListPlus },
   { to: "/escalas", label: "Escalas", hint: "Cidades, setores e equipes", icon: CalendarDays },
   { to: "/admin/quark", label: "Quark", hint: "Ponto, banco de horas e equipe", icon: Database },
+  {
+    to: "/qualidade",
+    label: "QQ e Certificação",
+    hint: "Quebras e técnico certificado",
+    icon: BarChart3,
+  },
   { to: "/mensagens", label: "Mensagens", hint: "Conversa com a gestão", icon: MessageCircle },
+  { to: "/visita-tecnica", label: "Visita técnica", hint: "Técnico certificado", icon: Wrench },
   { to: "/historico", label: "Histórico", hint: "Dias anteriores", icon: ClipboardList },
   { to: "/perfil", label: "Meu perfil", hint: "Senha e preferências", icon: UserCog },
 ];
@@ -48,7 +56,14 @@ const ADMIN_NAV: NavItem[] = [
   { to: "/admin/relatorios", label: "Relatórios", hint: "Exportação CSV", icon: ShieldCheck },
   { to: "/escalas", label: "Escalas", hint: "Cidades, setores e equipes", icon: CalendarDays },
   { to: "/admin/quark", label: "Quark", hint: "Ponto, banco de horas e equipe", icon: Database },
+  {
+    to: "/qualidade",
+    label: "QQ e Certificação",
+    hint: "Quebras e técnico certificado",
+    icon: BarChart3,
+  },
   { to: "/tarefas", label: "Delegar tarefas", hint: "Para gestor ou supervisor", icon: ListPlus },
+  { to: "/visita-tecnica", label: "Visita técnica", hint: "Técnico certificado", icon: Wrench },
   { to: "/painel", label: "Minha rotina", hint: "Checklist do dia", icon: CalendarCheck },
   { to: "/historico", label: "Histórico", hint: "Dias anteriores", icon: ClipboardList },
   { to: "/perfil", label: "Meu perfil", hint: "Senha e preferências", icon: UserCog },
@@ -65,11 +80,13 @@ export function AppShell({
   areaColor,
   progress,
   progressLabel,
+  presentation = false,
 }: {
   children: React.ReactNode;
   areaColor?: string | undefined;
   progress?: number | undefined;
   progressLabel?: string | undefined;
+  presentation?: boolean;
 }) {
   const { profile, isAdmin, isController, signOut } = useAuth();
   const { theme, toggleTheme } = useTheme();
@@ -105,12 +122,17 @@ export function AppShell({
     <div
       className={cn(
         "min-h-screen w-full bg-background lg:grid lg:transition-[grid-template-columns] lg:duration-200",
-        collapsed ? "lg:grid-cols-[88px_minmax(0,1fr)]" : "lg:grid-cols-[270px_minmax(0,1fr)]",
+        presentation
+          ? "lg:grid-cols-1"
+          : collapsed
+            ? "lg:grid-cols-[88px_minmax(0,1fr)]"
+            : "lg:grid-cols-[270px_minmax(0,1fr)]",
       )}
       style={areaColor ? ({ "--area": areaColor } as React.CSSProperties) : undefined}
     >
       {/* Sidebar */}
       <aside
+        style={presentation ? { display: "none" } : undefined}
         className={cn(
           "fixed inset-y-0 left-0 z-50 flex w-[270px] flex-col overflow-y-auto bg-sidebar px-4 py-6 text-sidebar-foreground transition-[width,padding,transform] duration-200 lg:sticky lg:top-0 lg:h-screen lg:translate-x-0",
           open ? "translate-x-0" : "-translate-x-full",
@@ -217,7 +239,7 @@ export function AppShell({
         )}
       </aside>
 
-      {open && (
+      {open && !presentation && (
         <button
           type="button"
           aria-label="Fechar menu"
@@ -228,7 +250,10 @@ export function AppShell({
 
       {/* Workspace */}
       <div className="min-w-0">
-        <header className="sticky top-0 z-30 flex h-[70px] items-center justify-between gap-4 border-b border-border bg-card/95 px-4 backdrop-blur md:px-8">
+        <header
+          style={presentation ? { display: "none" } : undefined}
+          className="sticky top-0 z-30 flex h-[70px] items-center justify-between gap-4 border-b border-border bg-card/95 px-4 backdrop-blur md:px-8"
+        >
           <div className="flex items-center gap-3">
             <button
               type="button"
