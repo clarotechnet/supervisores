@@ -48,6 +48,13 @@ try {
           sector: "Visita técnica",
           supervisor: "Supervisor VT",
         },
+        {
+          login: "AD_Z1",
+          full_name: "Técnico Adesão",
+          city: "NATAL/PARNAMIRIM",
+          sector: "ADESÃO/SERVIÇOS",
+          supervisor: "Supervisor Adesão",
+        },
       ];
     if (table === "quality_imports") {
       if (request.method() === "POST") {
@@ -210,7 +217,7 @@ try {
   let originalQC = null;
   if (technicalVisit) {
     const otherId = randomUUID(),
-      otherRows = [{ ...seed[0], points: "222" }];
+      otherRows = [{ ...seed[0], login: "AD_Z1", name: "Técnico Adesão", points: "222" }];
     imports.push({
       id: otherId,
       kind: "certification",

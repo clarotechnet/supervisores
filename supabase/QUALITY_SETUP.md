@@ -224,8 +224,20 @@ A importação analítica de Visita técnica aceita o mesmo CSV/ZIP completo usa
 mas continua em sua base independente. Os registros originais de todos os setores são mantidos
 no banco e no cache: o recorte ocorre somente na exibição, antes de hidratar os dados e calcular.
 Alterar o setor de um login no cadastro inclui ou remove seu histórico de VT sem nova importação.
-Se o cadastro não puder ser confirmado, VT não calcula usando o cadastro legado sem setor.
+O TC de **QQ e Certificação** aplica o recorte complementar: exclui somente os logins cadastrados
+como Visita técnica, mantendo Adesão/Serviços, outros setores, setor vazio e logins sem cadastro
+para conferência. Esse recorte não altera QQ/Quebra Qualificada nem a lista completa de cadastros.
+Vale também para indicadores, evolução diária, projeções, exportações e slides do TC normal.
+As duas bases analíticas permanecem completas e independentes na importação, no banco e no cache.
+Se o cadastro não puder ser confirmado, nenhum dos dois painéis de TC calcula usando o cadastro
+legado sem setor; QQ mantém seu fallback anterior. A separação não requer migration nem reimportação.
 Sem logins classificados como Visita técnica, a tela explica como fazer a associação.
+
+No TC, o botão de Natal/Parnamirim seleciona os valores reais disponíveis, incluindo `Natal`,
+`Parnamirim` e `NATAL/PARNAMIRIM` vindo do cadastro. Não exclui os técnicos cadastrados por
+diferença de escrita. Unidades do TC admitem seleção múltipla; a união selecionada vale para
+tabela, evolução diária, exportação e slides. Encerrar slides restaura a seleção anterior.
+O seletor simples legado e Limpar filtros continuam sincronizados. Não altera fórmulas ou dados.
 
 Filtros de unidade, cidade, setor, supervisor, competência e período são nativos, com recortes
 adicionais de cluster/semana no QQ e UF/subcluster/grupo/job no TC. Há evolução mensal/semanal/diária,

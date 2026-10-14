@@ -1,5 +1,6 @@
 // Reviewed reference e2a41044c855276006e3d977a81bbd10ca220f96a720b7dfedf1f6888fde7dd2; generated visual engine. No personal seed data.
 import { referenceCertificationRule } from "../reference-certification-rule";
+import { referenceCityMembers } from "../reference-city-members";
 export function mountTC(environment) {
 const {document,window,localStorage,location,ResizeObserver,setTimeout,clearTimeout,requestAnimationFrame}=environment;
 const BUSINESS_UNITS=Object.freeze(["FTZ-DMV_01_VT","FTZ-DMV_01","FTZ-DMV_ADM","MRO-DMV","NTL-DMV_ADM","PWM-DMV_ADM","NTL-DMV","PWM-DMV","NTL-DMV_VT","PWM-DMV_VT","JCR-DMV","JCR-DMV_ADM"]);
@@ -60,6 +61,7 @@ function svChart(items,target,percent=true,chartHeight=185){
 }
 
 const state = { rows: [], keys: new Set(), files: [], customMap: {}, filteredRows: [], result: [], sort: { key: 'status', month: null, dir: 1 }, multi: { city: new Set(), group: new Set(), type: new Set() }, ready: false, view: 'panel', metric: 'revisit', focus: null, matrixSort: { key: 'avg', dir: -1 } };
+const tcSelectedUnits = new Set();
     const $ = s => document.querySelector(s), $$ = s => Array.from(document.querySelectorAll(s));
     const nf0 = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 0 }), nf1 = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }), nf2 = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const pct1 = x => x == null ? '—' : nf1.format(x * 100) + '%', num = x => { if (x == null || x === '') return null; const v = Number(String(x).trim().replace(',', '.')); return Number.isFinite(v) ? v : null }, txt = x => String(x ?? '').trim();
@@ -108,7 +110,7 @@ async function tcUnzipCsv(buffer){
     function companyContextRows() { const uf = $('#fUf').value; return state.rows.filter(r => tcDatePass(r) && tcMonthPass(r) && (!uf || r.uf === uf)) }
     function syncCompanyOptions() { const el = $('#fCompany'), cur = el.value, vals = uniq(companyContextRows().map(x => x.company)); fillSelect(el, vals, 'Todas as empresas/unidades', cur); return cur && !vals.includes(cur) }
     function initFilters(defaults = false) { const r = state.rows; fillSelect($('#fBaseUnit'), businessUnitOptions(r.map(x=>x.baseUnit)), 'Todas as unidades'); const months = uniq(r.map(monthKey)).sort(); fillSelect($('#fMonth'), months, 'Todos os meses'); [...$('#fMonth').options].forEach(o=>{if(o.value)o.textContent=monthLabel(o.value)}); if (defaults) $('#fMonth').value = ''; fillSelect($('#fUf'), uniq(r.map(x => x.uf)), 'Todas as UFs'); syncCompanyOptions(); fillSelect($('#fSub'), uniq(r.map(x => x.sub)), 'Todos os subclusters'); setupMulti('#mCity', uniq(r.map(x => x.city)), state.multi.city); setupMulti('#mGroup', uniq(r.map(x => x.group)), state.multi.group); setupMulti('#mType', uniq(r.map(x => x.type)), state.multi.type) }
-    function rowPass(r,ignoreMonth=false,ignoreSupervisor=false) { if(ignoreSupervisor!==true&&!svAllows(tcSupervisors,r.login))return false; if($('#fBaseUnit').value&&r.baseUnit!==$('#fBaseUnit').value)return false; const mo = $('#fMonth').value, uf = $('#fUf').value, co = $('#fCompany').value, sub = $('#fSub').value, mp = $('#fMap').value, q = $('#fSearch').value.trim().toLocaleUpperCase('pt-BR'); if (!tcDatePass(r)) return false; if (ignoreMonth!==true && !tcMonthPass(r)) return false; if (uf && r.uf !== uf) return false; if (co && r.company !== co) return false; if (sub && r.sub !== sub) return false; if (mp && r.mapSource !== mp) return false; if (state.multi.city.size && !state.multi.city.has(r.city)) return false; if (state.multi.group.size && !state.multi.group.has(r.group)) return false; if (state.multi.type.size && !state.multi.type.has(r.type)) return false; if (q && !((r.name + ' ' + r.login + ' ' + r.company + ' ' + r.baseUnit).toLocaleUpperCase('pt-BR').includes(q))) return false; return true }
+    function rowPass(r,ignoreMonth=false,ignoreSupervisor=false) { if(ignoreSupervisor!==true&&!svAllows(tcSupervisors,r.login))return false; if(tcSelectedUnits.size?!tcSelectedUnits.has(r.baseUnit):($('#fBaseUnit').value&&r.baseUnit!==$('#fBaseUnit').value))return false; const mo = $('#fMonth').value, uf = $('#fUf').value, co = $('#fCompany').value, sub = $('#fSub').value, mp = $('#fMap').value, q = $('#fSearch').value.trim().toLocaleUpperCase('pt-BR'); if (!tcDatePass(r)) return false; if (ignoreMonth!==true && !tcMonthPass(r)) return false; if (uf && r.uf !== uf) return false; if (co && r.company !== co) return false; if (sub && r.sub !== sub) return false; if (mp && r.mapSource !== mp) return false; if (state.multi.city.size && !state.multi.city.has(r.city)) return false; if (state.multi.group.size && !state.multi.group.has(r.group)) return false; if (state.multi.type.size && !state.multi.type.has(r.type)) return false; if (q && !((r.name + ' ' + r.login + ' ' + r.company + ' ' + r.baseUnit).toLocaleUpperCase('pt-BR').includes(q))) return false; return true }
 function tcDistinctRevisit(r){return txt(r.baseUnit).toUpperCase()==='FTZ-DMV_01';}
 function tcRevisitKey(r){
  const value=txt(r.revisitWo);
@@ -191,6 +193,7 @@ function aggregate(rows){
       }catch(e){console.error(e);setBadge(false,'Erro ao ler CSV');$('#fileMeta').textContent=e.message;return false;}finally{setLoading(false);}
     }
     function resetFilters(){
+      tcSelectedUnits.clear();
       state.selectedMonths=[];tcDates={start:'',end:''};state.focus=null;state.sort={key:'status',month:null,dir:1};state.matrixSort={key:'avg',dir:-1};
       state.multi.city.clear();state.multi.group.clear();state.multi.type.clear();
       ['fBaseUnit','fMonth','fUf','fCompany','fSub','fSearch','fMap'].forEach(id=>$('#'+id).value='');$('#legacyStatus').checked=false;
@@ -199,7 +202,7 @@ function aggregate(rows){
     }
     function preset() { resetFilters(); const months = uniq(state.rows.map(monthKey)).sort(); if (months.length) {state.selectedMonths=[months.at(-1)];$('#fMonth').value=months.at(-1);} $('#fUf').value = [...$('#fUf').options].some(o => o.value === 'RN') ? 'RN' : ''; $('#fCompany').value = [...$('#fCompany').options].some(o => o.value === 'DMV - NTL SERV') ? 'DMV - NTL SERV' : '';['Natal', 'Parnamirim'].forEach(v => { if (uniq(state.rows.map(x => x.city)).includes(v)) state.multi.city.add(v) }); if (uniq(state.rows.map(x => x.group)).includes('INSTALACAO')) state.multi.group.add('INSTALACAO'); setupMulti('#mCity', uniq(state.rows.map(x => x.city)), state.multi.city); setupMulti('#mGroup', uniq(state.rows.map(x => x.group)), state.multi.group); render() }
     function switchView(v) { state.view = v; $('#panelView').hidden = v !== 'panel'; $('#dailyView').hidden = v !== 'daily'; $('#tabPanel').classList.toggle('on', v === 'panel'); $('#tabDaily').classList.toggle('on', v === 'daily'); if (v === 'daily') renderDaily() }
-    ['#fMonth', '#fUf'].forEach(id => $(id).addEventListener('change', () => { syncCompanyOptions(); render() }));['#fRule', '#fBaseUnit', '#fCompany', '#fSub', '#fMap'].forEach(id => $(id).addEventListener('change', render)); $('#fSearch').addEventListener('input', () => { clearTimeout(window.__q); window.__q = setTimeout(render, 100) }); $$('thead th[data-sort]').forEach(th => th.onclick = () => { const k = th.dataset.sort; state.sort = state.sort.key === k ? { key: k, dir: -state.sort.dir } : { key: k, dir: k === 'name' || k === 'loginText' || k === 'companyText' ? 1 : -1 }; render() }); $$('.metricbtn[data-metric]').forEach(b => b.onclick = () => { state.metric = b.dataset.metric; state.matrixSort = { key: 'avg', dir: -1 }; if (state.metric === 'all') state.focus = null; renderDaily() }); $('#tabPanel').onclick = () => switchView('panel'); $('#tabDaily').onclick = () => switchView('daily');
+    ['#fMonth', '#fUf'].forEach(id => $(id).addEventListener('change', () => { syncCompanyOptions(); render() }));['#fRule', '#fCompany', '#fSub', '#fMap'].forEach(id => $(id).addEventListener('change', render)); $('#fBaseUnit').addEventListener('change',()=>window.setUnifiedUnits($('#fBaseUnit').value?[$('#fBaseUnit').value]:[])); $('#fSearch').addEventListener('input', () => { clearTimeout(window.__q); window.__q = setTimeout(render, 100) }); $$('thead th[data-sort]').forEach(th => th.onclick = () => { const k = th.dataset.sort; state.sort = state.sort.key === k ? { key: k, dir: -state.sort.dir } : { key: k, dir: k === 'name' || k === 'loginText' || k === 'companyText' ? 1 : -1 }; render() }); $$('.metricbtn[data-metric]').forEach(b => b.onclick = () => { state.metric = b.dataset.metric; state.matrixSort = { key: 'avg', dir: -1 }; if (state.metric === 'all') state.focus = null; renderDaily() }); $('#tabPanel').onclick = () => switchView('panel'); $('#tabDaily').onclick = () => switchView('daily');
     $('#dropzone').onclick = () => $('#fileInput').click(); $('#fileInput').onchange = e => { const f = [...e.target.files]; if (f.length) addTexts(f.map(file => ({ file, name: file.name })), false); e.target.value = '' };['dragenter', 'dragover'].forEach(ev => $('#dropzone').addEventListener(ev, e => { e.preventDefault(); $('#dropzone').classList.add('drag') }));['dragleave', 'drop'].forEach(ev => $('#dropzone').addEventListener(ev, e => { e.preventDefault(); $('#dropzone').classList.remove('drag') })); $('#dropzone').addEventListener('drop', e => { const f = [...e.dataTransfer.files].filter(x => /\.(csv|zip)$/i.test(x.name)); if (f.length) addTexts(f.map(file => ({ file, name: file.name })), false) });
     const header = $('.topbar'), headerToggle = $('#btnHeaderToggle');
     function setHeaderCompact(compact) { header.classList.toggle('compact', compact); headerToggle.textContent = compact ? 'Mostrar opções' : 'Ocultar opções'; headerToggle.setAttribute('aria-expanded', compact ? 'false' : 'true'); try { localStorage.setItem('tc_header_compact', compact ? '1' : '0') } catch (e) { } }
@@ -216,12 +219,7 @@ function aggregate(rows){
       return raw;
     }
     function presentationCityMembers(label){
-      const grp=presentationCityLabel(label);
-      if(grp==='Natal / Parnamirim'){
-        const avail=uniq(state.rows.map(x=>x.city));
-        return ['Natal','Parnamirim'].filter(v=>avail.includes(v));
-      }
-      return grp?[grp]:[];
+      return referenceCityMembers(label,state.rows.map(row=>row.city));
     }
     function presentationSelectedCityLabel(){
       if(!state.multi.city.size) return '';
@@ -708,12 +706,13 @@ window.refreshSupervisorRegistry=()=>{applyMaps();render();};
 
 window.getUnifiedUnits=function(){
  const units=businessUnitOptions(state.rows.map(row=>row.baseUnit)),value=$('#fBaseUnit').value;
- return {units,selected:value?[value]:[],multiple:false,ready:state.ready};
+ return {units,selected:tcSelectedUnits.size?[...tcSelectedUnits]:value?[value]:[],multiple:true,ready:state.ready};
 };
 window.setUnifiedUnits=function(values){
  const units=businessUnitOptions(state.rows.map(row=>row.baseUnit)),selected=[...new Set(values||[])];
- if(selected.length>1||selected.some(unit=>!units.includes(unit)))return false;
- $('#fBaseUnit').value=selected[0]||'';render();return true;
+ if(selected.some(unit=>!units.includes(unit)))return false;
+ tcSelectedUnits.clear();selected.forEach(unit=>tcSelectedUnits.add(unit));
+ $('#fBaseUnit').value=selected.length===1?selected[0]:'';render();return true;
 };
 
 
@@ -737,9 +736,9 @@ window.setUnifiedUnits=function(values){
   ready:()=>!!state.ready,
   list,
   begin(){
-   const snapshot={filters:Object.fromEntries(filterIds.map(id=>[id,$('#'+id).value])),multi:Object.fromEntries(Object.entries(state.multi).map(([k,v])=>[k,[...v]])),supervisors:[...tcSupervisors],supervisorMode:tcSupervisorMode,view:state.view,focus:state.focus,sort:{...state.sort},tools:tcToolsOpen,planner:tcProjectionPlannerOpen};
+   const snapshot={units:[...tcSelectedUnits],filters:Object.fromEntries(filterIds.map(id=>[id,$('#'+id).value])),multi:Object.fromEntries(Object.entries(state.multi).map(([k,v])=>[k,[...v]])),supervisors:[...tcSupervisors],supervisorMode:tcSupervisorMode,view:state.view,focus:state.focus,sort:{...state.sort},tools:tcToolsOpen,planner:tcProjectionPlannerOpen};
    active=true;document.body.classList.add('slides-frame-active');closeDetails();
-   filterIds.forEach(id=>$('#'+id).value='');Object.values(state.multi).forEach(set=>set.clear());tcSupervisors.clear();
+   tcSelectedUnits.clear();filterIds.forEach(id=>$('#'+id).value='');Object.values(state.multi).forEach(set=>set.clear());tcSupervisors.clear();
    state.view='panel';state.focus=null;state.sort={key:'status',month:null,dir:1};tcSupervisorMode=false;
    tcToolsOpen=false;$('#tcTools').hidden=true;document.body.classList.remove('tc-tools-open');syncCompanyOptions();
    return snapshot;
@@ -754,6 +753,7 @@ window.setUnifiedUnits=function(values){
   },
   restore(snapshot){
    active=false;document.body.classList.remove('slides-frame-active');unlock();closeDetails();if(!snapshot)return;
+   tcSelectedUnits.clear();(snapshot.units||[]).forEach(unit=>tcSelectedUnits.add(unit));
    for(const [key,values]of Object.entries(snapshot.multi)){state.multi[key].clear();values.forEach(v=>state.multi[key].add(v));}
    for(const id of filterIds)if(id!=='fCompany')$('#'+id).value=snapshot.filters[id];
    syncCompanyOptions();$('#fCompany').value=snapshot.filters.fCompany;

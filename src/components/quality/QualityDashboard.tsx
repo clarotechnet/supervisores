@@ -33,7 +33,7 @@ import {
   deleteQualityLogin,
 } from "@/services/quality";
 import { QualityDirectory } from "./QualityDirectory";
-import { technicalVisitState } from "@/lib/technical-visit-scope";
+import { nonTechnicalVisitState, technicalVisitState } from "@/lib/technical-visit-scope";
 import { ReferenceQualitySurface } from "./ReferenceQualitySurface";
 import "./quality.css";
 const EMPTY_MAP = {};
@@ -73,7 +73,8 @@ export function QualityDashboard({
   // Keep the mapping identity stable when only the other dataset finishes loading.
   const index = useMemo(() => directoryIndex(directory), [directory]);
   const displayState = useMemo(
-    () => (technicalVisit ? technicalVisitState(state, index) : state),
+    () =>
+      technicalVisit ? technicalVisitState(state, index) : nonTechnicalVisitState(state, index),
     [state, index, technicalVisit],
   );
   const hydrated = useMemo(
@@ -271,7 +272,7 @@ export function QualityDashboard({
         tcError={
           loading.tc.error && !loading.tc.isFetching
             ? moduleError(loading.tc.error)
-            : technicalVisit && loading.directory.isError && !loading.directory.isFetching
+            : loading.directory.isError && !loading.directory.isFetching
               ? "Não foi possível confirmar o setor dos logins. Atualize o cadastro e tente novamente."
               : ""
         }

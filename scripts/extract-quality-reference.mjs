@@ -92,6 +92,47 @@ for (const [kind, id, name] of [
   if (/[A-Za-z0-9+/]{5000}/.test(code))
     throw Error("Unexpected embedded dataset remains in " + kind);
   if (kind === "tc") {
+    const adapt = (from, to) => {
+      if (!code.includes(from)) throw Error("Review the TC filter adapter before porting.");
+      code = code.replace(from, to);
+    };
+    adapt(
+      "\n    const $ = s => document.querySelector(s)",
+      "\nconst tcSelectedUnits = new Set();\n    const $ = s => document.querySelector(s)",
+    );
+    adapt(
+      "if($('#fBaseUnit').value&&r.baseUnit!==$('#fBaseUnit').value)return false;",
+      "if(tcSelectedUnits.size?!tcSelectedUnits.has(r.baseUnit):($('#fBaseUnit').value&&r.baseUnit!==$('#fBaseUnit').value))return false;",
+    );
+    adapt("function resetFilters(){", "function resetFilters(){\n      tcSelectedUnits.clear();");
+    adapt(
+      "['#fRule', '#fBaseUnit', '#fCompany', '#fSub', '#fMap'].forEach(id => $(id).addEventListener('change', render));",
+      "['#fRule', '#fCompany', '#fSub', '#fMap'].forEach(id => $(id).addEventListener('change', render)); $('#fBaseUnit').addEventListener('change',()=>window.setUnifiedUnits($('#fBaseUnit').value?[$('#fBaseUnit').value]:[]));",
+    );
+    adapt(
+      "function presentationCityMembers(label){\n      const grp=presentationCityLabel(label);\n      if(grp==='Natal / Parnamirim'){\n        const avail=uniq(state.rows.map(x=>x.city));\n        return ['Natal','Parnamirim'].filter(v=>avail.includes(v));\n      }\n      return grp?[grp]:[];\n    }",
+      "function presentationCityMembers(label){\n      return referenceCityMembers(label,state.rows.map(row=>row.city));\n    }",
+    );
+    adapt(
+      "return {units,selected:value?[value]:[],multiple:false,ready:state.ready};",
+      "return {units,selected:tcSelectedUnits.size?[...tcSelectedUnits]:value?[value]:[],multiple:true,ready:state.ready};",
+    );
+    adapt(
+      "if(selected.length>1||selected.some(unit=>!units.includes(unit)))return false;\n $('#fBaseUnit').value=selected[0]||'';render();return true;",
+      "if(selected.some(unit=>!units.includes(unit)))return false;\n tcSelectedUnits.clear();selected.forEach(unit=>tcSelectedUnits.add(unit));\n $('#fBaseUnit').value=selected.length===1?selected[0]:'';render();return true;",
+    );
+    adapt(
+      "const snapshot={filters:Object.fromEntries(filterIds.map(id=>[id,$('#'+id).value]))",
+      "const snapshot={units:[...tcSelectedUnits],filters:Object.fromEntries(filterIds.map(id=>[id,$('#'+id).value]))",
+    );
+    adapt(
+      "filterIds.forEach(id=>$('#'+id).value='');Object.values(state.multi).forEach(set=>set.clear());tcSupervisors.clear();",
+      "tcSelectedUnits.clear();filterIds.forEach(id=>$('#'+id).value='');Object.values(state.multi).forEach(set=>set.clear());tcSupervisors.clear();",
+    );
+    adapt(
+      "active=false;document.body.classList.remove('slides-frame-active');unlock();closeDetails();if(!snapshot)return;",
+      "active=false;document.body.classList.remove('slides-frame-active');unlock();closeDetails();if(!snapshot)return;\n   tcSelectedUnits.clear();(snapshot.units||[]).forEach(unit=>tcSelectedUnits.add(unit));",
+    );
     // Project-specific exception: VT has a 175-point target; the default renderer
     // still uses the reviewed 127-point rule. All formulas consume tcRule().
     const originalRule =
@@ -169,7 +210,7 @@ for (const [kind, id, name] of [
   `;
   const imports =
     kind === "tc"
-      ? 'import { referenceCertificationRule } from "../reference-certification-rule";\n'
+      ? 'import { referenceCertificationRule } from "../reference-certification-rule";\nimport { referenceCityMembers } from "../reference-city-members";\n'
       : "";
   const output = `// Reviewed reference ${hash}; generated visual engine. No personal seed data.\n${imports}export function ${name}(environment) {\nconst {document,window,localStorage,location,ResizeObserver,setTimeout,clearTimeout,requestAnimationFrame}=environment;\n${code}\n${load}\nreturn window;\n}\n`;
   fs.writeFileSync(`${folder}/${kind}-engine.js`, output);

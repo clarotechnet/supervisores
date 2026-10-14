@@ -75,11 +75,12 @@ export function useQualityLoading(user: string | undefined, certificationKind: C
     return next;
   }, [qq.data, tc.data, registry.data, certificationKind, technicalVisit]);
   // The directory affects names/cities/supervisors: never present partial, unmapped indicators.
-  // VT eligibility requires the explicit sector; legacy mappings have no sector field.
-  const mappingReady =
+  // Both TC panels require the directory's sectors; legacy mappings cannot separate VT.
+  // QQ keeps its existing fallback: its unit-based recorte is unchanged.
+  const qqMappingReady =
     directory.isSuccess || (!technicalVisit && directory.isError && registry.isSuccess);
-  const qqReady = !technicalVisit && qq.isSuccess && mappingReady;
-  const tcReady = needsTC && tc.isSuccess && mappingReady;
+  const qqReady = !technicalVisit && qq.isSuccess && qqMappingReady;
+  const tcReady = needsTC && tc.isSuccess && directory.isSuccess;
   function cacheState(next: QualityState) {
     for (const kind of (technicalVisit
       ? ["technical_visit"]
@@ -109,7 +110,7 @@ export function useQualityLoading(user: string | undefined, certificationKind: C
     tcReady,
     needsTC,
     requestTC: () => setRequestedTC(true),
-    presentationReady: mappingReady && tcReady && (technicalVisit || qqReady),
+    presentationReady: tcReady && (technicalVisit || qqReady),
     cacheState,
     refresh,
   };

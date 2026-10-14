@@ -204,6 +204,7 @@ function QQOrders({
                   <th key={label}>{label}</th>
                 ))}
               </tr>
+              
             </thead>
             <tbody>
               {records?.slice(page * 100, page * 100 + 100).map((r, i) => (
