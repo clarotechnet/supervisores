@@ -15,7 +15,7 @@ const records = [...points, 200, 200].map((points, index) => ({
   login: `T${index}`,
   name: `Teste Técnico ${index}`,
   company: "NTL-DMV",
-  baseUnit: "NTL-DMV",
+  baseUnit: index >= 4 ? "PWM-DMV" : "NTL-DMV",
   mapSource: "base",
   qr: index === 8 ? "1" : "0",
   tnum: index === 7 ? "94.9" : "95",
@@ -45,7 +45,14 @@ const excluded = ["OUTRO_SETOR", "SEM_SETOR", "SEM_CADASTRO"].map((login) => ({
   baseUnit: "NTL-DMV_VT",
   group: "Visita técnica",
 }));
-const allRecords = [...records, ...excluded];
+const adhesionRecords = records.map((row, index) => ({
+  ...row,
+  login: `AD_T${index}`,
+  name: `Teste Adesão/Serviços ${index}`,
+  wo: `OS-ADESAO-${index}`,
+  group: "Instalação",
+}));
+const allRecords = [...records, ...adhesionRecords, ...excluded];
 const originalData = JSON.stringify(allRecords);
 let directory = records.map((row) => ({
   login: row.login,
@@ -55,6 +62,13 @@ let directory = records.map((row) => ({
   supervisor: "Supervisor VT",
 }));
 directory.push(
+  ...adhesionRecords.map((row) => ({
+    login: row.login,
+    full_name: row.name,
+    city: "NATAL/PARNAMIRIM",
+    sector: "ADESÃO/SERVIÇOS",
+    supervisor: "Supervisor Adesão",
+  })),
   ...excluded.slice(0, 2).map((row, i) => ({
     login: row.login,
     full_name: row.name,
@@ -196,6 +210,7 @@ try {
   });
   for (const technicalVisit of [true, false, true]) {
     const target = technicalVisit ? 175 : 127;
+    const loginPrefix = technicalVisit ? "" : "AD_";
     await page.goto(`http://127.0.0.1:5175/${technicalVisit ? "visita-tecnica" : "qualidade"}`);
     if (!technicalVisit) await page.locator("#goTC").click();
     await page
@@ -216,19 +231,85 @@ try {
       await page.locator("#referenceTC #fRule option").innerText(),
       `Todas as operações · ≥ ${target} pontos/dia`,
     );
+    await page
+      .locator('#referenceTC #presentationCityStrip [data-city="Natal / Parnamirim"]')
+      .click();
+    assert.equal(
+      (await readResults()).length,
+      technicalVisit ? 9 : 12,
+      "City chip includes registered NATAL/PARNAMIRIM as well as raw Natal/Parnamirim",
+    );
+    await page.locator("#unitPicker summary").click();
+    const ntlUnit = page.locator('#unitOptions input[data-unit="NTL-DMV"]');
+    const pwmUnit = page.locator('#unitOptions input[data-unit="PWM-DMV"]');
+    assert.equal(await ntlUnit.getAttribute("type"), "checkbox");
+    await ntlUnit.check();
+    assert.equal((await readResults()).length, 4);
+    await pwmUnit.check();
+    assert.equal(await page.locator("#unitPickerLabel").innerText(), "2 unidades");
+    assert.equal((await readResults()).length, 9);
+    await ntlUnit.uncheck();
+    assert.equal((await readResults()).length, 5);
+    await page.locator('#unitOptions label:has(input[data-unit="NTL-DMV"])').click();
+    assert.equal((await readResults()).length, 9);
+    assert.equal((await page.locator("#unitPicker").getAttribute("open")) !== null, true);
+    await page.locator("#unitPicker summary").click();
+    const selectedResults = await readResults();
+    await page.locator("#referenceTC #tabDaily").click();
+    assert.equal(await page.locator("#referenceTC #matrix tbody tr").count(), 9);
+    await page.locator("#referenceTC #tabPanel").click();
+    const unitDownload = page.waitForEvent("download");
+    await page.locator("#referenceTC #btnExport").evaluate((el) => el.click());
+    const unitCSV = await readFile(await (await unitDownload).path(), "utf8");
+    assert.equal(unitCSV.trim().split(/\r?\n/).length - 1, 9);
+    await page.locator("#goFS").click();
+    await page.locator("#goSlides").click();
+    await page.locator("#slidePlayer").waitFor({ state: "visible" });
+    assert.deepEqual(await readResults(), selectedResults, "Slides honor the selected unit union");
+    await page.locator("#slidesStop").click();
+    await page.locator("#goFS").click();
+    await page.locator("#unitPicker summary").click();
+    assert.equal(await ntlUnit.isChecked(), true);
+    assert.equal(await pwmUnit.isChecked(), true);
+    assert.equal(await page.locator("#unitPickerLabel").innerText(), "2 unidades");
+    assert.deepEqual(await readResults(), selectedResults, "Slide exit restores both unit filters");
+    await page.locator('#unitOptions input[data-unit="*"]').check();
+    assert.equal((await readResults()).length, technicalVisit ? 9 : 12);
+    await page.locator("#unitPicker summary").click();
+    // The legacy single-select and reset button must remain synchronized.
+    await page.locator("#referenceTC #fBaseUnit").evaluate((el) => {
+      el.value = "NTL-DMV";
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    assert.equal((await readResults()).length, 4);
+    await page.locator("#referenceTC #btnReset").evaluate((el) => el.click());
+    assert.equal((await readResults()).length, technicalVisit ? 9 : 12);
+    await page
+      .locator('#referenceTC #presentationCityStrip [data-city="Natal / Parnamirim"]')
+      .click();
     const results = await readResults();
     assert.equal(
       results.length,
       technicalVisit ? 9 : 12,
-      "Only registered VT logins enter VT; normal TC includes all logins",
+      "VT includes only its registered sector; normal TC excludes it",
     );
+    for (const row of records)
+      assert.equal(
+        results.some((result) => result.login === row.login),
+        technicalVisit,
+      );
+    for (const row of adhesionRecords)
+      assert.equal(
+        results.some((result) => result.login === row.login),
+        !technicalVisit,
+      );
     for (const row of excluded)
       assert.equal(
         results.some((result) => result.login === row.login),
         !technicalVisit,
       );
     for (let i = 0; i < records.length; i++) {
-      const result = results.find((row) => row.login === `T${i}`);
+      const result = results.find((row) => row.login === `${loginPrefix}T${i}`);
       assert.equal(
         result.good,
         Number(records[i].points) >= target,
@@ -248,7 +329,9 @@ try {
     );
     await page.locator("#referenceTC #modalClose").click();
     await page
-      .locator('#referenceTC [data-tc-projection-login="T0"][data-tc-projection-metric="prod"]')
+      .locator(
+        `#referenceTC [data-tc-projection-login="${loginPrefix}T0"][data-tc-projection-metric="prod"]`,
+      )
       .click();
     assert.match(
       await page.locator("#referenceTC #modalBody").innerText(),
@@ -266,7 +349,7 @@ try {
     assert.equal(dayResults.length, technicalVisit ? 9 : 12);
     for (let i = 0; i < records.length; i++)
       assert.equal(
-        dayResults.find((row) => row.login === `T${i}`).good,
+        dayResults.find((row) => row.login === `${loginPrefix}T${i}`).good,
         Number(records[i].points) >= target,
       );
     assert.match(
@@ -288,12 +371,13 @@ try {
     assert.equal(lines.length, technicalVisit ? 9 : 12, "Exports respect the sector scope");
     for (const line of lines) {
       const fields = line.split(";").map((field) => field.replace(/^"|"$/g, "")),
-        i = Number(fields[loginIndex].slice(1));
+        i = Number(fields[loginIndex].replace(/^AD_/, "").slice(1));
       if (excluded.some((row) => row.login === fields[loginIndex])) {
         assert.equal(technicalVisit, false);
         assert.equal(fields[statusIndex], "CERTIFICADO");
         continue;
       }
+      assert.equal(fields[loginIndex].startsWith("AD_"), !technicalVisit);
       assert.equal(
         fields[statusIndex],
         i < 7 && Number(records[i].points) >= target ? "CERTIFICADO" : "NAO CERTIFICADO",
@@ -314,7 +398,9 @@ try {
     if (technicalVisit)
       await page.screenshot({ path: join(tmpdir(), "tc-presentation-clean.png") });
     // Each slide presents one supervisor, not the entire normal TC population.
-    assert.equal(await page.locator("#referenceTC #kCert").innerText(), technicalVisit ? "3" : "2");
+    assert.equal(await page.locator("#referenceTC #kCert").innerText(), technicalVisit ? "3" : "6");
+    for (const row of await readResults())
+      assert.equal(row.login.startsWith("AD_"), !technicalVisit);
     await page.locator("#slidesStop").click();
     await checkPresentationChrome(true, technicalVisit);
     await page.locator("#goFS").click();
@@ -331,7 +417,7 @@ try {
     const listed = await page
       .locator("#referenceDirectory tbody tr")
       .evaluateAll((rows) => rows.map((row) => row.cells[0].textContent.trim()));
-    assert.equal(listed.length, technicalVisit ? 9 : 12);
+    assert.equal(listed.length, technicalVisit ? 9 : 21, "Normal directory stays complete");
     for (const row of excluded) assert.equal(listed.includes(row.login), !technicalVisit);
     if (technicalVisit) {
       assert.equal(await page.locator("#unitPickerLabel").innerText(), "Visita técnica");
@@ -376,6 +462,11 @@ try {
         presentationChromeHidden: true,
         normalChromeRestored: true,
         sectorScope: true,
+        adhesionVisibleAt127: true,
+        noVTInNormalTC: true,
+        cityFilterIncludesRegistered: true,
+        multipleUnitsWorks: true,
+        selectedUnitExportAndSlides: true,
       }),
     );
   }
@@ -392,12 +483,27 @@ try {
     .getByText("8 registros de TC carregados do sistema.", { exact: true })
     .waitFor({ state: "attached" });
   await page.goto("http://127.0.0.1:5175/qualidade");
+  await page.locator("#goTC").click();
+  await page
+    .locator("#referenceTC #fileMeta")
+    .getByText("13 registros de TC carregados do sistema.", { exact: true })
+    .waitFor({ state: "attached" });
+  assert.equal((await readResults()).find((row) => row.login === "T2").certified, true);
   await page.locator("#goSupervisors").click();
   await page.getByRole("button", { name: "Editar OUTRO_SETOR", exact: true }).click();
   dialog = page.getByRole("dialog");
   await dialog.getByLabel("Setor", { exact: true }).fill("Visita técnica");
   await dialog.getByRole("button", { name: "Salvar cadastro", exact: true }).click();
   await dialog.waitFor({ state: "hidden" });
+  await page.locator("#goTC").click();
+  await page
+    .locator("#referenceTC #fileMeta")
+    .getByText("12 registros de TC carregados do sistema.", { exact: true })
+    .waitFor({ state: "attached" });
+  assert.equal(
+    (await readResults()).some((row) => row.login === "OUTRO_SETOR"),
+    false,
+  );
   await page.goto("http://127.0.0.1:5175/visita-tecnica");
   await page
     .locator("#referenceTC #fileMeta")
@@ -408,13 +514,27 @@ try {
   assert(!reclassified.some((text) => text.startsWith("T2 ·")));
   assert.equal(await page.locator("#referenceTC #kCert").innerText(), "4");
   denyDirectory = true;
-  await page.reload();
-  await page.getByRole("alert").filter({ hasText: "Cadastro indisponível" }).waitFor();
-  assert.equal(
-    await page.locator(".reference-loading").isVisible(),
-    true,
-    "VT cannot calculate when sector eligibility cannot be confirmed",
-  );
+  for (const path of ["visita-tecnica", "qualidade"]) {
+    await page.goto(`http://127.0.0.1:5175/${path}`);
+    if (path === "qualidade") await page.locator("#goTC").click();
+    await page.getByRole("alert").filter({ hasText: "Cadastro indisponível" }).waitFor();
+    assert.equal(
+      await page.locator(".reference-loading").isVisible(),
+      true,
+      `${path} TC cannot calculate when sector eligibility cannot be confirmed`,
+    );
+    assert.match(
+      await page.locator(".reference-loading").innerText(),
+      /Não foi possível concluir o carregamento/,
+    );
+    assert.equal(
+      await page
+        .locator(".reference-loading")
+        .getByRole("button", { name: "Tentar novamente" })
+        .isVisible(),
+      true,
+    );
+  }
   assert.equal(JSON.stringify(allRecords), originalData, "All raw records were preserved");
   assert.equal(saves, 2);
   console.log(
@@ -422,7 +542,7 @@ try {
       liveReclassification: true,
       rawDatasetUnchanged: true,
       otherSectorDuplicateProtected: true,
-      missingDirectoryBlocksVT: true,
+      missingDirectoryBlocksBothTC: true,
     }),
   );
   assert.deepEqual(errors, []);

@@ -192,22 +192,27 @@ export function ReferenceQualitySurface(props: Props) {
         units = engine.getUnifiedUnits(),
         period = engine.getUnifiedMonths(),
         dates = engine.getUnifiedDates();
+      const multipleTC = units.multiple && (r.screen === "tc" || latest.current.technicalVisit);
+      const allUnits =
+        !units.selected.length || units.units.every((unit) => units.selected.includes(unit));
       $("unitPickerLabel").textContent =
         !latest.current.technicalVisit && r.screen !== "tc" && !r.explicitQQUnits
           ? "Adesão"
-          : units.selected.length === 1
-            ? units.selected[0]!
-            : units.selected.length
-              ? `${units.selected.length} unidades`
-              : latest.current.technicalVisit
-                ? "Visita técnica"
-                : "Todas as unidades";
+          : multipleTC && units.selected.length && allUnits
+            ? "Todas as unidades"
+            : units.selected.length === 1
+              ? units.selected[0]!
+              : units.selected.length
+                ? `${units.selected.length} unidades`
+                : latest.current.technicalVisit
+                  ? "Visita técnica"
+                  : "Todas as unidades";
       $("unitOptions").innerHTML =
-        `<label><input type="${units.multiple ? "checkbox" : "radio"}" name="reference-units" data-unit="*" ${!units.selected.length ? "checked" : ""}>Todas as unidades</label>` +
+        `<label><input type="${units.multiple ? "checkbox" : "radio"}" name="reference-units" data-unit="*" ${allUnits ? "checked" : ""}>Todas as unidades</label>` +
         units.units
           .map(
             (u) =>
-              `<label><input type="${units.multiple ? "checkbox" : "radio"}" name="reference-units" data-unit="${escape(u)}" ${(units.multiple && !units.selected.length) || units.selected.includes(u) ? "checked" : ""}>${escape(u)}</label>`,
+              `<label><input type="${units.multiple ? "checkbox" : "radio"}" name="reference-units" data-unit="${escape(u)}" ${(!multipleTC && units.multiple && !units.selected.length) || units.selected.includes(u) ? "checked" : ""}>${escape(u)}</label>`,
           )
           .join("") +
         (r.screen !== "tc" && !latest.current.technicalVisit
@@ -335,10 +340,11 @@ export function ReferenceQualitySurface(props: Props) {
       const value = input.dataset["unit"];
       if (!value) return;
       if (r.screen !== "tc") r.explicitQQUnits = true;
-      const activeUnits = u.selected.length ? u.selected : u.units;
+      const multipleTC = u.multiple && (r.screen === "tc" || latest.current.technicalVisit);
+      const activeUnits = u.selected.length ? u.selected : multipleTC ? [] : u.units;
       const selected =
         value === "*"
-          ? u.multiple
+          ? u.multiple && !multipleTC
             ? u.units
             : []
           : u.multiple

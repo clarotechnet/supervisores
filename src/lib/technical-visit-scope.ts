@@ -25,3 +25,24 @@ export function technicalVisitState(
     },
   };
 }
+
+/** Standard TC excludes registered VT; unknown/empty sectors remain reviewable. */
+export function nonTechnicalVisitState(
+  state: QualityState,
+  index: Map<string, QualityLogin>,
+): QualityState {
+  const dataset = state.datasets.certification;
+  if (!dataset) return state;
+  return {
+    ...state,
+    datasets: {
+      ...state.datasets,
+      certification: {
+        ...dataset,
+        records: dataset.records.filter(
+          (record) => !isTechnicalVisitSector(index.get(normalizeLogin(record["login"]))?.sector),
+        ),
+      },
+    },
+  };
+}
