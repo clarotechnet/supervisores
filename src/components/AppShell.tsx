@@ -81,12 +81,14 @@ export function AppShell({
   progress,
   progressLabel,
   presentation = false,
+  fullWidth = false,
 }: {
   children: React.ReactNode;
   areaColor?: string | undefined;
   progress?: number | undefined;
   progressLabel?: string | undefined;
   presentation?: boolean;
+  fullWidth?: boolean;
 }) {
   const { profile, isAdmin, isController, signOut } = useAuth();
   const { theme, toggleTheme } = useTheme();
@@ -297,7 +299,13 @@ export function AppShell({
             </span>
           </div>
         </header>
-        <main className="mx-auto w-full max-w-[1440px] px-4 pb-14 pt-6 md:px-8">{children}</main>
+        <main
+          className={
+            fullWidth ? "w-full min-w-0" : "mx-auto w-full max-w-[1440px] px-4 pb-14 pt-6 md:px-8"
+          }
+        >
+          {children}
+        </main>
       </div>
     </div>
   );

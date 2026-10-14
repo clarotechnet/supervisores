@@ -6,7 +6,16 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist", ".output", ".vinxi"] },
+  // Reproducible visual source extraction; the handwritten adapters remain linted.
+  {
+    ignores: [
+      "dist",
+      ".output",
+      ".vinxi",
+      "src/components/quality/reference/*-engine.js",
+      "src/components/quality/reference/templates.ts",
+    ],
+  },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ["**/*.{ts,tsx}"],
