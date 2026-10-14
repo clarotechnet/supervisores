@@ -9,6 +9,8 @@ import type {
   QualityState,
 } from "@/lib/quality";
 import type { QualityLogin } from "@/lib/quality-directory";
+import { readQualityPages, type QualityLoadProgress } from "@/lib/quality-loading";
+import { cacheQualityDataset, qualityCacheGeneration, readQualityCache } from "@/lib/quality-cache";
 
 function assertProject() {
   const clientUrl = (supabase as unknown as { supabaseUrl: string }).supabaseUrl;
@@ -25,72 +27,149 @@ const dataTable = (kind: QualityKind) =>
       ? "quality_technical_visit_data"
       : "quality_certification_data";
 
-export async function fetchQualityState(
-  previous?: QualityState,
-  kinds: readonly QualityKind[] = ["quebra", "certification"],
-): Promise<QualityState> {
+export interface QualityDataset {
+  manifest: QualityImport | null;
+  snapshot?: QualitySnapshot | undefined;
+}
+export async function fetchQualityDataset(
+  kind: QualityKind,
+  options: {
+    previous?: QualityDataset | undefined;
+    userId?: string | undefined;
+    signal?: AbortSignal;
+    progress?: (progress: QualityLoadProgress) => void;
+  } = {},
+): Promise<QualityDataset> {
   assertProject();
-  if (kinds.includes("technical_visit")) {
+  const { previous, userId, signal, progress } = options;
+  const generation = userId ? qualityCacheGeneration(userId) : 0;
+  const abort = signal ?? new AbortController().signal;
+  progress?.({ stage: "version", complete: 0, total: 0 });
+  if (kind === "technical_visit") {
     const { error } = await supabase
       .from("quality_technical_visit_data")
       .select("import_id")
-      .limit(0);
+      .limit(0)
+      .abortSignal(abort);
     if (error) throw error;
   }
-  const state: QualityState = { datasets: {}, imports: {}, registry: {} };
-  await Promise.all(
-    kinds.map(async (kind) => {
-      const { data, error } = await supabase
-        .from("quality_imports")
-        .select("*")
-        .eq("kind", kind)
-        .not("published_at", "is", null)
-        .order("published_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (error) throw error;
-      if (!data) return;
-      const manifest = data as QualityImport;
-      // Uploads check the latest revision, but do not re-download unchanged large datasets.
-      if (previous?.imports[kind]?.id === manifest.id && previous.datasets[kind]) {
-        state.imports[kind] = manifest;
-        state.datasets[kind] = previous.datasets[kind];
-        return;
+  const { data, error } = await supabase
+    .from("quality_imports")
+    .select("*")
+    .eq("kind", kind)
+    .not("published_at", "is", null)
+    .order("published_at", { ascending: false })
+    .limit(1)
+    .abortSignal(abort)
+    .maybeSingle();
+  if (error) throw error;
+  abort.throwIfAborted();
+  if (!data) {
+    progress?.({ stage: "ready", complete: 0, total: 0 });
+    return { manifest: null };
+  }
+  const manifest = data as QualityImport;
+  // A fresh authorized manifest is required even when reusing local data.
+  if (previous?.manifest?.id === manifest.id && previous.snapshot) {
+    progress?.({ stage: "ready", complete: manifest.chunk_count, total: manifest.chunk_count });
+    return { manifest, snapshot: previous.snapshot };
+  }
+  if (userId) {
+    progress?.({ stage: "cache", complete: 0, total: manifest.chunk_count });
+    const cached = await readQualityCache(
+      QUALITY_PROJECT_REF,
+      userId,
+      kind,
+      manifest.id,
+      manifest.row_count,
+    );
+    abort.throwIfAborted();
+    if (cached) {
+      try {
+        assertQualityRecords(kind, cached.records);
+        progress?.({ stage: "ready", complete: manifest.chunk_count, total: manifest.chunk_count });
+        return { manifest, snapshot: cached };
+      } catch {
+        /* Invalid cached records are downloaded again. */
       }
-      const blocks: { chunk_index: number; records: Json }[] = [];
-      // Bound each response to avoid PostgREST's row limit and very large JSON responses.
-      for (let start = 0; start < manifest.chunk_count; start += 8) {
-        const { data: rows, error: readError } = await supabase
-          .from(dataTable(kind))
-          .select("chunk_index,records")
-          .eq("import_id", manifest.id)
-          .gte("chunk_index", start)
-          .lt("chunk_index", start + 8)
-          .order("chunk_index");
-        if (readError) throw readError;
-        blocks.push(...(rows ?? []));
-      }
-      if (
-        blocks.length !== manifest.chunk_count ||
-        blocks.some((block, index) => block.chunk_index !== index)
-      ) {
-        throw new Error("A base publicada está incompleta. Importe novamente o arquivo de origem.");
-      }
-      const records = blocks.flatMap((block) => block.records as QualitySnapshot["records"]);
-      if (records.length !== manifest.row_count)
-        throw new Error("Quantidade de registros diferente da importação publicada.");
-      assertQualityRecords(kind, records);
-      state.datasets[kind] = { ...(manifest.metadata as Record<string, Json>), records };
-      state.imports[kind] = manifest;
-    }),
+    }
+  }
+  let complete = 0;
+  progress?.({ stage: "download", complete, total: manifest.chunk_count });
+  const pages = await readQualityPages(
+    Math.ceil(manifest.chunk_count / 8),
+    async (page) => {
+      const start = page * 8;
+      const { data: rows, error: readError } = await supabase
+        .from(dataTable(kind))
+        .select("chunk_index,records")
+        .eq("import_id", manifest.id)
+        .gte("chunk_index", start)
+        .lt("chunk_index", start + 8)
+        .order("chunk_index")
+        .abortSignal(abort);
+      if (readError) throw readError;
+      complete += rows?.length ?? 0;
+      if (!abort.aborted) progress?.({ stage: "download", complete, total: manifest.chunk_count });
+      return rows ?? [];
+    },
+    abort,
   );
+  const blocks = pages.flat();
+  if (
+    blocks.length !== manifest.chunk_count ||
+    blocks.some((block, index) => block.chunk_index !== index)
+  ) {
+    throw new Error("A base publicada está incompleta. Importe novamente o arquivo de origem.");
+  }
+  const records = blocks.flatMap((block) => block.records as QualitySnapshot["records"]);
+  if (records.length !== manifest.row_count)
+    throw new Error("Quantidade de registros diferente da importação publicada.");
+  assertQualityRecords(kind, records);
+  const snapshot = { ...(manifest.metadata as Record<string, Json>), records };
+  if (userId)
+    cacheQualityDataset(
+      QUALITY_PROJECT_REF,
+      userId,
+      kind,
+      manifest.id,
+      snapshot,
+      generation,
+      abort,
+    );
+  progress?.({ stage: "ready", complete, total: manifest.chunk_count });
+  return { manifest, snapshot };
+}
+
+export async function fetchQualityRegistry(signal?: AbortSignal): Promise<QualityRegistry> {
+  assertProject();
   const { data, error } = await supabase
     .from("quality_supervisor_registry")
     .select("registry")
     .eq("singleton", true)
+    .abortSignal(signal ?? new AbortController().signal)
     .maybeSingle();
   if (error) throw error;
-  state.registry = (data?.registry ?? {}) as QualityRegistry;
+  return (data?.registry ?? {}) as QualityRegistry;
+}
+
+export async function fetchQualityState(
+  previous?: QualityState,
+  kinds: readonly QualityKind[] = ["quebra", "certification"],
+): Promise<QualityState> {
+  const state: QualityState = { datasets: {}, imports: {}, registry: {} };
+  await Promise.all([
+    ...kinds.map(async (kind) => {
+      const result = await fetchQualityDataset(kind, {
+        previous: { manifest: previous?.imports[kind] ?? null, snapshot: previous?.datasets[kind] },
+      });
+      if (result.manifest) state.imports[kind] = result.manifest;
+      if (result.snapshot) state.datasets[kind] = result.snapshot;
+    }),
+    fetchQualityRegistry().then((registry) => {
+      state.registry = registry;
+    }),
+  ]);
   return state;
 }
 
@@ -169,7 +248,7 @@ export async function saveQualityRegistry(
   if (error) throw error;
 }
 
-export async function fetchQualityDirectory(): Promise<QualityLogin[]> {
+export async function fetchQualityDirectory(signal?: AbortSignal): Promise<QualityLogin[]> {
   assertProject();
   const entries: QualityLogin[] = [];
   for (let start = 0; ; start += 500) {
@@ -177,7 +256,8 @@ export async function fetchQualityDirectory(): Promise<QualityLogin[]> {
       .from("quality_technician_directory")
       .select("login,full_name,city,sector,supervisor,updated_at")
       .order("login")
-      .range(start, start + 499);
+      .range(start, start + 499)
+      .abortSignal(signal ?? new AbortController().signal);
     if (error) throw error;
     entries.push(...(data ?? []));
     if ((data?.length ?? 0) < 500) break;

@@ -1,0 +1,5 @@
+/* Presentation-only chrome; the original table and calculations stay intact. */
+.reference-body:is(.presentation-mode, .slides-frame-active) #panelView > .tablecard > .tabletop,
+.reference-body:is(.presentation-mode, .slides-frame-active) #tcSupervisorControls {
+  display: none !important;
+}

@@ -12,6 +12,7 @@ import {
   readDirectoryWorkbook,
   type QualityLogin,
 } from "@/lib/quality-directory";
+import { isTechnicalVisitSector } from "@/lib/technical-visit-scope";
 
 const fields = [
   ["login", "Login"],
@@ -27,6 +28,7 @@ export function QualityDirectory({
   busy,
   onSave,
   onDelete,
+  technicalVisit = false,
 }: {
   entries: QualityLogin[];
   missing: QualityLogin[];
@@ -34,6 +36,7 @@ export function QualityDirectory({
   busy: boolean;
   onSave: (rows: QualityLogin[]) => Promise<void>;
   onDelete: (login: string) => Promise<void>;
+  technicalVisit?: boolean;
 }) {
   const [search, setSearch] = useState(""),
     [onlyPending, setOnlyPending] = useState(false),
@@ -45,9 +48,17 @@ export function QualityDirectory({
     [parsing, setParsing] = useState(false);
   const [previewPage, setPreviewPage] = useState(0);
   const input = useRef<HTMLInputElement>(null);
+  const visibleEntries = useMemo(
+    () => (technicalVisit ? entries.filter((row) => isTechnicalVisitSector(row.sector)) : entries),
+    [entries, technicalVisit],
+  );
+  const visibleMissing = useMemo(
+    () => (technicalVisit ? missing.filter((row) => isTechnicalVisitSector(row.sector)) : missing),
+    [missing, technicalVisit],
+  );
   const rows = useMemo(
     () =>
-      [...entries, ...missing]
+      [...visibleEntries, ...visibleMissing]
         .filter(
           (row) =>
             (!onlyPending || !row.supervisor || !row.full_name || !row.city || !row.sector) &&
@@ -57,7 +68,7 @@ export function QualityDirectory({
           (a, b) =>
             a.full_name.localeCompare(b.full_name, "pt-BR") || a.login.localeCompare(b.login),
         ),
-    [entries, missing, onlyPending, search],
+    [visibleEntries, visibleMissing, onlyPending, search],
   );
   function edit(row: QualityLogin, isNew = false) {
     setOriginal(isNew ? "" : row.login);
@@ -68,8 +79,19 @@ export function QualityDirectory({
     try {
       const parsed = (await Promise.all(files.map(readDirectoryWorkbook))).flat();
       const result = associateDirectory(parsed, entries);
-      setWarnings(result.warnings);
-      setPreview([...result.entries, ...result.unmatchedNames]);
+      const previewRows = [...result.entries, ...result.unmatchedNames].filter(
+        (row) => !technicalVisit || isTechnicalVisitSector(row.sector),
+      );
+      setWarnings(
+        technicalVisit
+          ? result.warnings.filter((warning) =>
+              previewRows.some((row) => row.login && warning.startsWith(`${row.login}:`)),
+            )
+          : result.warnings,
+      );
+      setPreview(previewRows);
+      if (technicalVisit && !previewRows.length)
+        toast.info("Nenhum cadastro com setor Visita técnica encontrado na importação.");
       setPreviewPage(0);
     } catch (error) {
       toast.error((error as Error).message);
@@ -85,8 +107,13 @@ export function QualityDirectory({
       toast.error("O login não pode conter espaços.");
       return;
     }
-    if (!original && entries.some((row) => row.login === login)) {
-      toast.error("Esse login já existe. Use Editar no cadastro existente.");
+    const existing = entries.find((row) => normalizeLogin(row.login) === login);
+    if (!original && existing) {
+      toast.error(
+        technicalVisit && !isTechnicalVisitSector(existing.sector)
+          ? "Esse login já existe em outro setor. Edite seu setor no cadastro de QQ e Certificação."
+          : "Esse login já existe. Use Editar no cadastro existente.",
+      );
       return;
     }
     try {
@@ -98,7 +125,13 @@ export function QualityDirectory({
   }
   async function savePreview() {
     if (!preview) return;
-    const valid = preview.filter((row) => row.login.trim());
+    const valid = preview.filter(
+      (row) => row.login.trim() && (!technicalVisit || isTechnicalVisitSector(row.sector)),
+    );
+    if (technicalVisit && !valid.length) {
+      toast.info("Nenhum cadastro de Visita técnica com login será salvo.");
+      return;
+    }
     if (
       valid.some(
         (row) => !row.full_name.trim() || !/^[^\s]{1,100}$/.test(normalizeLogin(row.login)),
@@ -119,13 +152,18 @@ export function QualityDirectory({
     }
   }
   const disabled = busy || parsing;
+  const displayPage = technicalVisit
+    ? Math.min(page, Math.max(0, Math.ceil(rows.length / 50) - 1))
+    : page;
   return (
     <section className="quality-card space-y-5">
       <div className="flex flex-wrap justify-between gap-3">
         <div>
           <h2 className="text-xl font-bold">Cadastro de logins e supervisores</h2>
           <p className="text-sm text-muted-foreground">
-            Cadastro dos técnicos usado nos dois painéis. Não cria contas de acesso ao sistema.
+            {technicalVisit
+              ? "Somente logins com setor Visita técnica. Para incluir um login de outro setor, altere seu cadastro em QQ e Certificação. O cadastro é compartilhado entre os painéis."
+              : "Cadastro dos técnicos usado nos dois painéis. Não cria contas de acesso ao sistema."}
           </p>
         </div>
         {editable && (
@@ -134,7 +172,15 @@ export function QualityDirectory({
               <FileUp className="size-4" />
               Importar cadastros
             </Button>
-            <Button disabled={disabled} onClick={() => edit(emptyQualityLogin(), true)}>
+            <Button
+              disabled={disabled}
+              onClick={() =>
+                edit(
+                  { ...emptyQualityLogin(), sector: technicalVisit ? "Visita técnica" : "" },
+                  true,
+                )
+              }
+            >
               <Plus className="size-4" />
               Adicionar login
             </Button>
@@ -179,7 +225,7 @@ export function QualityDirectory({
           Somente cadastros pendentes
         </label>
         <span className="text-sm text-muted-foreground">
-          {entries.length} cadastrados · {missing.length} logins novos nas bases
+          {visibleEntries.length} cadastrados · {visibleMissing.length} logins novos nas bases
         </span>
       </div>
       {parsing && (
@@ -199,7 +245,7 @@ export function QualityDirectory({
             </tr>
           </thead>
           <tbody>
-            {rows.slice(page * 50, page * 50 + 50).map((row) => (
+            {rows.slice(displayPage * 50, displayPage * 50 + 50).map((row) => (
               <tr key={row.login}>
                 {fields.map(([key]) => (
                   <td key={key}>
@@ -252,7 +298,7 @@ export function QualityDirectory({
           </p>
         )}
       </div>
-      <Pagination page={page} total={rows.length} onChange={setPage} />
+      <Pagination page={displayPage} total={rows.length} onChange={setPage} />
       <Dialog
         open={!!editing}
         onOpenChange={(open) => {

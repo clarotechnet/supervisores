@@ -39,6 +39,16 @@ try {
         sectors: null,
       };
     if (table === "quality_supervisor_registry") output = null;
+    if (technicalVisit && table === "quality_technician_directory")
+      output = [
+        {
+          login: "Z1",
+          full_name: "Técnico VT",
+          city: "Natal",
+          sector: "Visita técnica",
+          supervisor: "Supervisor VT",
+        },
+      ];
     if (table === "quality_imports") {
       if (request.method() === "POST") {
         output = {
@@ -158,12 +168,7 @@ try {
     return rows.join("\r\n");
   }
   await page.goto(`http://127.0.0.1:5175${routePath}`);
-  await page
-    .getByRole("heading", {
-      name: technicalVisit ? "Visita técnica" : "QQ e Certificação",
-      exact: true,
-    })
-    .waitFor();
+  await page.locator("#goTC").waitFor();
   if (technicalVisit) {
     assert.equal(
       await page.getByRole("button", { name: "Importar QQ (.xlsx)", exact: true }).count(),
@@ -173,10 +178,7 @@ try {
       await page.getByRole("button", { name: "Importar histórico HTML", exact: true }).count(),
       0,
     );
-    assert.equal(
-      await page.getByRole("button", { name: "QQ · Visão geral", exact: true }).count(),
-      0,
-    );
+    assert.equal(await page.locator("#goGeneral").isVisible(), false);
     assert.equal(await page.locator("iframe").count(), 0);
   }
   const seed = await page.evaluate(
@@ -230,30 +232,36 @@ try {
     originalQC = JSON.stringify(otherRows);
   }
   await page.reload();
-  await page.getByRole("button", { name: "Técnico certificado", exact: true }).click();
-  await page.getByRole("heading", { name: "Certificação por competência", exact: true }).waitFor();
+  await page.locator("#goTC").click();
+  await page
+    .locator("#referenceTC #fileMeta")
+    .getByText("45 registros", { exact: false })
+    .waitFor({ state: "attached" });
   const baselineReads = blockReads;
   async function upload(name, text, heading) {
-    await page.getByRole("button", { name: "Importar TC (.csv / .zip)", exact: true }).click();
     await page
-      .locator("input[type=file]")
+      .locator("#referenceTC #fileInput")
       .setInputFiles({ name, mimeType: "text/csv", buffer: Buffer.from(text) });
-    await page.getByRole("heading", { name: heading, exact: true }).waitFor();
+    await page
+      .getByRole("status", { name: "Resumo da importação TC" })
+      .filter({ hasText: heading })
+      .filter({ hasText: name })
+      .waitFor();
   }
   const second = csv("2026-09-21", "2026-10-13", true);
   await upload("parcial.csv", second, "TC · Base atualizada");
-  let report = page.getByRole("region", { name: "Resumo da importação TC" });
-  await report.getByText("8 adicionados", { exact: true }).waitFor();
+  let report = page.getByRole("status", { name: "Resumo da importação TC" });
+  await report.getByText("8 adicionados", { exact: false }).waitFor();
   assert.equal(imports.filter((row) => row.kind === sourceKind).at(-1).row_count, 53);
   assert.equal(writes, 1);
-  await upload("parcial.csv", second, "TC · Arquivo sem alterações");
-  await report.getByText("23 já existentes sem alteração", { exact: true }).waitFor();
+  await upload("parcial.csv", second, "TC · Sem alterações");
+  await report.getByText("23 já existentes sem alteração", { exact: false }).waitFor();
   assert.equal(writes, 1);
-  await upload("mesmo-arquivo-renomeado.csv", second, "TC · Arquivo sem alterações");
-  await report.getByText("mesmo-arquivo-renomeado.csv", { exact: true }).waitFor();
+  await upload("mesmo-arquivo-renomeado.csv", second, "TC · Sem alterações");
+  await report.getByText("mesmo-arquivo-renomeado.csv", { exact: false }).waitFor();
   assert.equal(writes, 1);
   await upload("parcial.csv", csv("2026-09-21", "2026-10-20", true), "TC · Base atualizada");
-  await report.getByText("7 adicionados", { exact: true }).waitFor();
+  await report.getByText("7 adicionados", { exact: false }).waitFor();
   assert.equal(writes, 2);
   assert.equal(imports.filter((row) => row.kind === sourceKind).at(-1).row_count, 60);
   assert.equal(blockReads, baselineReads, "Unchanged bases were unnecessarily re-downloaded");
@@ -265,8 +273,11 @@ try {
   assert.equal(finalRows[0].day, "2026-08-22");
   assert.equal(finalRows.at(-1).day, "2026-10-20");
   await page.reload();
-  await page.getByRole("button", { name: "Técnico certificado", exact: true }).click();
-  await page.getByText("60 registros", { exact: false }).first().waitFor();
+  await page.locator("#goTC").click();
+  await page
+    .locator("#referenceTC #fileMeta")
+    .getByText("60 registros", { exact: false })
+    .waitFor({ state: "attached" });
   if (technicalVisit) {
     assert.equal(
       JSON.stringify(blocks.find((row) => row.table === "quality_certification_data").records),
@@ -277,16 +288,21 @@ try {
       path: "C:/Users/Usuario/AppData/Local/Temp/technical-visit-preview.png",
     });
     await page.goto("http://127.0.0.1:5175/qualidade");
-    await page.getByRole("button", { name: "Técnico certificado", exact: true }).click();
-    await page.getByText("1 registros", { exact: false }).first().waitFor();
-    await page.getByRole("button", { name: "222", exact: true }).first().waitFor();
+    await page.locator("#goTC").click();
+    await page
+      .locator("#referenceTC #fileMeta")
+      .getByText("1 registros", { exact: false })
+      .waitFor({ state: "attached" });
+    await page
+      .locator("#referenceTC #panelView")
+      .getByText("222,0", { exact: true })
+      .first()
+      .waitFor();
     role = "supervisor";
     await page.goto(`http://127.0.0.1:5175${routePath}`);
-    await page.getByRole("heading", { name: "Visita técnica", exact: true }).waitFor();
-    assert.equal(
-      await page.getByRole("button", { name: "Importar TC (.csv / .zip)", exact: true }).count(),
-      0,
-    );
+    await page.reload();
+    await page.locator("#referenceTC #fileInput").waitFor({ state: "attached" });
+    assert.equal(await page.locator("#referenceTC #fileInput").isDisabled(), true);
     role = "controller";
     await page.goto(`http://127.0.0.1:5175${routePath}`);
     await page.waitForURL("**/escalas");

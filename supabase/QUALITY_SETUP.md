@@ -12,10 +12,10 @@ A consulta remota pelo conector foi recusada; a migration foi validada em um Pos
    `supabase/migrations/20261013140334_add_quality_technician_directory.sql`.
 2. Publique a nova aplicação com `npm run build` pelo fluxo de deploy já usado no projeto.
 3. Entre como gestor e abra **QQ e Certificação** no menu lateral.
-4. Se precisar trazer o histórico, use **Importar histórico HTML** e selecione o HTML unificado fornecido. Isso traz as
+4. Se precisar trazer o histórico, abra **Unidade de negócio → Importar histórico HTML** e selecione o HTML unificado fornecido. Isso traz as
    bases incorporadas, nomes, correções da origem e associações de supervisores.
-5. Nas próximas atualizações, use **Importar QQ (.xlsx)** para quebra e
-   **Importar TC (.csv / .zip)** para certificação. As bases são independentes.
+5. Nas próximas atualizações, use **Importar planilha** na lateral do QQ para quebra (.xlsx),
+   ou abra **Importação e filtros** no Técnico Certificado para enviar CSV/ZIP. As bases são independentes.
 
 Gestores importam e editam o cadastro compartilhado de técnicos. Supervisores
 consultam os três modos, aplicam filtros, exportam TC e usam a apresentação.
@@ -23,9 +23,33 @@ Controladores mantêm o acesso exclusivo às escalas.
 
 ## Integração nativa e cadastro de logins
 
-### Atualização do HTML de 13/10/2026
+### Restauração fiel do visual
 
-Em **Apresentação → Slides**, a sequência nativa percorre QQ por cidade e frente (30 s),
+O layout é novamente o do arquivo `DASH-QQ-TC-VRSJVNF3-120113102026.html`:
+toolbar, filtros laterais, cards, tabelas, cores, gráficos SVG, detalhes e apresentação.
+Não há iframe: os renderizadores revisados usam DOM nativo com estilos isolados em Shadow DOM
+dentro do AppShell. A área ocupa a largura disponível e a apresentação remove a navegação externa.
+O visual interno mantém as cores claras do HTML, sem redesenhar gráficos conforme o tema do AppShell.
+
+`scripts/extract-quality-reference.mjs` gera os assets a partir da referência revisada;
+SHA-256 `e2a41044c855276006e3d977a81bbd10ca220f96a720b7dfedf1f6888fde7dd2`.
+Os dados pessoais, mapas de técnicos, bibliotecas incorporadas e a conferência histórica privada
+não são incluídos no bundle. HTML enviado pelo usuário continua sendo interpretado apenas como dados,
+nunca executado. **Conferência dos dados** consulta a cobertura das bases carregadas do projeto.
+O botão legado de limpar a base fica oculto para preservar publicações e importações incrementais.
+
+O cadastro nativo mantém os campos extras já solicitados (login, nome, cidade, setor e supervisor).
+As importações, permissões e a base independente de Visita técnica permanecem no serviço existente.
+Esta alteração visual **não exige nova migration** e não executa SQL nem grava dados de produção.
+
+Validação: `node scripts/verify-quality-reference.mjs` compara estrutura, medidas, fontes, cores
+e SVGs dos três modos com os frames originais usando registros sintéticos e rede bloqueada no comparador.
+Também testa slides, filtros, cadastro e papéis. `verify-quality-incremental.mjs` e
+`verify-technical-visit.mjs` verificam uploads sobrepostos sem tráfego para o banco real.
+
+### Apresentação e slides do HTML de 13/10/2026
+
+Em **Modo apresentação → Slides**, a sequência nativa percorre QQ por cidade e frente (30 s),
 Visão Geral consolidada (90 s) e TC por cidade/supervisor (30 s), repetindo ao final.
 Visita técnica usa somente slides de TC de sua própria base. Pausa/continua, anterior/seguinte,
 contador e progresso estão disponíveis; setas e espaço funcionam também com foco no conteúdo.
@@ -35,7 +59,7 @@ frente, filtros e visão diária/resultado. Os planos de projeção da sessão s
 **QQ usa somente Adesão por padrão**, tanto no painel de frentes quanto na Visão Geral,
 cards, gráficos, detalhamentos e slides. São as unidades DMV base (`NTL-DMV`, `FTZ-DMV_01`,
 etc.). `_ADM`, `_VT`, MDU e outras unidades continuam no seletor, mas entram apenas por
-seleção explícita. “Todas as unidades (seleção explícita)” inclui todas; “Voltar à Adesão”
+seleção explícita. “Todas as unidades” inclui todas quando selecionada; “Voltar à Adesão”
 restaura o padrão. Meses/datas e a seleção explícita de unidades são mantidos nos slides;
 cidades/equipes alternam e os demais filtros retornam ao encerrar.
 
@@ -45,13 +69,12 @@ Nenhuma fórmula de indicador, importador, tabela ou política RLS foi alterada 
 Não há nova migration a executar para estas funções. Publique a aplicação atualizada.
 
 Regressão: `tests/quality-slides.test.ts`, `tests/quality-native.test.ts` e
-`scripts/verify-quality-app.mjs` verificam recorte, timers, filtros, nomes, temas e
+`scripts/verify-quality-reference.mjs` verificam recorte, timers, filtros, nomes, visual original e
 interações sem chamadas ao banco de produção (dados e tráfego Supabase simulados).
 
 A rota `/qualidade` é uma página React dentro do AppShell: não há iframe nem página HTML
-independente. Compartilha navegação, tema claro/escuro, botões, diálogos e permissões.
-Os gráficos mantêm vermelho, verde e laranja para indicadores e metas. O modo apresentação
-exibe a própria página nativa em tela cheia.
+independente. Compartilha navegação, dados, cadastro e permissões, preservando o visual original
+do HTML para os gráficos e tabelas. O modo apresentação exibe a própria página nativa em tela cheia.
 
 Em **Logins e supervisores**, o gestor pode adicionar ou editar **login, nome, cidade, setor e
 supervisor**, buscar cadastros e encontrar logins novos nas bases. Isso não cria usuários de login
@@ -77,7 +100,7 @@ automaticamente ao banco: a gravação ocorre após a revisão e confirmação n
 
 Nova entrada própria no menu lateral, rota `/visita-tecnica`, somente para Técnico Certificado.
 Aceita **CSV ou ZIP com um CSV** no formato analítico de TC. Não importa QQ nem o HTML unificado.
-Usa os mesmos cálculos, filtros, matriz diária, projeção, exportação, temas e apresentação; o cadastro
+Usa os mesmos cálculos, filtros, matriz diária, projeção, exportação, visual original e apresentação; o cadastro
 de logins/supervisores é compartilhado. Gestores importam e editam o cadastro; supervisores consultam.
 Controladores continuam restritos a Escalas.
 
@@ -179,6 +202,31 @@ dividida pelos dias distintos com pontos. Certificação exige simultaneamente r
 **< 7,01%**, TEC1 **≥ 95%** e produtividade **≥ 127 pontos/dia**.
 O consolidado é certificados / técnicos avaliáveis, com meta de 75%.
 
+Exceção exclusiva de **Visita técnica**: a produtividade mínima para certificação é
+**≥ 175 pontos/dia**, inclusive no valor exato de 175. O TC de **QQ e Certificação** continua
+com **≥ 127 pontos/dia**. Revisita < 7,01%, TEC1 ≥ 95%, fórmula de pontos por dias produtivos
+e meta consolidada de 75% permanecem iguais. A regra é configurada por instância do painel;
+status mensal/diário, cores, gráficos, projeções, slides e exportação usam a mesma meta da
+instância, sem modificar ou reimportar os registros do banco. Não precisa de migration.
+`scripts/verify-technical-visit-productivity.mjs` verifica os dois painéis, os limites 174,99/175,
+projeções, exportação e slides com dados fictícios e sem chamadas externas reais.
+
+O recorte de **Visita técnica** é obrigatório pelo cadastro compartilhado: entram apenas registros
+cujo login tenha `sector = Visita técnica` no cadastro de logins. A comparação ignora acentos,
+maiúsculas/minúsculas e espaços extras. Não se deduz o setor pelo nome, cidade, unidade `_VT`,
+grupo do serviço ou conteúdo do CSV. Logins desconhecidos, sem setor ou de outros setores não
+participam dos totais, gráficos, status, projeções, exportação ou slides dessa aba. A lista de
+cadastros nessa aba mostra apenas VT; a importação de cadastros usa o cadastro completo para
+associação por nome e detecção de duplicatas, mas sua prévia/salvamento em VT seleciona somente VT.
+O cadastro de QQ e Certificação continua completo.
+
+A importação analítica de Visita técnica aceita o mesmo CSV/ZIP completo usado no outro painel,
+mas continua em sua base independente. Os registros originais de todos os setores são mantidos
+no banco e no cache: o recorte ocorre somente na exibição, antes de hidratar os dados e calcular.
+Alterar o setor de um login no cadastro inclui ou remove seu histórico de VT sem nova importação.
+Se o cadastro não puder ser confirmado, VT não calcula usando o cadastro legado sem setor.
+Sem logins classificados como Visita técnica, a tela explica como fazer a associação.
+
 Filtros de unidade, cidade, setor, supervisor, competência e período são nativos, com recortes
 adicionais de cluster/semana no QQ e UF/subcluster/grupo/job no TC. Há evolução mensal/semanal/diária,
 composição por categoria/login, comparação por unidade/frente, matriz diária, detalhamento de O.S.
@@ -208,8 +256,43 @@ Esse teste utiliza perfis fictícios e deve rodar somente no banco isolado de te
 `supabase/tests/quality_directory_security.sql` valida cadastro, atualização/exclusão, lote
 transacional, bloqueio de supervisores/controladores na escrita e ausência de acesso anônimo.
 Os testes de navegador `scripts/verify-quality-panel.mjs` (parsers/cálculos contra o original) e
-`scripts/verify-quality-app.mjs` (cadastro/importação/temas/apresentação/perfis) são locais e
+`scripts/verify-quality-reference.mjs` (paridade visual/cadastro/apresentação/perfis) são locais e
 interceptam chamadas ao Supabase; não gravam dados em produção.
 
 `supabase/tests/technical_visit_security.sql` e `scripts/verify-technical-visit.mjs` verificam a nova
 aba, importação exclusiva de TC, isolamento entre as bases, atualização incremental e acesso por papel.
+
+## Carregamento das bases (sem alteração de cálculos)
+
+QQ, TC e o cadastro possuem consultas independentes. Ao abrir QQ, TC só é buscado ao abrir seu
+painel, o cadastro de logins (para descobrir os pendentes nas duas bases) ou iniciar slides. Visita
+técnica continua carregando somente sua base exclusiva de TC. Os slides aguardam todas as bases
+necessárias, e os gráficos recebem apenas registros completos e validados.
+
+Os blocos são lidos em páginas de oito blocos, com até quatro páginas simultâneas por base.
+A ordem original, os índices contíguos e a quantidade de registros do manifesto continuam sendo
+conferidos. Falhas não entregam uma base parcial aos motores. Requisições em andamento são
+canceladas ao sair do módulo ou da conta. O cadastro compartilhado continua atualizado por login.
+
+Bases validadas podem ser reutilizadas em RAM por 30 minutos. Há também um cache opcional
+compactado, sem perda de dados, em IndexedDB (`technet-quality-cache-v1`), separado por projeto,
+usuário e tipo de base. Guarda somente a última versão de cada tipo por usuário, com validade
+máxima de sete dias. Nenhum token ou credencial é armazenado nesse cache. Antes de reutilizá-lo,
+sempre é consultado o manifesto atual pelo Supabase autenticado; ele não serve como acesso
+offline nem como alternativa a uma negativa de permissão. Versão diferente, cache inválido ou
+armazenamento indisponível levam a uma leitura normal do banco. Logout/troca de conta limpam
+as cópias da conta anterior e impedem gravações pendentes. O botão Atualizar base consulta novamente
+as versões, mas não baixa blocos inalterados.
+
+Na importação, a conferência da versão publicada e a proteção contra publicação concorrente
+permanecem obrigatórias. O caminho de importação não usa cache de disco para decidir a base a
+complementar. Deduplicação, fórmulas, metas, parsers e funções dos renderizadores originais não
+foram alterados para esta otimização. Não é necessária nova migration nem alteração no banco.
+
+`tests/quality-loading.test.ts` verifica paralelismo, ordem, cancelamento e falhas.
+`scripts/verify-quality-loading.mjs` testa carregamento independente, slides aguardando TC, cache
+por versão, corrupção, rejeição de blocos incompletos, permissão, isolamento por conta e logout
+em navegador real, com dados fictícios e todas as chamadas externas interceptadas.
+`scripts/profile-quality-loading.mjs <caminho-do-HTML>` mede o tempo de QQ, abertura de TC e
+reabertura com cache usando os dados do HTML, sem enviar nada ao banco. Esses tempos são locais
+com latência simulada, não medições do site publicado nem do plano do banco.
