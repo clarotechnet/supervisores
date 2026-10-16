@@ -691,7 +691,7 @@ function tcRenderSupervisors(){
 }
 // Mantém o filtro de equipe nas métricas, nos históricos e nas projeções existentes.
 const tcRenderBeforeSupervisor=render;
-render=function(){if(state.ready)svReconcileSelection(tcSupervisors,state.rows.filter(r=>rowPass(r,false,true)),'login');tcRenderBeforeSupervisor();if(state.ready)tcRenderSupervisors();};
+render=function(){if(state.ready&&!document.body.classList.contains('presentation-mode'))svReconcileSelection(tcSupervisors,state.rows.filter(r=>rowPass(r,false,true)),'login');tcRenderBeforeSupervisor();if(state.ready)tcRenderSupervisors();};
 const tcSwitchBeforeSupervisor=switchView;
 switchView=function(view){tcSupervisorMode=false;tcSwitchBeforeSupervisor(view);render();};
 const tcResetBeforeSupervisor=resetFilters;
@@ -776,6 +776,12 @@ window.setUnifiedUnits=function(values){
     state.ready=true;applyMaps();initFilters(!previous);setLoading(false);render();
     $('#fileMeta').textContent=state.rows.length.toLocaleString('pt-BR')+' registros de TC carregados do sistema.';
   };
+  window.getUnifiedSupervisors = () => ({supervisors:[...svCounts(state.rows.filter(row=>rowPass(row,false,true)),'login')].map(([name,logins])=>({name,count:logins.size})),selected:[...tcSupervisors]});
+  window.setUnifiedSupervisors = values => {
+    tcSupervisors.clear();values.forEach(value=>tcSupervisors.add(value));state.focus=null;render();
+  };
+  const tcRenderBeforeUnifiedSupervisor=render;
+  render=function(){tcRenderBeforeUnifiedSupervisor();window.parent.refreshUnifiedMonth?.();};
   window.redraw = () => render();
   window.isModalOpen = () => $('#modal').classList.contains('show');
   window.closeModal = () => tcCloseModal();

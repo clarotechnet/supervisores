@@ -122,6 +122,27 @@
   gap: 7px;
   cursor: pointer;
 }
+.quality-reference:not(.presenting) #supervisorPicker {
+  display: none !important;
+}
+.quality-reference .supervisor-options {
+  width: 290px;
+}
+.quality-reference .supervisor-options label span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.quality-reference .supervisor-options label small {
+  color: #75839a;
+  font-size: 10px;
+}
+.quality-reference #supervisorPickerLabel {
+  max-width: 165px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .quality-reference .unit-options button {
   margin: 8px 0;
   border: 1px solid #c8d8ea;

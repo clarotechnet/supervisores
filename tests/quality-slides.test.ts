@@ -73,6 +73,38 @@ describe("sequência nativa do novo HTML", () => {
     expect(deck).toHaveLength(1);
     expect(deck[0]?.panel).toBe("tc");
   });
+  it("mantém o supervisor da apresentação em quebras, visão geral e TC", () => {
+    const s = snapshot();
+    s.filters.supervisors = ["Supervisor A"];
+    const deck = buildQualitySlides(
+      [q(), { ...q("NTL-DMV", "2026-10-01", "Recife"), lt: "Z2" }],
+      [t(), t("Z2", "Recife")],
+      index,
+      s,
+    );
+    expect(deck).toHaveLength(6);
+    expect(deck.some((slide) => slide.city === "Recife")).toBe(false);
+    expect(deck.filter((slide) => slide.panel === "tc").map((slide) => slide.supervisor)).toEqual([
+      "Supervisor A",
+    ]);
+    for (const slide of deck)
+      expect(qualitySlideFilters(slide, s).supervisors).toEqual(["Supervisor A"]);
+    expect(s.filters.supervisors).toEqual(["Supervisor A"]);
+  });
+  it("permite várias equipes e Sem supervisor, inclusive nos slides de VT", () => {
+    const s = snapshot();
+    s.mode = "tc";
+    const roster = new Map(index);
+    roster.set("Z3", { ...emptyQualityLogin(), login: "Z3", supervisor: "Supervisor B" });
+    const tc = [t(), t("Z2"), t("Z3")];
+    s.filters.supervisors = ["Supervisor A", "Sem supervisor"];
+    expect(buildQualitySlides([], tc, roster, s, true).map((slide) => slide.supervisor)).toEqual([
+      "Supervisor A",
+      "Sem supervisor",
+    ]);
+    s.filters.supervisors = ["Não existe no recorte"];
+    expect(buildQualitySlides([q()], tc, roster, s, true)).toEqual([]);
+  });
   it("não aproveita o filtro de unidade de TC como se fosse uma seleção explícita de QQ", () => {
     const s = snapshot();
     s.mode = "tc";

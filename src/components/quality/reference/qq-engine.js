@@ -391,8 +391,8 @@ draw=function(){
  const meta=QQ_QUALIFIED_GOAL,metaQuebra=QQ_BREAK_GOAL,NM={ND:'Novos Domicílios',MIG:'Migração',PME:'PME',ME:'Mudança de Endereço'};
  const baseAll=RECS.filter(r=>qqDatePass(r)&&uns.includes(r.un)&&cls.includes(r.cl));
  const cityBase=S.city?baseAll.filter(r=>presentationCityLabel(recCity(r))===S.city):baseAll;
- if(S.view==='logins')svReconcileSelection(S.supervisors||new Set(),cityBase.filter(r=>meses.includes(r.d.slice(0,7))),'lt');
- const base=S.view==='logins'?cityBase.filter(r=>svAllows(S.supervisors,r.lt)):cityBase;
+ if(S.view==='logins'&&!presenting)svReconcileSelection(S.supervisors||new Set(),cityBase.filter(r=>meses.includes(r.d.slice(0,7))),'lt');
+ const base=S.view==='logins'||presenting?cityBase.filter(r=>svAllows(S.supervisors,r.lt)):cityBase;
  const ms=[...new Set(base.map(r=>r.d.slice(0,7)))].sort();
  const onlyMes=meses.length===1?meses[0]:null;
  const prev=onlyMes?ms.filter(m=>m<onlyMes).pop():null;
@@ -1136,8 +1136,9 @@ document.addEventListener('click',event=>{
 });
 
 function qqGeneralContext(){
+ const presenting=document.body.classList.contains('presentation-mode');
  const uns=getMulti('fUn'),cls=getMulti('fCl'),selected=getMulti('fMes').sort();
- const data=RECS.filter(r=>qqDatePass(r)&&uns.includes(r.un)&&cls.includes(r.cl)&&['ND','PME','MIG','ME'].includes(r.gf||r.f));
+ const data=RECS.filter(r=>qqDatePass(r)&&uns.includes(r.un)&&cls.includes(r.cl)&&['ND','PME','MIG','ME'].includes(r.gf||r.f)&&(!presenting||svAllows(S.supervisors,r.lt)));
  const allMonths=[...new Set(data.map(r=>r.d.slice(0,7)))].sort(),anchor=(selected.length?selected:allMonths).at(-1)||'';
  const focus=S.city?data.filter(r=>presentationCityLabel(recCity(r))===S.city):data;
  const units=qqUnitOptions();if(qqGeneralUnit&&!units.includes(qqGeneralUnit))qqGeneralUnit='';
@@ -1590,6 +1591,16 @@ window.setUnifiedUnits=function(values){
     window.qqDataReady = true; init(!previous);
     msg(RECS.length.toLocaleString('pt-BR')+' registros de QQ carregados do sistema.');
   };
+  window.getUnifiedSupervisors = () => {
+    const units=getMulti('fUn'),clusters=getMulti('fCl'),months=getMulti('fMes');
+    const rows=RECS.filter(row=>qqDatePass(row)&&units.includes(row.un)&&clusters.includes(row.cl)&&months.includes(row.d.slice(0,7))&&(!S.city||presentationCityLabel(recCity(row))===S.city));
+    return {supervisors:[...svCounts(rows,'lt')].map(([name,logins])=>({name,count:logins.size})),selected:[...S.supervisors]};
+  };
+  window.setUnifiedSupervisors = values => {
+    S.supervisors.clear();values.forEach(value=>S.supervisors.add(value));S.login=null;S.loginSearch='';draw();
+  };
+  const qqDrawBeforeUnifiedSupervisor=draw;
+  draw=function(){qqDrawBeforeUnifiedSupervisor();window.parent.refreshUnifiedMonth?.();};
   window.redraw = () => draw();
   window.isModalOpen = () => $('catModal').classList.contains('on');
   window.closeModal = () => {$('catModal').classList.remove('on');$('catModal').setAttribute('aria-hidden','true');document.body.style.overflow='';};
