@@ -40,10 +40,16 @@ export function buildQualitySlides(
   const { filters, mode } = snapshot;
   const qqUnits = mode === "tc" || mode === "logins" ? [] : filters.units;
   const tcUnits = mode === "tc" ? filters.units : [];
+  const supervisorPass = (login: string) =>
+    !filters.supervisors.length ||
+    filters.supervisors.includes(index.get(normalizeLogin(login))?.supervisor || "Sem supervisor");
   const q = technicalVisit
     ? []
     : qq.filter(
-        (r) => qualityPeriodPass(r.d.slice(0, 7), r.d, filters) && qqUnitPass(r.un, qqUnits),
+        (r) =>
+          qualityPeriodPass(r.d.slice(0, 7), r.d, filters) &&
+          qqUnitPass(r.un, qqUnits) &&
+          supervisorPass(r.lt),
       );
   const cities = [...new Set(q.map((r) => qualityCity(r.lt, r.ci, index)).filter(Boolean))].sort(
     (a, b) => a.localeCompare(b, "pt-BR"),
@@ -68,7 +74,8 @@ export function buildQualitySlides(
   for (const row of tc) {
     if (
       !qualityPeriodPass(`${row.year}-${String(row.month).padStart(2, "0")}`, row.day, filters) ||
-      (tcUnits.length && !tcUnits.includes(row.baseUnit))
+      (tcUnits.length && !tcUnits.includes(row.baseUnit)) ||
+      !supervisorPass(row.login)
     )
       continue;
     const city = qualityCity(row.login, row.city, index);
@@ -96,7 +103,7 @@ export function qualitySlideFilters(
     end: snapshot.filters.end,
     units: [...((slide.panel === "tc") === (snapshot.mode === "tc") ? snapshot.filters.units : [])],
     cities: slide.city ? [slide.city] : [],
-    supervisors: slide.supervisor ? [slide.supervisor] : [],
+    supervisors: slide.supervisor ? [slide.supervisor] : [...snapshot.filters.supervisors],
   };
 }
 export interface QualityPlayerState {

@@ -11,6 +11,7 @@ import {
 import type { QualityRegistry } from "@/lib/quality";
 import { referenceScope } from "./reference-scope";
 import { referenceFilters } from "./reference-filters";
+import { presentationSupervisorPicker } from "./reference-presentation-toolbar";
 import type { ReferenceEngine, ReferenceParent } from "./reference-types";
 import { mountQQ } from "./reference/qq-engine";
 import { mountTC } from "./reference/tc-engine";
@@ -92,6 +93,7 @@ export function ReferenceQualitySurface(props: Props) {
                 ? []
                 : engine.getUnifiedUnits().selected,
             months: engine.getUnifiedMonths().selected,
+            supervisors: engine.getUnifiedSupervisors().selected,
             start: dates.start,
             end: dates.end,
           };
@@ -132,13 +134,14 @@ export function ReferenceQualitySurface(props: Props) {
           r.show(slide.panel);
           const engine = slide.panel === "tc" ? r.tc : r.qq;
           if (!engine.technetSlides.show(slide)) throw Error("Recorte indisponível");
-          if (slide.panel !== "tc")
+          if (slide.panel !== "tc") {
             r.qq.setUnifiedUnits(
               snapshot.mode !== "tc" && snapshot.filters.units.length
                 ? snapshot.filters.units
                 : r.qq.getUnifiedUnits().units.filter(isQQAdhesionUnit),
             );
-          else if (snapshot.mode === "tc") r.tc.setUnifiedUnits(snapshot.filters.units);
+            r.qq.setUnifiedSupervisors(snapshot.filters.supervisors);
+          } else if (snapshot.mode === "tc") r.tc.setUnifiedUnits(snapshot.filters.units);
           r.update();
           r.scopes[slide.panel === "tc" ? 1 : 0]!.environment.document.scrollingElement?.scrollTo(
             0,
@@ -179,6 +182,9 @@ export function ReferenceQualitySurface(props: Props) {
     const el = root.current!;
     const header = el.querySelector<HTMLElement>(".reference-header")!;
     header.innerHTML = referenceToolbar;
+    header
+      .querySelector("#goSlides")!
+      .insertAdjacentHTML("beforebegin", presentationSupervisorPicker);
     const filters = referenceFilters(header);
     const $ = (id: string) => el.querySelector<HTMLElement>(`#${id}`)!;
     // Engine startup calls the parent to refresh the toolbar before both
@@ -192,6 +198,48 @@ export function ReferenceQualitySurface(props: Props) {
         units = engine.getUnifiedUnits(),
         period = engine.getUnifiedMonths(),
         dates = engine.getUnifiedDates();
+      $("supervisorPicker").hidden = r.screen === "supervisors";
+      if (el.classList.contains("presenting") && r.screen !== "supervisors") {
+        const supervisors = engine.getUnifiedSupervisors();
+        $("supervisorPickerLabel").textContent = !supervisors.selected.length
+          ? "Todos os supervisores"
+          : supervisors.selected.length === 1
+            ? supervisors.selected[0]!
+            : `${supervisors.selected.length} supervisores`;
+        $("supervisorPicker").querySelector("summary")!.title =
+          supervisors.selected.join(" / ") || "Filtrar por supervisor";
+        // Retain selected teams with no records in a new city/period, so the user
+        // sees an empty result instead of silently broadening back to everyone.
+        const supervisorOptions = new Map(supervisors.supervisors.map((s) => [s.name, s.count]));
+        for (const name of supervisors.selected)
+          if (!supervisorOptions.has(name)) supervisorOptions.set(name, 0);
+        const supervisorMenu = $("supervisorOptions");
+        const focusedSupervisor = supervisorMenu.contains(document.activeElement)
+          ? (document.activeElement as HTMLInputElement).dataset["supervisor"] || "*"
+          : null;
+        const supervisorScroll = supervisorMenu.scrollTop;
+        supervisorMenu.innerHTML =
+          `<label><input type="checkbox" data-supervisor-all ${!supervisors.selected.length ? "checked" : ""}>Todos os supervisores</label>` +
+          [...supervisorOptions]
+            .sort(
+              ([a], [b]) =>
+                Number(a === "Sem supervisor") - Number(b === "Sem supervisor") ||
+                a.localeCompare(b, "pt-BR"),
+            )
+            .map(
+              ([name, count]) =>
+                `<label><input type="checkbox" data-supervisor="${escape(name)}" ${supervisors.selected.includes(name) ? "checked" : ""}><span>${escape(name)}</span><small>${count}</small></label>`,
+            )
+            .join("") +
+          (!supervisorOptions.size
+            ? '<p class="unit-hint">Sem equipes no recorte selecionado.</p>'
+            : "");
+        supervisorMenu.scrollTop = supervisorScroll;
+        if (focusedSupervisor !== null)
+          [...supervisorMenu.querySelectorAll<HTMLInputElement>("input")]
+            .find((input) => (input.dataset["supervisor"] || "*") === focusedSupervisor)
+            ?.focus({ preventScroll: true });
+      }
       const multipleTC = units.multiple && (r.screen === "tc" || latest.current.technicalVisit);
       const allUnits =
         !units.selected.length || units.units.every((unit) => units.selected.includes(unit));
@@ -379,6 +427,19 @@ export function ReferenceQualitySurface(props: Props) {
       r.tc.setUnifiedMonths(selected);
       update();
     };
+    $("supervisorOptions").onchange = (event) => {
+      const input = event.target as HTMLInputElement;
+      const engine = current();
+      if (input.hasAttribute("data-supervisor-all")) engine.setUnifiedSupervisors([]);
+      else if (input.dataset["supervisor"]) {
+        const value = input.dataset["supervisor"]!;
+        const selected = engine.getUnifiedSupervisors().selected;
+        engine.setUnifiedSupervisors(
+          input.checked ? [...selected, value] : selected.filter((name) => name !== value),
+        );
+      }
+      update();
+    };
     $("periodApply").onclick = () => {
       const dates = {
         start: (el.querySelector("#periodStart") as HTMLInputElement).value,
@@ -420,6 +481,7 @@ export function ReferenceQualitySurface(props: Props) {
       r.tc.setUnifiedPresentation(on);
       $("goFS").textContent = on ? "Sair da apresentação" : "Modo apresentação";
       $("goSlides").hidden = !on;
+      update();
       try {
         if (on) await document.documentElement.requestFullscreen();
         else if (document.fullscreenElement) await document.exitFullscreen();
@@ -490,6 +552,8 @@ export function ReferenceQualitySurface(props: Props) {
         r.qq.setUnifiedPresentation(false);
         r.tc.setUnifiedPresentation(false);
         $("goFS").textContent = "Modo apresentação";
+        filters.closeAll();
+        update();
       }
     };
     el.addEventListener("pointerdown", interact, true);
@@ -596,7 +660,7 @@ export function ReferenceQualitySurface(props: Props) {
     $("goSlides").hidden = !presenting || playerState.active;
     el.classList.toggle("slides-running", playerState.active);
     el.classList.toggle("slides-paused", playerState.paused);
-    for (const id of ["unitPicker", "monthPicker", "datePicker"])
+    for (const id of ["unitPicker", "monthPicker", "datePicker", "supervisorPicker"])
       $(id).toggleAttribute("inert", playerState.active);
     const slide = playerState.deck[playerState.index];
     if (!slide) return;

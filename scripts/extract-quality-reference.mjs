@@ -91,11 +91,37 @@ for (const [kind, id, name] of [
   );
   if (/[A-Za-z0-9+/]{5000}/.test(code))
     throw Error("Unexpected embedded dataset remains in " + kind);
+  if (kind === "qq") {
+    const adapt = (from, to) => {
+      if (!code.includes(from)) throw Error("Review the QQ supervisor adapter before porting.");
+      code = code.replace(from, to);
+    };
+    adapt(
+      "if(S.view==='logins')svReconcileSelection",
+      "if(S.view==='logins'&&!presenting)svReconcileSelection",
+    );
+    adapt(
+      "const base=S.view==='logins'?cityBase.filter",
+      "const base=S.view==='logins'||presenting?cityBase.filter",
+    );
+    adapt(
+      "&&['ND','PME','MIG','ME'].includes(r.gf||r.f));",
+      "&&['ND','PME','MIG','ME'].includes(r.gf||r.f)&&(!presenting||svAllows(S.supervisors,r.lt)));",
+    );
+    adapt(
+      "function qqGeneralContext(){",
+      "function qqGeneralContext(){\n const presenting=document.body.classList.contains('presentation-mode');",
+    );
+  }
   if (kind === "tc") {
     const adapt = (from, to) => {
       if (!code.includes(from)) throw Error("Review the TC filter adapter before porting.");
       code = code.replace(from, to);
     };
+    adapt(
+      "if(state.ready)svReconcileSelection(tcSupervisors",
+      "if(state.ready&&!document.body.classList.contains('presentation-mode'))svReconcileSelection(tcSupervisors",
+    );
     adapt(
       "\n    const $ = s => document.querySelector(s)",
       "\nconst tcSelectedUnits = new Set();\n    const $ = s => document.querySelector(s)",
@@ -169,6 +195,16 @@ for (const [kind, id, name] of [
     window.qqDataReady = true; init(!previous);
     msg(RECS.length.toLocaleString('pt-BR')+' registros de QQ carregados do sistema.');
   };
+  window.getUnifiedSupervisors = () => {
+    const units=getMulti('fUn'),clusters=getMulti('fCl'),months=getMulti('fMes');
+    const rows=RECS.filter(row=>qqDatePass(row)&&units.includes(row.un)&&clusters.includes(row.cl)&&months.includes(row.d.slice(0,7))&&(!S.city||presentationCityLabel(recCity(row))===S.city));
+    return {supervisors:[...svCounts(rows,'lt')].map(([name,logins])=>({name,count:logins.size})),selected:[...S.supervisors]};
+  };
+  window.setUnifiedSupervisors = values => {
+    S.supervisors.clear();values.forEach(value=>S.supervisors.add(value));S.login=null;S.loginSearch='';draw();
+  };
+  const qqDrawBeforeUnifiedSupervisor=draw;
+  draw=function(){qqDrawBeforeUnifiedSupervisor();window.parent.refreshUnifiedMonth?.();};
   window.redraw = () => draw();
   window.isModalOpen = () => $('catModal').classList.contains('on');
   window.closeModal = () => {$('catModal').classList.remove('on');$('catModal').setAttribute('aria-hidden','true');document.body.style.overflow='';};
@@ -198,6 +234,12 @@ for (const [kind, id, name] of [
     state.ready=true;applyMaps();initFilters(!previous);setLoading(false);render();
     $('#fileMeta').textContent=state.rows.length.toLocaleString('pt-BR')+' registros de TC carregados do sistema.';
   };
+  window.getUnifiedSupervisors = () => ({supervisors:[...svCounts(state.rows.filter(row=>rowPass(row,false,true)),'login')].map(([name,logins])=>({name,count:logins.size})),selected:[...tcSupervisors]});
+  window.setUnifiedSupervisors = values => {
+    tcSupervisors.clear();values.forEach(value=>tcSupervisors.add(value));state.focus=null;render();
+  };
+  const tcRenderBeforeUnifiedSupervisor=render;
+  render=function(){tcRenderBeforeUnifiedSupervisor();window.parent.refreshUnifiedMonth?.();};
   window.redraw = () => render();
   window.isModalOpen = () => $('#modal').classList.contains('show');
   window.closeModal = () => tcCloseModal();

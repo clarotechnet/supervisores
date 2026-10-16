@@ -12,6 +12,11 @@ export interface ReferenceEngine {
   setUnifiedQQView?(view: "general" | "front"): void;
   getUnifiedUnits(): { units: string[]; selected: string[]; multiple: boolean; ready: boolean };
   setUnifiedUnits(values: string[]): boolean;
+  getUnifiedSupervisors(): {
+    supervisors: { name: string; count: number }[];
+    selected: string[];
+  };
+  setUnifiedSupervisors(values: string[]): void;
   getUnifiedMonths(): { months: string[]; selected: string[] };
   setUnifiedMonths(values: string[]): void;
   getUnifiedDates(): { start: string; end: string };
