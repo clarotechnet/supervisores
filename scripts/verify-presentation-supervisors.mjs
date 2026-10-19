@@ -278,9 +278,18 @@ try {
       await page.locator("#goGeneral").click();
       assert.equal(await page.locator("#supervisorPickerLabel").innerText(), "Supervisor A");
       await page.setViewportSize({ width: 1366, height: 768 });
+      // Let fullscreen/layout and the popover's ResizeObserver finish before
+      // measuring; otherwise this can read the previous 1920px position.
+      await page.evaluate(
+        () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+      );
       await ensureOpen();
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
       const responsiveMenu = await page.locator("#supervisorOptions").boundingBox();
-      assert(responsiveMenu.x >= 0 && responsiveMenu.x + responsiveMenu.width <= 1366);
+      assert(
+        responsiveMenu.x >= 0 && responsiveMenu.x + responsiveMenu.width <= 1366,
+        JSON.stringify(responsiveMenu),
+      );
       assert(responsiveMenu.y >= 0 && responsiveMenu.y + responsiveMenu.height <= 768);
       await page.screenshot({ path: join(tmpdir(), "qq-presentation-supervisor.png") });
       await picker.locator("summary").click();

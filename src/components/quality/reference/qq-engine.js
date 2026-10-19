@@ -1,4 +1,5 @@
 // Reviewed reference e2a41044c855276006e3d977a81bbd10ca220f96a720b7dfedf1f6888fde7dd2; generated visual engine. No personal seed data.
+import { qqChartPointMarkup, wireQQChartDrilldown } from "../reference-qq-charts";
 export function mountQQ(environment) {
 const {document,window,localStorage,location,ResizeObserver,setTimeout,clearTimeout,requestAnimationFrame}=environment;
 const BUSINESS_UNITS=Object.freeze(["FTZ-DMV_01_VT","FTZ-DMV_01","FTZ-DMV_ADM","MRO-DMV","NTL-DMV_ADM","PWM-DMV_ADM","NTL-DMV","PWM-DMV","NTL-DMV_VT","PWM-DMV_VT","JCR-DMV","JCR-DMV_ADM"]);
@@ -417,8 +418,8 @@ draw=function(){
 
  const f=S.f,color=QQ_FRONT_COLOR[f]||'var(--red)',am=base.filter(r=>qqFrontMatches(r,f)&&meses.includes(r.d.slice(0,7)));
  const dg=group(am,r=>r.d),dk=Object.keys(dg).sort(),dst=dk.map(d=>stat(dg[d])),mst=stat(am);
- const daysQ=dk.map((d,i)=>({l:meses.length>1?d.slice(8)+'/'+d.slice(5,7):+d.slice(8),v:dst[i].pq,t:dst[i].n+' OS'}));
- const daysB=dk.map((d,i)=>({l:meses.length>1?d.slice(8)+'/'+d.slice(5,7):+d.slice(8),v:dst[i].pb,t:dst[i].n+' OS'}));
+ const daysQ=dk.map((d,i)=>({d,l:meses.length>1?d.slice(8)+'/'+d.slice(5,7):+d.slice(8),v:dst[i].pq,t:dst[i].n+' OS'}));
+ const daysB=dk.map((d,i)=>({d,l:meses.length>1?d.slice(8)+'/'+d.slice(5,7):+d.slice(8),v:dst[i].pb,t:dst[i].n+' OS'}));
  const wk=Object.entries(group(am.filter(r=>r.w),r=>meses.length>1?(r.d.slice(0,7)+'|'+r.w):r.w)).sort().map(([w,x])=>({w,s:stat(x)}));
  const weekItems=(key)=>wk.map(o=>{const p=String(o.w).split('|');return{l:p.length>1?`${p[0].slice(5,7)}/${p[0].slice(0,4)} S${p[1]}`:'Sem '+o.w,v:key==='q'?o.s.pq:o.s.pb,t:o.s.n+' OS'}});
  const catsD=CATS.filter(c=>mst.cat[c]).sort((x,y)=>mst.cat[y]-mst.cat[x]);
@@ -432,15 +433,15 @@ draw=function(){
   <div class="card pres-combo-card">
    <h3>EVOLUÇÃO DIÁRIA – ${NM[f].toUpperCase()} <span class="pres-sub">%Qualificada e %Quebra na mesma tela</span></h3>
    <div class="pres-combo-body">
-    <div class="pres-panel chart-card daily-chart"><div class="mini-title">%QUALIFICADA <span class="pres-sub">meta ${meta[f]!=null?pct(meta[f],2):'não definida'}</span></div>${bars(daysQ,color,meta[f])}</div>
-    <div class="pres-panel chart-card daily-chart"><div class="mini-title">%QUEBRA <span class="pres-sub">meta ${pct(metaQuebra[f],2)}</span></div>${bars(daysB,color,metaQuebra[f])}</div>
+    <div class="pres-panel chart-card daily-chart" data-qq-chart="daily:q"><div class="mini-title">%QUALIFICADA <span class="pres-sub">meta ${meta[f]!=null?pct(meta[f],2):'não definida'}</span></div>${bars(daysQ,color,meta[f],false,NM[f]+' · %Qualificada')}</div>
+    <div class="pres-panel chart-card daily-chart" data-qq-chart="daily:b"><div class="mini-title">%QUEBRA <span class="pres-sub">meta ${pct(metaQuebra[f],2)}</span></div>${bars(daysB,color,metaQuebra[f],false,NM[f]+' · %Quebra')}</div>
    </div>
   </div>
   <div class="card pres-combo-card">
    <h3>RESUMO SEMANAL – ${NM[f].toUpperCase()}</h3>
    <div class="pres-combo-body three">
-    <div class="pres-panel chart-card week-chart"><div class="mini-title">%QUALIFICADA</div>${barsWeekly(weekItems('q'),color,meta[f])}</div>
-    <div class="pres-panel chart-card week-chart"><div class="mini-title">%QUEBRA <span class="pres-sub">meta ${pct(metaQuebra[f],2)}</span></div>${barsWeekly(weekItems('b'),color,metaQuebra[f])}</div>
+    <div class="pres-panel chart-card week-chart" data-qq-chart="weekly:q"><div class="mini-title">%QUALIFICADA</div>${barsWeekly(weekItems('q'),color,meta[f],NM[f]+' · %Qualificada')}</div>
+    <div class="pres-panel chart-card week-chart" data-qq-chart="weekly:b"><div class="mini-title">%QUEBRA <span class="pres-sub">meta ${pct(metaQuebra[f],2)}</span></div>${barsWeekly(weekItems('b'),color,metaQuebra[f],NM[f]+' · %Quebra')}</div>
     <div class="pres-panel week-table"><div class="mini-title">SEMANAS – ${NM[f].toUpperCase()}</div><table><tr><th>Semana</th><th>OS</th><th>%Quebra</th><th>%Qualif.</th></tr>${weekRows}</table></div>
    </div>
   </div>
@@ -449,6 +450,7 @@ draw=function(){
    <div class="note">Clique no nome de uma categoria ou em um percentual para abrir os logins/técnicos que formaram o resultado. Dias sem ocorrência aparecem como 0,00%.</div>
   </div>
  </div>`;
+ wireQQChartDrilldown($('view'),{records:am,days:dk,weeks:wk.map(item=>item.w),months:meses,front:NM[f]},(records,label,metric)=>qqOpenGeneralRecords(records,label,'offenders',metric));
  document.querySelectorAll('[data-cat][data-day]').forEach(el=>el.onclick=()=>{const cat=el.dataset.cat,day=el.dataset.day;const recs=day==='*'?am:am.filter(r=>r.d===day);const periodo=day==='*'?`Período ${periodLabel}`:day.split('-').reverse().join('/');openCategoryModal(cat,recs,periodo,NM[f])});
 };
 const pf=$('btnPresentationFilters');if(pf)pf.onclick=()=>document.body.classList.toggle('present-filters-open');
@@ -530,7 +532,7 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
  }
  draw();
 });
-function bars(items,color,meta,loginDaily=false){
+function bars(items,color,meta,loginDaily=false,frontChart=''){
  if(!items.length)return'<div class="empty">Sem dados</div>';
  const compact=items.length<=6,W=compact?520:1000,H=compact?145:240,t=compact?22:28,b=compact?22:26,mx=Math.max(...items.map(i=>i.v),meta||0,.01)*1.18,bw=(W-20)/items.length,y=v=>H-b-(H-t-b)*v/mx;
  let s=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" width="100%" font-size="${compact?15:12}" fill="#555">`;
@@ -538,18 +540,19 @@ function bars(items,color,meta,loginDaily=false){
   const x=10+k*bw+bw*.22,h=H-b-y(i.v),ok=meta!=null&&i.v<=meta;
   const fill=ok?'var(--ok)':color;
   const txt=ok?'var(--ok)':'#555';
+  if(frontChart)s+=qqChartPointMarkup(k,frontChart+' · '+(i.d?i.d.split('-').reverse().join('/'):i.l)+': '+pct(i.v,2),{x:10+k*bw+bw*.08,width:bw*.84,height:H});
   if(loginDaily)s+=`<g class="qq-daily-bar" data-login-day="${qqEscape(i.d)}" tabindex="0" role="button" aria-label="${qqEscape(i.d.split('-').reverse().join('/'))}: ${pct(i.v,2)}. Ver logins ofensores." style="cursor:pointer"><title>${i.l}: ${pct(i.v)} (${qqEscape(i.t)}). Clique para ver os logins ofensores.</title><rect x="${10+k*bw+bw*.08}" y="${Math.min(y(i.v),H-b-14)}" width="${bw*.84}" height="${H-4-Math.min(y(i.v),H-b-14)}" fill="transparent"/>`;
   s+=`<rect x="${x}" y="${y(i.v)}" width="${bw*.56}" height="${Math.max(h,0)}" fill="${fill}"><title>${i.l}: ${pct(i.v)} (${i.t})</title></rect>
   <text x="${x+bw*.28}" y="${y(i.v)-5}" text-anchor="middle" fill="${txt}" font-weight="${ok?'700':'400'}">${pct(i.v,2)}</text><text x="${x+bw*.28}" y="${H-8}" text-anchor="middle" fill="#555">${i.l}</text>`;
-  if(loginDaily)s+='</g>';
+  if(loginDaily||frontChart)s+='</g>';
  });
  if(meta!=null)s+=qqMetaGuide(W,y(meta),meta);
  return s+'</svg>'}
-function barsWeekly(items,color,meta){
+function barsWeekly(items,color,meta,frontChart=''){
  if(!items.length)return'<div class="empty">Sem dados</div>';
  const W=520,H=140,t=26,b=24,mx=Math.max(...items.map(i=>i.v),meta||0,.01)*1.16,bw=(W-18)/items.length,y=v=>H-b-(H-t-b)*v/mx;
  let s=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" width="100%" font-size="14" fill="#555">`;
- items.forEach((i,k)=>{const x=9+k*bw+bw*.20,h=H-b-y(i.v),ok=meta!=null&&i.v<=meta,fill=ok?'var(--ok)':color,txt=ok?'var(--ok)':'#555';s+=`<rect x="${x}" y="${y(i.v)}" width="${bw*.60}" height="${Math.max(h,0)}" fill="${fill}"><title>${i.l}: ${pct(i.v)} (${i.t})</title></rect><text x="${x+bw*.30}" y="${y(i.v)-5}" text-anchor="middle" fill="${txt}" font-size="14" font-weight="700">${pct(i.v,2)}</text><text x="${x+bw*.30}" y="${H-7}" text-anchor="middle" fill="#555" font-size="12">${i.l}</text>`});
+ items.forEach((i,k)=>{const x=9+k*bw+bw*.20,h=H-b-y(i.v),ok=meta!=null&&i.v<=meta,fill=ok?'var(--ok)':color,txt=ok?'var(--ok)':'#555';if(frontChart)s+=qqChartPointMarkup(k,frontChart+' · '+i.l+': '+pct(i.v,2),{x:9+k*bw+bw*.08,width:bw*.84,height:H});s+=`<rect x="${x}" y="${y(i.v)}" width="${bw*.60}" height="${Math.max(h,0)}" fill="${fill}"><title>${i.l}: ${pct(i.v)} (${i.t})</title></rect><text x="${x+bw*.30}" y="${y(i.v)-5}" text-anchor="middle" fill="${txt}" font-size="14" font-weight="700">${pct(i.v,2)}</text><text x="${x+bw*.30}" y="${H-7}" text-anchor="middle" fill="#555" font-size="12">${i.l}</text>`;if(frontChart)s+='</g>';});
  if(meta!=null)s+=qqMetaGuide(W,y(meta),meta);
  return s+'</svg>'}
 

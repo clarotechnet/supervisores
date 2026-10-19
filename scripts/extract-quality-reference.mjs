@@ -112,6 +112,61 @@ for (const [kind, id, name] of [
       "function qqGeneralContext(){",
       "function qqGeneralContext(){\n const presenting=document.body.classList.contains('presentation-mode');",
     );
+    // Add interaction-only wrappers. Every visible SVG mark, value and formula
+    // remains the source's own renderer; drilling uses its already filtered rows.
+    for (const metric of ["Q", "B"])
+      adapt(`const days${metric}=dk.map((d,i)=>({l:`, `const days${metric}=dk.map((d,i)=>({d,l:`);
+    for (const [period, className, metric, title] of [
+      ["daily", "daily-chart", "q", "%QUALIFICADA"],
+      ["daily", "daily-chart", "b", "%QUEBRA"],
+      ["weekly", "week-chart", "q", "%QUALIFICADA"],
+      ["weekly", "week-chart", "b", "%QUEBRA"],
+    ])
+      adapt(
+        `class="pres-panel chart-card ${className}"><div class="mini-title">${title}`,
+        `class="pres-panel chart-card ${className}" data-qq-chart="${period}:${metric}"><div class="mini-title">${title}`,
+      );
+    adapt("bars(daysQ,color,meta[f])", "bars(daysQ,color,meta[f],false,NM[f]+' · %Qualificada')");
+    adapt(
+      "bars(daysB,color,metaQuebra[f])",
+      "bars(daysB,color,metaQuebra[f],false,NM[f]+' · %Quebra')",
+    );
+    adapt(
+      "barsWeekly(weekItems('q'),color,meta[f])",
+      "barsWeekly(weekItems('q'),color,meta[f],NM[f]+' · %Qualificada')",
+    );
+    adapt(
+      "barsWeekly(weekItems('b'),color,metaQuebra[f])",
+      "barsWeekly(weekItems('b'),color,metaQuebra[f],NM[f]+' · %Quebra')",
+    );
+    const categoryBinding =
+      " document.querySelectorAll('[data-cat][data-day]').forEach(el=>el.onclick=()=>{const cat=";
+    adapt(
+      categoryBinding,
+      " wireQQChartDrilldown($('view'),{records:am,days:dk,weeks:wk.map(item=>item.w),months:meses,front:NM[f]},(records,label,metric)=>qqOpenGeneralRecords(records,label,'offenders',metric));\n" +
+        categoryBinding,
+    );
+    adapt(
+      "function bars(items,color,meta,loginDaily=false){",
+      "function bars(items,color,meta,loginDaily=false,frontChart=''){",
+    );
+    adapt(
+      "  const txt=ok?'var(--ok)':'#555';",
+      "  const txt=ok?'var(--ok)':'#555';\n  if(frontChart)s+=qqChartPointMarkup(k,frontChart+' · '+(i.d?i.d.split('-').reverse().join('/'):i.l)+': '+pct(i.v,2),{x:10+k*bw+bw*.08,width:bw*.84,height:H});",
+    );
+    adapt("if(loginDaily)s+='</g>';", "if(loginDaily||frontChart)s+='</g>';");
+    adapt(
+      "function barsWeekly(items,color,meta){",
+      "function barsWeekly(items,color,meta,frontChart=''){",
+    );
+    adapt(
+      "fill=ok?'var(--ok)':color,txt=ok?'var(--ok)':'#555';s+=",
+      "fill=ok?'var(--ok)':color,txt=ok?'var(--ok)':'#555';if(frontChart)s+=qqChartPointMarkup(k,frontChart+' · '+i.l+': '+pct(i.v,2),{x:9+k*bw+bw*.08,width:bw*.84,height:H});s+=",
+    );
+    adapt(
+      '${H-7}" text-anchor="middle" fill="#555" font-size="12">${i.l}</text>`});',
+      '${H-7}" text-anchor="middle" fill="#555" font-size="12">${i.l}</text>`;if(frontChart)s+=\'</g>\';});',
+    );
   }
   if (kind === "tc") {
     const adapt = (from, to) => {
@@ -253,7 +308,7 @@ for (const [kind, id, name] of [
   const imports =
     kind === "tc"
       ? 'import { referenceCertificationRule } from "../reference-certification-rule";\nimport { referenceCityMembers } from "../reference-city-members";\n'
-      : "";
+      : 'import { qqChartPointMarkup, wireQQChartDrilldown } from "../reference-qq-charts";\n';
   const output = `// Reviewed reference ${hash}; generated visual engine. No personal seed data.\n${imports}export function ${name}(environment) {\nconst {document,window,localStorage,location,ResizeObserver,setTimeout,clearTimeout,requestAnimationFrame}=environment;\n${code}\n${load}\nreturn window;\n}\n`;
   fs.writeFileSync(`${folder}/${kind}-engine.js`, output);
   fs.writeFileSync(
