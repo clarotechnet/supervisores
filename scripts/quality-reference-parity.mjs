@@ -179,7 +179,19 @@ export async function referenceParity(browser, page, kind, mode, rows) {
     const originalSVG = await reference
       .locator("svg")
       .evaluateAll((els) => els.map((e) => e.outerHTML));
-    const nativeSVG = await host.locator("svg").evaluateAll((els) => els.map((e) => e.outerHTML));
+    const nativeSVG = await host.locator("svg").evaluateAll((els) =>
+      els.map((e) => {
+        const visual = e.cloneNode(true);
+        // The authorized change adds invisible click targets and accessible groups,
+        // not a redesigned chart. Compare every original visible mark exactly.
+        for (const point of visual.querySelectorAll(".qq-front-bar")) {
+          point.querySelector(":scope > .qq-front-hit")?.remove();
+          point.querySelector(":scope > title")?.remove();
+          point.replaceWith(...point.childNodes);
+        }
+        return visual.outerHTML;
+      }),
+    );
     assert.deepEqual(nativeSVG, originalSVG, `${mode}: original SVG renderer`);
     assert.deepEqual(errors, []);
     await reference.screenshot({ path: `C:/Users/Usuario/AppData/Local/Temp/source-${mode}.png` });

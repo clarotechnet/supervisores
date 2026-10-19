@@ -17,6 +17,7 @@ import { mountQQ } from "./reference/qq-engine";
 import { mountTC } from "./reference/tc-engine";
 import { referenceToolbar, qqMarkup, qqStyle, tcMarkup, tcStyle } from "./reference/templates";
 import tcPresentationStyle from "./reference/tc-presentation.css?inline";
+import qqInteractionStyle from "./reference/qq-interactions.css?inline";
 import "./reference/toolbar.css";
 import "./reference/reference.css";
 
@@ -345,7 +346,14 @@ export function ReferenceQualitySurface(props: Props) {
     };
     const loadFile: Props["importFile"] = (kind, file) => latest.current.importFile(kind, file);
     const scopes = [
-      referenceScope($("referenceQQ"), qqStyle, qqMarkup, parent, props.editable, loadFile),
+      referenceScope(
+        $("referenceQQ"),
+        `${qqStyle}\n${qqInteractionStyle}`,
+        qqMarkup,
+        parent,
+        props.editable,
+        loadFile,
+      ),
       referenceScope(
         $("referenceTC"),
         `${tcStyle}\n${tcPresentationStyle}`,

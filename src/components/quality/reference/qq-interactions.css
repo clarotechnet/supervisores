@@ -1,0 +1,4 @@
+.qq-front-bar:focus-visible {
+  outline: 2px solid #1d63b7;
+  outline-offset: -2px;
+}

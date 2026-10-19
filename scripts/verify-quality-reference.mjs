@@ -239,6 +239,12 @@ try {
   await page.locator("#goSlides").click();
   await page.locator("#slidePlayer").waitFor({ state: "visible" });
   assert.equal(await page.locator("#slidesPosition").innerText(), "1 / 6");
+  await page.locator('#referenceQQ [data-qq-chart="daily:q"] [data-front-point]').first().click();
+  await page.locator("#referenceQQ #catModal.on").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#slidesState").innerText(), "Pausado");
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator(".quality-reference.presenting").isVisible(), true);
+  await page.locator("#slidesPause").click();
   await page.clock.fastForward(30000);
   await page.locator("#slidesPosition").getByText("2 / 6", { exact: true }).waitFor();
   await page.locator("#slidesPause").click();
