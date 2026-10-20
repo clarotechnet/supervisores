@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
@@ -11,6 +11,7 @@ import {
   type QualitySnapshot,
   type CertificationKind,
   type QualityRegistry,
+  type QualityState,
 } from "@/lib/quality";
 import {
   hydrateQuality,
@@ -20,6 +21,7 @@ import {
   type QualityLogin,
 } from "@/lib/quality-directory";
 import { importQQ, importTC, normalizeQQSnapshot, parseTC } from "@/lib/quality-import";
+import { runTCImportTask } from "@/lib/quality-import-task";
 import {
   mergeQualityRecords,
   qualitySnapshotChanged,
@@ -31,12 +33,16 @@ import {
   fetchQualityDirectory,
   saveQualityDirectory,
   deleteQualityLogin,
+  fetchQualityDataset,
 } from "@/services/quality";
 import { QualityDirectory } from "./QualityDirectory";
 import { nonTechnicalVisitState, technicalVisitState } from "@/lib/technical-visit-scope";
 import { ReferenceQualitySurface } from "./ReferenceQualitySurface";
 import "./quality.css";
 const EMPTY_MAP = {};
+const SlaWarrantyPanel = lazy(() =>
+  import("./SlaWarrantyPanel").then((module) => ({ default: module.SlaWarrantyPanel })),
+);
 export function QualityDashboard({
   variant = "quality",
 }: {
@@ -60,6 +66,8 @@ export function QualityDashboard({
   saved.current = state;
   const [saving, setSaving] = useState(""),
     [progress, setProgress] = useState(0);
+  const [importStage, setImportStage] = useState("");
+  const [importError, setImportError] = useState("");
   const [lastImports, setLastImports] = useState<
     Array<{ kind: QualityKind; file: string; report: QualityMergeReport; saved: boolean }>
   >([]);
@@ -81,15 +89,21 @@ export function QualityDashboard({
     () => hydrateQuality(displayState, directory, certificationKind),
     [displayState, directory, certificationKind],
   );
-  async function commit(kind: QualityKind, snapshot: QualitySnapshot, name: string) {
+  async function commit(
+    kind: QualityKind,
+    snapshot: QualitySnapshot,
+    name: string,
+    base: QualityState = saved.current,
+    changed?: boolean,
+  ) {
     if (!profile || !isAdmin) throw Error("Somente gestores podem importar dados.");
-    if (!qualitySnapshotChanged(kind, saved.current.datasets[kind], snapshot)) return false;
+    if (!(changed ?? qualitySnapshotChanged(kind, base.datasets[kind], snapshot))) return false;
     const manifest = await saveQualityDataset(
       kind,
       snapshot,
       name,
       profile.id,
-      saved.current.imports[kind]?.id ?? null,
+      base.imports[kind]?.id ?? null,
       setProgress,
     );
     const next = {
@@ -118,12 +132,36 @@ export function QualityDashboard({
     setSaving(file.name);
     setProgress(0);
     setLastImports([]);
+    setImportError("");
+    setImportStage("Conferindo a versão publicada desta base…");
     try {
       // Another user may have uploaded a newer file since this page was opened.
       await client.cancelQueries({ queryKey: [...qualityKeys.user(profile?.id), "dataset"] });
-      const fresh = await fetchQualityState(saved.current, visibleKinds);
+      let fresh: QualityState;
+      if (importKind.current === "html")
+        fresh = await fetchQualityState(saved.current, visibleKinds);
+      else {
+        const kind = importKind.current;
+        const dataset = await fetchQualityDataset(kind, {
+          previous: {
+            manifest: saved.current.imports[kind] ?? null,
+            snapshot: saved.current.datasets[kind],
+          },
+          userId: profile?.id,
+          signal: AbortSignal.timeout(120_000),
+        });
+        fresh = {
+          ...saved.current,
+          datasets: { ...saved.current.datasets },
+          imports: { ...saved.current.imports },
+        };
+        if (dataset.snapshot) fresh.datasets[kind] = dataset.snapshot;
+        else delete fresh.datasets[kind];
+        if (dataset.manifest) fresh.imports[kind] = dataset.manifest;
+        else delete fresh.imports[kind];
+      }
       saved.current = fresh;
-      loading.cacheState(fresh);
+      if (importKind.current === "html") loading.cacheState(fresh);
       const summaries: Array<{
         kind: QualityKind;
         file: string;
@@ -131,6 +169,7 @@ export function QualityDashboard({
         saved: boolean;
       }> = [];
       if (importKind.current === "html") {
+        setImportStage("Lendo e validando o histórico HTML…");
         if (technicalVisit)
           throw Error(
             "Visita técnica recebe somente o analítico de Técnico Certificado (CSV ou ZIP).",
@@ -183,8 +222,25 @@ export function QualityDashboard({
         const result =
           kind === "quebra"
             ? await importQQ(file, saved.current.datasets.quebra)
-            : await importTC(file, saved.current.datasets[kind], kind);
-        const stored = await commit(kind, result.snapshot, file.name);
+            : await runTCImportTask(file, fresh.datasets[kind], kind, (stage) =>
+                setImportStage(
+                  {
+                    reading: "Lendo o analítico…",
+                    validating: "Validando linhas e colunas do TC…",
+                    merging: "Atualizando atendimentos sem duplicar…",
+                    comparing: "Conferindo alterações com a base atual…",
+                  }[stage],
+                ),
+              );
+        setImportStage("Enviando e publicando os blocos no banco…");
+        const stored = await commit(
+          kind,
+          result.snapshot,
+          file.name,
+          fresh,
+          "changed" in result ? (result.changed as boolean) : undefined,
+        );
+        if (!stored) loading.cacheState(fresh);
         summaries.push({ kind, file: file.name, report: result.report, saved: stored });
       }
       setLastImports(summaries);
@@ -195,10 +251,13 @@ export function QualityDashboard({
       else
         toast.info("Os dados deste arquivo já estavam na base. Nenhuma nova versão foi gravada.");
     } catch (error) {
-      toast.error(moduleError(error));
+      const message = moduleError(error);
+      setImportError(message);
+      toast.error(message);
     } finally {
       busy.current = false;
       setSaving("");
+      setImportStage("");
     }
   }
   async function updateDirectory(rows: QualityLogin[]) {
@@ -253,6 +312,16 @@ export function QualityDashboard({
         }}
       />
       <ReferenceQualitySurface
+        importing={!!saving}
+        sla={
+          technicalVisit
+            ? undefined
+            : (active, presenting) => (
+                <Suspense fallback={<p role="status">Carregando SLA Garantia…</p>}>
+                  <SlaWarrantyPanel active={active} presenting={presenting} />
+                </Suspense>
+              )
+        }
         key={profile?.id}
         qq={hydrated.qq}
         tc={hydrated.tc}
@@ -322,9 +391,10 @@ export function QualityDashboard({
             ) : null}
             {saving && (
               <p role="status">
-                Salvando {saving} {progress > 0 ? progress + "%" : ""}
+                {importStage || "Salvando"} · {saving} {progress > 0 ? progress + "%" : ""}
               </p>
             )}
+            {importError && <p role="alert">A importação não foi concluída: {importError}</p>}
             {lastImports.map((result) => (
               <p
                 key={result.kind}

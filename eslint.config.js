@@ -14,6 +14,9 @@ export default tseslint.config(
       ".vinxi",
       "src/components/quality/reference/*-engine.js",
       "src/components/quality/reference/templates.ts",
+      "src/components/quality/sla-reference/sla-engine.js",
+      "src/components/quality/sla-reference/templates.ts",
+      "src/lib/sla-math.js",
     ],
   },
   {

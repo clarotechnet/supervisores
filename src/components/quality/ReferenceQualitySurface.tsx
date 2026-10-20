@@ -22,6 +22,8 @@ import "./reference/toolbar.css";
 import "./reference/reference.css";
 
 interface Props {
+  importing?: boolean;
+  sla?: ((active: boolean, presenting: boolean) => ReactNode) | undefined;
   qq: QQRecord[];
   tc: TCRecord[];
   index: Map<string, QualityLogin>;
@@ -44,7 +46,7 @@ interface Props {
   qqError: string;
   tcError: string;
 }
-type Screen = "qq" | "general" | "tc" | "supervisors";
+type Screen = "qq" | "general" | "tc" | "supervisors" | "sla";
 interface EnginePeriod {
   months: string[];
   dates: { start: string; end: string };
@@ -74,6 +76,7 @@ export function ReferenceQualitySurface(props: Props) {
   const [presenting, setPresenting] = useState(false),
     [playerState, setPlayerState] = useState(emptyQualityPlayer);
   const [pendingSlides, setPendingSlides] = useState(false);
+  const [slaOpened, setSlaOpened] = useState(false);
   const session = useRef<{
     qq: unknown;
     tc: unknown;
@@ -184,6 +187,9 @@ export function ReferenceQualitySurface(props: Props) {
     const header = el.querySelector<HTMLElement>(".reference-header")!;
     header.innerHTML = referenceToolbar;
     header
+      .querySelector("#goTC")!
+      .insertAdjacentHTML("afterend", '<button id="goSLA" type="button">SLA Garantia</button>');
+    header
       .querySelector("#goSlides")!
       .insertAdjacentHTML("beforebegin", presentationSupervisorPicker);
     const filters = referenceFilters(header);
@@ -195,6 +201,15 @@ export function ReferenceQualitySurface(props: Props) {
     const current = () => (r?.screen === "tc" || latest.current.technicalVisit ? r.tc : r.qq);
     const update = () => {
       if (!r) return;
+      for (const id of ["unitPicker", "monthPicker", "datePicker", "supervisorPicker"])
+        $(id).hidden =
+          r.screen === "sla" || (id === "supervisorPicker" && r.screen === "supervisors");
+      $("goSLA").classList.toggle("active", r.screen === "sla");
+      if (r.screen === "sla") {
+        for (const id of ["goQQ", "goGeneral", "goTC", "goSupervisors"])
+          $(id).classList.remove("active");
+        return;
+      }
       const engine = current(),
         units = engine.getUnifiedUnits(),
         period = engine.getUnifiedMonths(),
@@ -298,14 +313,19 @@ export function ReferenceQualitySurface(props: Props) {
       filters.reposition();
     };
     const show = (next: Screen) => {
-      if (latest.current.technicalVisit && (next === "qq" || next === "general")) return;
+      if (latest.current.technicalVisit && (next === "qq" || next === "general" || next === "sla"))
+        return;
       filters.closeAll();
       r.screen = next;
+      if (next === "sla") setSlaOpened(true);
       setScreen(next);
       if (next === "tc" || next === "supervisors") latest.current.requestTC();
       $("referenceQQ").hidden = next !== "qq" && next !== "general";
       $("referenceTC").hidden = next !== "tc";
       $("referenceDirectory").hidden = next !== "supervisors";
+      $("referenceSLA").hidden = next !== "sla";
+      $("goSlides").hidden =
+        next === "sla" || !el.classList.contains("presenting") || player.state.active;
       r.qq.setUnifiedQQView?.(next === "general" ? "general" : "front");
       current().redraw();
       update();
@@ -378,6 +398,7 @@ export function ReferenceQualitySurface(props: Props) {
       ["goQQ", "qq"],
       ["goGeneral", "general"],
       ["goTC", "tc"],
+      ["goSLA", "sla"],
       ["goSupervisors", "supervisors"],
     ] as const)
       $(id).onclick = () => {
@@ -386,6 +407,7 @@ export function ReferenceQualitySurface(props: Props) {
         show(next);
       };
     if (props.technicalVisit) {
+      $("goSLA").hidden = true;
       $("goQQ").hidden = true;
       $("goGeneral").hidden = true;
     }
@@ -500,6 +522,7 @@ export function ReferenceQualitySurface(props: Props) {
     };
     $("goFS").onclick = () => void presentation();
     $("goSlides").onclick = () => {
+      if (r.screen === "sla") return;
       latest.current.requestTC();
       setPendingSlides(true);
     };
@@ -516,6 +539,7 @@ export function ReferenceQualitySurface(props: Props) {
         event.key === "Escape" &&
         !r.qq.isModalOpen() &&
         !r.tc.isModalOpen() &&
+        !el.querySelector(".sla-surface")?.shadowRoot?.querySelector("dialog[open]") &&
         el.classList.contains("presenting") &&
         !document.fullscreenElement
       )
@@ -589,6 +613,11 @@ export function ReferenceQualitySurface(props: Props) {
       }
     };
   }, [props.technicalVisit, props.editable, player]);
+  useEffect(() => {
+    for (const scope of runtime.current?.scopes ?? [])
+      for (const input of scope.shadow.querySelectorAll<HTMLInputElement>('input[type="file"]'))
+        input.disabled = !props.editable || !!props.importing;
+  }, [props.editable, props.importing]);
   useEffect(() => {
     const r = runtime.current;
     if (!r || !props.qqReady) return;
@@ -665,7 +694,7 @@ export function ReferenceQualitySurface(props: Props) {
     if (!el) return;
     const $ = (id: string) => el.querySelector<HTMLElement>(`#${id}`)!;
     $("slidePlayer").hidden = !playerState.active;
-    $("goSlides").hidden = !presenting || playerState.active;
+    $("goSlides").hidden = !presenting || playerState.active || screen === "sla";
     el.classList.toggle("slides-running", playerState.active);
     el.classList.toggle("slides-paused", playerState.paused);
     for (const id of ["unitPicker", "monthPicker", "datePicker", "supervisorPicker"])
@@ -702,11 +731,12 @@ export function ReferenceQualitySurface(props: Props) {
     clock();
     const timer = window.setInterval(clock, 250);
     return () => window.clearInterval(timer);
-  }, [playerState, presenting]);
+  }, [playerState, presenting, screen]);
   return (
     <div
       ref={root}
       className="quality-reference"
+      data-screen={screen}
       tabIndex={-1}
       aria-label="Painel original de QQ e Técnico Certificado"
     >
@@ -733,6 +763,9 @@ export function ReferenceQualitySurface(props: Props) {
           hidden={screen !== "qq" && screen !== "general"}
         />
         <div id="referenceTC" className="reference-pane" hidden={screen !== "tc"} />
+        <div id="referenceSLA" className="reference-sla" hidden={screen !== "sla"}>
+          {slaOpened ? props.sla?.(screen === "sla", presenting) : null}
+        </div>
         <div
           id="referenceDirectory"
           className="reference-directory"
