@@ -10,6 +10,37 @@ export function scheduleMonthDates(month: string): string[] {
   );
 }
 
+// A duty filter always belongs to the city/front/month already selected.
+// Use today for the current month and its first day for another month.
+export function scheduleDutyDate(month: string, chosen: string, today: string): string {
+  if (!/^\d{4}-(0[1-9]|1[0-2])(?:-01)?$/.test(month)) return "";
+  const dates = scheduleMonthDates(month);
+  if (dates.includes(chosen)) return chosen;
+  return dates.includes(today) ? today : (dates[0] ?? "");
+}
+
+export function schedulePeopleOnDuty(people: SchedulePerson[], date: string): SchedulePerson[] {
+  if (!date) return [];
+  return people.filter((person) => {
+    const code = person.assignments[date]?.trim();
+    return !!code && scheduleCodeKind(code) === "work";
+  });
+}
+
+export function schedulePeopleOnDutyInMonth(
+  people: SchedulePerson[],
+  month: string,
+): SchedulePerson[] {
+  if (!scheduleDutyDate(month, "", "")) return [];
+  const dates = scheduleMonthDates(month);
+  return people.filter((person) =>
+    dates.some((date) => {
+      const code = person.assignments[date]?.trim();
+      return !!code && scheduleCodeKind(code) === "work";
+    }),
+  );
+}
+
 // Keep selections that also exist in the next city/sector/month.
 export function reconcileScheduleSelection(names: string[], people: SchedulePerson[]): string[] {
   const available = new Set(people.map((person) => person.name));

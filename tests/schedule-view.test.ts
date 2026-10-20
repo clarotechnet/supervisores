@@ -6,6 +6,9 @@ import {
   reconcileScheduleSelection,
   scheduleDayTotals,
   scheduleMonthDates,
+  scheduleDutyDate,
+  schedulePeopleOnDuty,
+  schedulePeopleOnDutyInMonth,
 } from "../src/lib/schedule-view";
 
 const people: SchedulePerson[] = [
@@ -23,6 +26,102 @@ const people: SchedulePerson[] = [
 ];
 
 describe("comparação mensal de escalas", () => {
+  it("mostra quem tem ao menos um plantão em qualquer dia do mês, sem contar outros meses", () => {
+    const rows: SchedulePerson[] = [
+      ...people,
+      { name: "Último dia", jobTitle: "", assignments: { "2026-10-31": "T. 1" } },
+      {
+        name: "Outro mês",
+        jobTitle: "",
+        assignments: { "2026-09-30": "T. 1", "2026-11-01": "T. 2", "2026-10-01": "Folga" },
+      },
+      { name: "Férias", jobTitle: "", assignments: { "2026-10-01": "Férias" } },
+      { name: "Licença", jobTitle: "", assignments: { "2026-10-01": "LCC." } },
+      { name: "Falta", jobTitle: "", assignments: { "2026-10-01": "FALTA" } },
+      { name: "Atestado", jobTitle: "", assignments: { "2026-10-01": "AT" } },
+      { name: "Vazio", jobTitle: "", assignments: { "2026-10-01": "  " } },
+    ];
+    const before = structuredClone(rows);
+    expect(schedulePeopleOnDutyInMonth(rows, "2026-10-01").map((row) => row.name)).toEqual([
+      "Ana",
+      "Bruno",
+      "Carla",
+      "Último dia",
+    ]);
+    expect(schedulePeopleOnDutyInMonth(rows, "2026-11-01").map((row) => row.name)).toEqual([
+      "Outro mês",
+    ]);
+    expect(schedulePeopleOnDutyInMonth(rows, "2026-12-01")).toEqual([]);
+    expect(schedulePeopleOnDutyInMonth(rows, "")).toEqual([]);
+    expect(rows).toEqual(before);
+  });
+  it("usa somente datas reais do mês na busca mensal de plantões", () => {
+    const rows: SchedulePerson[] = [
+      {
+        name: "Data inválida",
+        jobTitle: "",
+        assignments: { "2026-11-31": "T1", "2026-02-29": "T2" },
+      },
+      { name: "Bissexto", jobTitle: "", assignments: { "2028-02-29": "T2" } },
+    ];
+    expect(schedulePeopleOnDutyInMonth(rows, "2026-11-01")).toEqual([]);
+    expect(schedulePeopleOnDutyInMonth(rows, "2026-02-01")).toEqual([]);
+    expect(schedulePeopleOnDutyInMonth(rows, "2028-02-01").map((row) => row.name)).toEqual([
+      "Bissexto",
+    ]);
+  });
+  it("filtra plantonistas pela data sem alterar os registros ou a ordem da escala", () => {
+    const before = structuredClone(people);
+    expect(schedulePeopleOnDuty(people, "2026-10-01").map((person) => person.name)).toEqual([
+      "Ana",
+      "Carla",
+    ]);
+    expect(schedulePeopleOnDuty(people, "2026-10-02").map((person) => person.name)).toEqual([
+      "Bruno",
+    ]);
+    expect(schedulePeopleOnDuty(people, "2026-10-03")).toEqual([]);
+    expect(schedulePeopleOnDuty(people, "2026-11-01")).toEqual([]);
+    expect(schedulePeopleOnDuty(people, "")).toEqual([]);
+    expect(people).toEqual(before);
+  });
+  it("inclui turnos e horários e exclui folgas, ausências e células vazias", () => {
+    const codes = [
+      "T. 1",
+      "T2",
+      "08:00–17:00",
+      "PLANTÃO",
+      "M.2",
+      "F",
+      "Folga",
+      "BH",
+      "Férias",
+      "Fé",
+      "LCC.",
+      "L",
+      "FALTA",
+      "AT",
+      "Atestado",
+      "",
+      "  ",
+    ];
+    const rows = codes.map((code) => ({
+      name: code,
+      jobTitle: "",
+      assignments: { "2026-10-01": code },
+    }));
+    expect(schedulePeopleOnDuty(rows, "2026-10-01").map((person) => person.name)).toEqual(
+      codes.slice(0, 5),
+    );
+  });
+  it("mantém a data do plantão dentro do mês selecionado, inclusive em mudanças de mês", () => {
+    expect(scheduleDutyDate("2026-10-01", "", "2026-10-20")).toBe("2026-10-20");
+    expect(scheduleDutyDate("2026-10-01", "2026-10-05", "2026-10-20")).toBe("2026-10-05");
+    expect(scheduleDutyDate("2026-11-01", "2026-10-31", "2026-10-20")).toBe("2026-11-01");
+    expect(scheduleDutyDate("2026-02-01", "2026-02-29", "2026-10-20")).toBe("2026-02-01");
+    expect(scheduleDutyDate("2028-02-01", "2028-02-29", "2026-10-20")).toBe("2028-02-29");
+    expect(scheduleDutyDate("2026-10", "", "2026-10-20")).toBe("2026-10-20");
+    expect(scheduleDutyDate("", "2026-10-20", "2026-10-20")).toBe("");
+  });
   it("pagina a exportação sem perder ou duplicar colaboradores", () => {
     const many = Array.from({ length: 43 }, (_, index) => ({
       name: `Pessoa ${index}`,
