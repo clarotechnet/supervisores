@@ -89,11 +89,17 @@ export async function importTC(
   file: File,
   current: QualitySnapshot | undefined,
   kind: CertificationKind = "certification",
+  progress?: (stage: "reading" | "validating" | "merging") => void,
 ): Promise<QualityImportResult> {
+  progress?.("reading");
+  const text = await decodeFile(file);
+  progress?.("validating");
+  const incoming = parseTC(text, file.name, current ?? {});
+  progress?.("merging");
   const { records, report } = mergeQualityRecords(
     kind,
     (current?.records ?? []) as TCRecord[],
-    parseTC(await decodeFile(file), file.name, current ?? {}),
+    incoming,
   );
   const files = [...new Set([...((current?.["files"] as string[]) ?? []), file.name])];
   return { snapshot: { ...current, records, files }, report };

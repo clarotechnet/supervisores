@@ -28,6 +28,20 @@ export type Database = {
   };
   public: {
     Tables: {
+      sla_warranty_imports: QualityTable<
+        Omit<QualityImportRow, "kind">,
+        Omit<QualityImportRow, "kind" | "id" | "created_at" | "published_at"> & {
+          id?: string;
+          created_at?: string;
+          published_at?: string | null;
+        }
+      >;
+      sla_warranty_data: QualityTable<{
+        import_id: string;
+        source: string;
+        chunk_index: number;
+        records: Json;
+      }>;
       quality_technician_directory: QualityTable<
         {
           login: string;
@@ -947,6 +961,7 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
+      publish_sla_warranty_import: { Args: { p_import_id: string }; Returns: undefined };
       save_quality_directory: { Args: { p_entries: Json }; Returns: undefined };
       publish_quality_import: { Args: { p_import_id: string }; Returns: undefined };
       can_access_schedules: { Args: { _uid: string }; Returns: boolean };

@@ -197,6 +197,7 @@ export async function saveQualityDataset(
       base_import_id: baseImportId,
     })
     .select("*")
+    .abortSignal(AbortSignal.timeout(60_000))
     .single();
   if (error) throw error;
   let complete = 0;
@@ -206,14 +207,17 @@ export async function saveQualityDataset(
       const results = await Promise.allSettled(
         Array.from({ length: Math.min(4, chunkCount - start) }, async (_, offset) => {
           const index = start + offset;
-          const { error: blockError } = await supabase.from(dataTable(kind)).insert({
-            import_id: manifest.id,
-            chunk_index: index,
-            records: records.slice(
-              index * QUALITY_CHUNK_SIZE,
-              (index + 1) * QUALITY_CHUNK_SIZE,
-            ) as Json,
-          });
+          const { error: blockError } = await supabase
+            .from(dataTable(kind))
+            .insert({
+              import_id: manifest.id,
+              chunk_index: index,
+              records: records.slice(
+                index * QUALITY_CHUNK_SIZE,
+                (index + 1) * QUALITY_CHUNK_SIZE,
+              ) as Json,
+            })
+            .abortSignal(AbortSignal.timeout(60_000));
           if (blockError) throw blockError;
           progress?.(Math.round((++complete / chunkCount) * 95));
         }),
@@ -221,15 +225,26 @@ export async function saveQualityDataset(
       const failed = results.find((result) => result.status === "rejected");
       if (failed?.status === "rejected") throw failed.reason;
     }
-    const { error: publishError } = await supabase.rpc("publish_quality_import", {
-      p_import_id: manifest.id,
-    });
+    const { error: publishError } = await supabase
+      .rpc("publish_quality_import", {
+        p_import_id: manifest.id,
+      })
+      .abortSignal(AbortSignal.timeout(60_000));
     if (publishError) throw publishError;
     progress?.(100);
     return { ...manifest, kind, published_at: new Date().toISOString() } as QualityImport;
   } catch (uploadError) {
     // All parallel requests settled above before the pending import can be discarded.
-    await supabase.from("quality_imports").delete().eq("id", manifest.id).is("published_at", null);
+    try {
+      await supabase
+        .from("quality_imports")
+        .delete()
+        .eq("id", manifest.id)
+        .is("published_at", null)
+        .abortSignal(AbortSignal.timeout(5000));
+    } catch {
+      /* Keep the original upload error. */
+    }
     throw uploadError;
   }
 }

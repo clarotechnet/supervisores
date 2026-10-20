@@ -41,6 +41,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         queryClient.removeQueries({ queryKey: ["quality", userId] });
         queryClient.removeQueries({ queryKey: ["native-quality", userId] });
       });
+      void queryClient.cancelQueries({ queryKey: ["sla-warranty", userId] }).then(() => {
+        queryClient.removeQueries({ queryKey: ["sla-warranty", userId] });
+      });
     },
     [queryClient],
   );

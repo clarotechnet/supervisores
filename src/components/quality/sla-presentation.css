@@ -1,0 +1,161 @@
+/* Native filter inputs and the unchanged charts remain owned by the SLA engine. */
+.sla-mini-filters[hidden] {
+  display: none;
+}
+.sla-presenting .wrap {
+  padding: 10px 12px 24px;
+}
+.sla-presenting .masthead {
+  margin-bottom: 9px;
+}
+.sla-presenting .masthead h1 {
+  font-size: 21px;
+}
+.sla-presenting .eyebrow {
+  font-size: 8px;
+  margin-bottom: 3px;
+}
+.sla-presenting .masthead > .actions,
+.sla-presenting .filter-panel > :not(#periodError) {
+  display: none;
+}
+.sla-presenting .filter-panel {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+.sla-presenting #periodError {
+  margin-top: 8px;
+}
+.sla-mini-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid #e1e3e7;
+  border-radius: 9px;
+  box-shadow: 0 2px 8px #172d4610;
+}
+.sla-mini-filter {
+  min-width: 70px;
+  flex: 1 1 85px;
+}
+.sla-mini-filter[data-filter="source"] {
+  flex-basis: 120px;
+}
+.sla-mini-filter[data-filter="dates"] {
+  flex-basis: 150px;
+}
+.sla-mini-filter > summary {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 5px 21px 5px 9px;
+  border: 1px solid #d6dfe9;
+  border-radius: 7px;
+  background: #f8fafd;
+  color: #244462;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.sla-mini-filter > summary::-webkit-details-marker {
+  display: none;
+}
+.sla-mini-filter > summary::after {
+  content: "⌄";
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+}
+.sla-mini-filter[open] > summary {
+  background: #fff1f2;
+  border-color: #e9b4b9;
+  color: #cf171f;
+}
+.sla-mini-label {
+  font-size: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.sla-mini-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+}
+.sla-mini-menu {
+  position: fixed;
+  z-index: 30;
+  width: 310px;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid #d6dfe9;
+  border-radius: 10px;
+  background: #fff;
+  color: #24262b;
+  box-shadow: 0 12px 32px #172d4633;
+}
+.sla-mini-filter:not([open]) > .sla-mini-menu {
+  display: none;
+}
+.sla-mini-menu:not([data-positioned]) {
+  visibility: hidden;
+}
+.sla-mini-menu .fbox + .fbox,
+.sla-mini-menu .fbox + .actions {
+  margin-top: 12px;
+}
+.sla-mini-menu input[type="date"] {
+  width: 100%;
+  height: 34px;
+  border: 1px solid #d5d8de;
+  border-radius: 5px;
+  padding: 0 9px;
+}
+.sla-mini-menu .indicator-row,
+.sla-mini-menu .metric-row {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.sla-mini-menu #indicatorCaution,
+.sla-mini-menu #metricNote {
+  flex-basis: 100%;
+  margin-top: 7px;
+  padding: 0;
+}
+.sla-mini-menu #fLocButton {
+  display: none;
+}
+.sla-mini-menu #fLocMenu {
+  display: block;
+  position: static;
+  width: 100%;
+  max-width: none;
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+}
+.sla-mini-filters > #clearFiltersBtn {
+  flex: 0 0 auto;
+  font-size: 11px;
+  padding: 8px 10px;
+}
+@media (max-width: 600px) {
+  .sla-mini-filter {
+    flex-basis: 26%;
+  }
+  .sla-mini-filter[data-filter="source"],
+  .sla-mini-filter[data-filter="dates"] {
+    flex-basis: 40%;
+  }
+}

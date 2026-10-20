@@ -1,0 +1,64 @@
+.sla-warranty-panel {
+  height: 100%;
+  overflow: auto;
+  background: #f4f6f9;
+  color: #263343;
+}
+.sla-system-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 20px;
+  background: #fff;
+  border-bottom: 1px solid #dbe4ee;
+  flex-wrap: wrap;
+}
+.sla-system-controls > div {
+  flex: 1;
+  min-width: 220px;
+}
+.sla-system-controls strong {
+  display: block;
+  font-size: 14px;
+}
+.sla-system-controls span {
+  display: block;
+  margin-top: 4px;
+  color: #6b7a8f;
+  font-size: 11px;
+}
+.sla-system-controls button {
+  border: 1px solid #ced9e7;
+  border-radius: 8px;
+  background: #fff;
+  color: #204668;
+  padding: 8px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.sla-system-controls button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.sla-system-status p {
+  padding: 9px 20px;
+  font-size: 12px;
+  background: #fff9e9;
+  margin: 0;
+}
+.sla-system-status [role="alert"] {
+  color: #b00020;
+  background: #fff1f3;
+}
+.sla-surface {
+  display: block;
+  min-height: 600px;
+  container: quality-frame / inline-size;
+}
+.sla-warranty-panel.is-presenting .sla-system-controls,
+.sla-warranty-panel.is-presenting .sla-system-status [role="status"] {
+  display: none;
+}
+.quality-reference.presenting[data-screen="sla"] > .reference-status {
+  display: none;
+}
