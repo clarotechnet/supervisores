@@ -10,12 +10,14 @@ export function SchedulePeoplePicker({
   search,
   onSearchChange,
   onSelectionChange,
+  emptyMessage,
 }: {
   people: SchedulePerson[];
   selectedNames: string[];
   search: string;
   onSearchChange: (value: string) => void;
   onSelectionChange: (names: string[]) => void;
+  emptyMessage?: string | undefined;
 }) {
   const multiple = selectedNames.length > 1;
   const selected = new Set(selectedNames);
@@ -127,7 +129,8 @@ export function SchedulePeoplePicker({
         ))}
         {people.length === 0 && (
           <p className="p-4 text-center text-xs text-muted-foreground sm:col-span-full">
-            Nenhum colaborador encontrado. A busca não altera as pessoas selecionadas.
+            {emptyMessage ??
+              "Nenhum colaborador encontrado. A busca não altera as pessoas selecionadas."}
           </p>
         )}
       </div>

@@ -9,6 +9,7 @@ import {
   StickyNote,
   Trash2,
   Upload,
+  UserCheck,
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -66,6 +67,9 @@ import { canManageSchedulesForRole } from "@/lib/access";
 import {
   reconcileScheduleSelection,
   scheduleMonthDates,
+  scheduleDutyDate,
+  schedulePeopleOnDuty,
+  schedulePeopleOnDutyInMonth,
   SCHEDULE_KIND_STYLE,
 } from "@/lib/schedule-view";
 import { downloadScheduleReport, isLunchExcludedM2 } from "@/lib/schedule-report";
@@ -116,6 +120,9 @@ function SchedulesPage() {
   const [month, setMonth] = useState("");
   const [selectedPersonNames, setSelectedPersonNames] = useState<string[]>([]);
   const [personSearch, setPersonSearch] = useState("");
+  const [dutyScope, setDutyScope] = useState<"day" | "month" | null>(null);
+  const onDutyOnly = dutyScope !== null;
+  const [dutyDateChoice, setDutyDateChoice] = useState("");
   const [importOpen, setImportOpen] = useState(false);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [dateNotes, setDateNotes] = useState<ScheduleDateNote[]>([]);
@@ -198,23 +205,49 @@ function SchedulesPage() {
     return options;
   }, [city, summaries]);
 
+  const dutyDate = scheduleDutyDate(month, dutyDateChoice, todayKey());
+  const monthDates = useMemo(() => scheduleMonthDates(month), [month]);
+  const eligiblePeople = useMemo(() => {
+    const all = schedule?.payload.people ?? [];
+    if (dutyScope === "month") return schedulePeopleOnDutyInMonth(all, month);
+    return dutyScope === "day" ? schedulePeopleOnDuty(all, dutyDate) : all;
+  }, [schedule, dutyScope, dutyDate, month]);
+  const eligibleNames = useMemo(
+    () => new Set(eligiblePeople.map((person) => person.name)),
+    [eligiblePeople],
+  );
+  const visibleSelectedNames = useMemo(
+    () => selectedPersonNames.filter((name) => eligibleNames.has(name)),
+    [selectedPersonNames, eligibleNames],
+  );
   const people = useMemo(() => {
     const query = personSearch.trim().toLocaleLowerCase("pt-BR");
-    return (schedule?.payload.people ?? []).filter(
+    return eligiblePeople.filter(
       (person) =>
         !query ||
         person.name.toLocaleLowerCase("pt-BR").includes(query) ||
         (person.login ?? "").toLocaleLowerCase("pt-BR").includes(query) ||
         person.jobTitle.toLocaleLowerCase("pt-BR").includes(query),
     );
-  }, [schedule, personSearch]);
+  }, [eligiblePeople, personSearch]);
 
   const selectedPeople = useMemo(() => {
     const names = new Set(selectedPersonNames);
-    return (schedule?.payload.people ?? []).filter((person) => names.has(person.name));
-  }, [schedule, selectedPersonNames]);
+    return eligiblePeople.filter((person) => names.has(person.name));
+  }, [eligiblePeople, selectedPersonNames]);
   const person = selectedPeople[0] ?? null;
   const multiplePeople = selectedPeople.length > 1;
+
+  function choosePeople(names: string[]) {
+    // Filtering a view must not silently discard prior selections. Hidden
+    // selections return when the duty filter is disabled; they never enter
+    // the visible comparison or its exported image while it is active.
+    setSelectedPersonNames((current) =>
+      onDutyOnly
+        ? [...new Set([...current.filter((name) => !eligibleNames.has(name)), ...names])]
+        : names,
+    );
+  }
 
   function chooseCity(value: string) {
     setCity(value);
@@ -416,6 +449,58 @@ function SchedulesPage() {
             onChange={(event) => setMonth(event.target.value ? `${event.target.value}-01` : "")}
           />
         </div>
+        <div className="flex flex-wrap items-end gap-3 border-t border-border pt-4 md:col-span-3">
+          <Button
+            type="button"
+            variant={dutyScope === "day" ? "default" : "outline"}
+            aria-pressed={dutyScope === "day"}
+            onClick={() => setDutyScope((current) => (current === "day" ? null : "day"))}
+            disabled={!month || loading || loadingSchedule}
+          >
+            <UserCheck className="size-4" /> Somente de plantão
+          </Button>
+          <Button
+            type="button"
+            variant={dutyScope === "month" ? "default" : "outline"}
+            aria-pressed={dutyScope === "month"}
+            onClick={() => setDutyScope((current) => (current === "month" ? null : "month"))}
+            disabled={!month || loading || loadingSchedule}
+          >
+            <CalendarDays className="size-4" /> Plantão no mês
+          </Button>
+          {onDutyOnly && (
+            <>
+              {dutyScope === "day" && (
+                <div className="grid gap-1.5">
+                  <Label htmlFor="schedule-duty-date">Data do plantão</Label>
+                  <Input
+                    id="schedule-duty-date"
+                    type="date"
+                    value={dutyDate}
+                    min={monthDates[0]}
+                    max={monthDates.at(-1)}
+                    onChange={(event) => setDutyDateChoice(event.target.value)}
+                    className="w-auto"
+                  />
+                </div>
+              )}
+              {selectedSummary && schedule?.id === selectedSummaryId && !loadingSchedule && (
+                <p role="status" className="pb-2 text-xs font-semibold text-primary">
+                  {eligiblePeople.length} colaborador(es){" "}
+                  {dutyScope === "month"
+                    ? `com plantão em ${monthLabel(month)}.`
+                    : `de plantão em ${dateFromIso(dutyDate).toLocaleDateString("pt-BR")}.`}
+                </p>
+              )}
+              <p className="basis-full text-[11px] text-muted-foreground">
+                {dutyScope === "month"
+                  ? "Mostra quem tem pelo menos um dia de trabalho/turno no mês selecionado, dentro da cidade e frente escolhidas."
+                  : "Mostra quem tem trabalho/turno na data escolhida, dentro da cidade, frente e mês selecionados. Folgas, férias, faltas, atestados e afastamentos ficam ocultos."}{" "}
+                As seleções ocultas são mantidas ao desligar o filtro.
+              </p>
+            </>
+          )}
+        </div>
       </section>
 
       {loading ? (
@@ -478,10 +563,17 @@ function SchedulesPage() {
           >
             <SchedulePeoplePicker
               people={people}
-              selectedNames={selectedPersonNames}
+              selectedNames={visibleSelectedNames}
               search={personSearch}
               onSearchChange={setPersonSearch}
-              onSelectionChange={setSelectedPersonNames}
+              onSelectionChange={choosePeople}
+              emptyMessage={
+                onDutyOnly && eligiblePeople.length === 0
+                  ? dutyScope === "month"
+                    ? "Nenhum colaborador com plantão neste mês para a cidade e frente selecionadas."
+                    : "Nenhum colaborador de plantão nesta data para a cidade e frente selecionadas."
+                  : undefined
+              }
             />
 
             {multiplePeople ? (
@@ -494,7 +586,7 @@ function SchedulesPage() {
                 isAdmin={isAdmin}
                 onOpenNote={openDateNote}
                 onShowPerson={(name) => {
-                  setSelectedPersonNames([name]);
+                  choosePeople([name]);
                   setPersonSearch("");
                 }}
               />
@@ -509,7 +601,13 @@ function SchedulesPage() {
               />
             ) : (
               <div className="grid min-h-[360px] place-items-center text-center text-xs text-muted-foreground">
-                Selecione uma ou mais pessoas para consultar a escala.
+                {onDutyOnly
+                  ? eligiblePeople.length
+                    ? "Selecione os colaboradores de plantão para consultar ou comparar as escalas."
+                    : dutyScope === "month"
+                      ? "Nenhum colaborador com plantão neste mês. Escolha outro mês ou desligue o filtro."
+                      : "Nenhum colaborador de plantão nesta data. Escolha outro dia ou desligue o filtro."
+                  : "Selecione uma ou mais pessoas para consultar a escala."}
               </div>
             )}
           </section>
