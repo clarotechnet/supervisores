@@ -32,6 +32,7 @@ interface NavItem {
   icon: typeof CalendarCheck;
 }
 
+
 const SUPERVISOR_NAV: NavItem[] = [
   { to: "/painel", label: "Minha rotina", hint: "Checklist do dia", icon: CalendarCheck },
   { to: "/tarefas", label: "Minhas tarefas", hint: "Criar tarefa avulsa", icon: ListPlus },
