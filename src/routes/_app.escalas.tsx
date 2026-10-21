@@ -18,6 +18,7 @@ import { ScheduleDateNoteDialog } from "@/components/ScheduleDateNoteDialog";
 import { ScheduleSuggestionsDialog } from "@/components/ScheduleSuggestionsDialog";
 import { ScheduleComparisonTable } from "@/components/ScheduleComparisonTable";
 import { SchedulePeoplePicker } from "@/components/SchedulePeoplePicker";
+import { SchedulePdfButton } from "@/components/SchedulePdfButton";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -237,6 +238,12 @@ function SchedulesPage() {
   }, [eligiblePeople, selectedPersonNames]);
   const person = selectedPeople[0] ?? null;
   const multiplePeople = selectedPeople.length > 1;
+  const dutyFilterDescription =
+    dutyScope === "day"
+      ? `Plantão em ${dateFromIso(dutyDate).toLocaleDateString("pt-BR")} - calendário completo do mês dos colaboradores selecionados`
+      : dutyScope === "month"
+        ? "Plantão no mês - colaboradores selecionados com ao menos um dia de trabalho/turno"
+        : "Colaboradores selecionados - calendário completo do mês";
 
   function choosePeople(names: string[]) {
     // Filtering a view must not silently discard prior selections. Hidden
@@ -583,6 +590,7 @@ function SchedulesPage() {
                 city={cityLabel(schedule.city)}
                 sector={sectorLabel(schedule.sector)}
                 notes={dateNotes}
+                filterDescription={dutyFilterDescription}
                 isAdmin={isAdmin}
                 onOpenNote={openDateNote}
                 onShowPerson={(name) => {
@@ -595,6 +603,8 @@ function SchedulesPage() {
                 person={person}
                 month={schedule.schedule_month}
                 sector={schedule.sector}
+                city={schedule.city}
+                filterDescription={dutyFilterDescription}
                 notes={dateNotes}
                 isAdmin={isAdmin}
                 onOpenNote={openDateNote}
@@ -719,6 +729,8 @@ function PersonSchedule({
   person,
   month,
   sector,
+  city,
+  filterDescription,
   notes,
   isAdmin,
   onOpenNote,
@@ -726,6 +738,8 @@ function PersonSchedule({
   person: SchedulePerson;
   month: string;
   sector: string;
+  city: string;
+  filterDescription: string;
   notes: ScheduleDateNote[];
   isAdmin: boolean;
   onOpenNote: (date: string) => void;
@@ -755,12 +769,22 @@ function PersonSchedule({
             {[person.login, person.jobTitle || "Função não informada"].filter(Boolean).join(" · ")}
           </p>
         </div>
-        {nextWork && (
-          <span className="rounded-full bg-primary/10 px-3 py-1 text-[10px] font-bold text-primary">
-            Próximo turno: {dateFromIso(nextWork.date).toLocaleDateString("pt-BR")} ·{" "}
-            {nextWork.code}
-          </span>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {nextWork && (
+            <span className="rounded-full bg-primary/10 px-3 py-1 text-[10px] font-bold text-primary">
+              Próximo turno: {dateFromIso(nextWork.date).toLocaleDateString("pt-BR")} ·{" "}
+              {nextWork.code}
+            </span>
+          )}
+          <SchedulePdfButton
+            people={[person]}
+            month={month}
+            city={cityLabel(city)}
+            sector={sectorLabel(sector)}
+            notes={notes}
+            filterDescription={filterDescription}
+          />
+        </div>
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-3 xl:grid-cols-7">

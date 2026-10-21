@@ -85,3 +85,6 @@ export const SCHEDULE_KIND_STYLE = {
   certificate:
     "border-teal-600/45 bg-teal-500/15 text-teal-700 dark:border-teal-400/45 dark:bg-teal-400/15 dark:text-teal-300",
 } as const;
+
+export const SCHEDULE_T2_STYLE =
+  "border-navy/20 bg-navy text-white dark:border-blue-400/40 dark:bg-blue-600";

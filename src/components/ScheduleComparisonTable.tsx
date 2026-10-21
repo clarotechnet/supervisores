@@ -2,6 +2,7 @@ import { useState } from "react";
 import { CalendarDays, Download, Loader2, StickyNote } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { SchedulePdfButton } from "@/components/SchedulePdfButton";
 import type { ScheduleDateNote, SchedulePerson } from "@/lib/types";
 import { todayKey } from "@/lib/date-utils";
 import { scheduleCodeKind } from "@/lib/schedule-import";
@@ -10,6 +11,7 @@ import {
   scheduleDayTotals,
   scheduleMonthDates,
   SCHEDULE_KIND_STYLE,
+  SCHEDULE_T2_STYLE,
 } from "@/lib/schedule-view";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/useTheme";
@@ -25,6 +27,7 @@ export function ScheduleComparisonTable({
   isAdmin,
   onOpenNote,
   onShowPerson,
+  filterDescription,
 }: {
   people: SchedulePerson[];
   month: string;
@@ -34,6 +37,7 @@ export function ScheduleComparisonTable({
   isAdmin: boolean;
   onOpenNote: (date: string) => void;
   onShowPerson: (name: string) => void;
+  filterDescription?: string | undefined;
 }) {
   const [exporting, setExporting] = useState(false);
   const { theme } = useTheme();
@@ -76,16 +80,26 @@ export function ScheduleComparisonTable({
           </p>
         </div>
         <div className="flex flex-col items-start gap-1 sm:items-end">
-          <Button variant="outline" onClick={() => void saveImage()} disabled={exporting}>
-            {exporting ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Download className="size-4" />
-            )}
-            {exporting ? "Gerando imagem..." : "Salvar imagem"}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => void saveImage()} disabled={exporting}>
+              {exporting ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Download className="size-4" />
+              )}
+              {exporting ? "Gerando imagem..." : "Salvar imagem"}
+            </Button>
+            <SchedulePdfButton
+              people={people}
+              month={month}
+              city={city}
+              sector={sector}
+              notes={notes}
+              filterDescription={filterDescription}
+            />
+          </div>
           <span className="text-[10px] text-muted-foreground">
-            PNG · 1920 × 1080 · todos os dias do mês
+            PNG · 1920 × 1080 · PDF vetorial A3 paisagem · todos os dias do mês
           </span>
         </div>
       </div>
@@ -197,8 +211,7 @@ export function ScheduleComparisonTable({
                           kind
                             ? SCHEDULE_KIND_STYLE[kind]
                             : "border-transparent bg-secondary/30 text-muted-foreground",
-                          label === "T2" &&
-                            "border-navy/20 bg-navy text-white dark:border-blue-400/40 dark:bg-blue-600",
+                          label === "T2" && SCHEDULE_T2_STYLE,
                         )}
                       >
                         <span className="max-w-16 truncate">{label}</span>
