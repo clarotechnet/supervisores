@@ -538,10 +538,9 @@ function QuarkPage() {
     );
   }, [mapPunches, mapPerson, homeRadiusMeters]);
   const visibleMapPunches = mapNearHomeOnly ? mapNearPunches : mapPunches;
-  const visibleMapNumbers = useMemo(
-    () => numberedQuarkPunchesByDay(visibleMapPunches),
-    [visibleMapPunches],
-  );
+  // Keep the original 1st/2nd/3rd/4th punch of each day even while
+  // rendering only the punches near home. Do not renumber the filtered subset.
+  const mapDayNumbers = useMemo(() => numberedQuarkPunchesByDay(mapPunches), [mapPunches]);
 
   const bankRows = useMemo(
     () =>
@@ -2188,6 +2187,7 @@ function QuarkPage() {
                 <QuarkLocationMap
                   person={mapPerson}
                   punches={visibleMapPunches}
+                  punchNumbers={mapDayNumbers}
                   radiusMeters={homeRadiusMeters}
                 />
 
@@ -2245,7 +2245,7 @@ function QuarkPage() {
                           return (
                             <TableRow key={punch.point_id}>
                               <TableCell className="font-black">
-                                {visibleMapNumbers.get(punch.point_id) ?? 1}
+                                {mapDayNumbers.get(punch.point_id) ?? "—"}
                               </TableCell>
                               <TableCell>
                                 {localeDate(punch.work_date)}
