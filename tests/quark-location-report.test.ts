@@ -118,8 +118,10 @@ describe("relatório Quark — proximidade da moradia", () => {
     ];
     const numbered = numberedQuarkPunchesByDay(rows);
     expect(rows.map((item) => numbered.get(item.point_id))).toEqual([1, 2, 3, 4, 1, 2, 3, 4]);
-    const onlyNear = numberedQuarkPunchesByDay([rows[0]!, rows[3]!, rows[4]!]);
-    expect([...onlyNear.values()]).toEqual([1, 2, 1]);
+    // Filter to the nearby points without recalculating their daily positions.
+    // Their original positions remain 3rd/4th on day 1 and 2nd/4th on day 2.
+    const onlyNear = [rows[2]!, rows[3]!, rows[5]!, rows[7]!];
+    expect(onlyNear.map((item) => numbered.get(item.point_id))).toEqual([3, 4, 2, 4]);
   });
 
   it("exporta relatório completo de todos os próximos, preservando filtros e detalhe individual", async () => {

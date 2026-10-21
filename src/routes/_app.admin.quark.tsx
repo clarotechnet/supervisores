@@ -538,9 +538,35 @@ function QuarkPage() {
     );
   }, [mapPunches, mapPerson, homeRadiusMeters]);
   const visibleMapPunches = mapNearHomeOnly ? mapNearPunches : mapPunches;
-  const visibleMapNumbers = useMemo(
-    () => numberedQuarkPunchesByDay(visibleMapPunches),
-    [visibleMapPunches],
+  // Keep the original 1st/2nd/3rd/4th punch of each day even while
+  // rendering only the punches near home. Do not renumber the filtered subset.
+  const mapDayNumbers = useMemo(() => numberedQuarkPunchesByDay(mapPunches), [mapPunches]);
+  const mapNearHighlights = useMemo(
+    () =>
+      [...mapNearPunches]
+        .sort((a, b) =>
+          `${a.work_date} ${a.punch_time ?? ""}`.localeCompare(
+            `${b.work_date} ${b.punch_time ?? ""}`,
+          ),
+        )
+        .map((punch) => ({
+          id: punch.point_id,
+          date: localeDate(punch.work_date),
+          time: punch.punch_time?.slice(0, 5) ?? "—",
+          number: mapDayNumbers.get(punch.point_id),
+          meters:
+            mapPerson?.home && punch.latitude !== null && punch.longitude !== null
+              ? Math.round(
+                  distanceMeters(
+                    punch.latitude,
+                    punch.longitude,
+                    mapPerson.home.latitude,
+                    mapPerson.home.longitude,
+                  ),
+                )
+              : null,
+        })),
+    [mapNearPunches, mapDayNumbers, mapPerson],
   );
 
   const bankRows = useMemo(
@@ -659,12 +685,30 @@ function QuarkPage() {
     return true;
   }
 
+  function showExportReportContent(root: HTMLElement): () => void {
+    // This report-only presentation never changes the normal on-screen KPI view.
+    const nodes: Array<{ node: HTMLElement; before: string }> = [];
+    const applyDisplay = (selector: string, display: string) => {
+      const node = root.querySelector<HTMLElement>(selector);
+      if (!node) return;
+      nodes.push({ node, before: node.style.display });
+      node.style.display = display;
+    };
+    applyDisplay("[data-quark-report-highlights]", "block");
+    applyDisplay("[data-quark-report-kpis]", "none");
+    applyDisplay("[data-quark-report-filter]", "none");
+    return () => {
+      for (const { node, before } of nodes) node.style.display = before;
+    };
+  }
+
   async function saveIndividualImage() {
     if (exportingReport || !(await prepareNearHomeReport()) || !reportPrintRef.current) return;
     setExportingReport(true);
     const table = mapTableRef.current;
     const previousMaxHeight = table?.style.maxHeight;
     const previousOverflow = table?.style.overflow;
+    const restoreReportView = showExportReportContent(reportPrintRef.current);
     try {
       if (table) {
         table.style.maxHeight = "none";
@@ -700,6 +744,7 @@ function QuarkPage() {
       console.error("[Quark] Erro na imagem do relatório", error);
       toast.error("Não foi possível salvar a imagem. Use Imprimir relatório como alternativa.");
     } finally {
+      restoreReportView();
       if (table) {
         table.style.maxHeight = previousMaxHeight ?? "";
         table.style.overflow = previousOverflow ?? "";
@@ -720,6 +765,7 @@ function QuarkPage() {
       return;
     }
     const cloned = reportPrintRef.current.cloneNode(true) as HTMLElement;
+    showExportReportContent(cloned);
     const table = cloned.querySelector("[data-quark-report-table]") as HTMLElement | null;
     if (table) {
       table.style.maxHeight = "none";
@@ -2159,24 +2205,74 @@ function QuarkPage() {
                     Conferência operacional baseada em GPS; proximidade não comprova irregularidade.
                   </p>
                 </div>
-                <KpiGrid
-                  items={[
-                    ["Batidas", mapPunches.length],
-                    ["Próximas", mapStats.near],
-                    ["Fora do raio", mapStats.outside],
-                    ["Sem referência", mapStats.noReference],
-                  ]}
-                  clickableItems={["Próximas"]}
-                  activeItem={mapNearHomeOnly ? "Próximas" : null}
-                  onItemClick={(label) => {
-                    if (label === "Próximas") {
-                      setMapNearHomeOnly((current) => !current);
-                    }
-                  }}
-                />
+                <section
+                  data-quark-report-highlights
+                  style={{ display: "none" }}
+                  className="rounded-xl border border-primary/30 bg-card px-4 py-4"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-primary">
+                        Batidas próximas da moradia
+                      </p>
+                      <h4 className="mt-1 text-lg font-black">
+                        {mapNearHighlights.length} registro(s) dentro do raio de {homeRadiusMeters}{" "}
+                        m
+                      </h4>
+                      <p className="text-[11px] text-muted-foreground">
+                        Datas, horários e posição original da batida no dia.
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-right">
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                        Período analisado
+                      </p>
+                      <b className="text-xs">
+                        {localeDate(mapRange.startDate)} a {localeDate(mapRange.endDate)}
+                      </b>
+                    </div>
+                  </div>
+                  <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {mapNearHighlights.map((item) => (
+                      <div
+                        key={item.id}
+                        className="rounded-xl border border-primary/30 bg-secondary/30 px-3 py-3"
+                      >
+                        <p className="text-[10px] font-black uppercase tracking-wide text-primary">
+                          {item.number ? `${item.number}ª batida do dia` : "Batida próxima"}
+                        </p>
+                        <p className="mt-1 text-sm font-black">{item.date}</p>
+                        <p className="text-xl font-black">{item.time}</p>
+                        <p className="text-[10px] text-muted-foreground">
+                          Distância: {formatDistance(item.meters)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+                <div data-quark-report-kpis>
+                  <KpiGrid
+                    items={[
+                      ["Batidas", mapPunches.length],
+                      ["Próximas", mapStats.near],
+                      ["Fora do raio", mapStats.outside],
+                      ["Sem referência", mapStats.noReference],
+                    ]}
+                    clickableItems={["Próximas"]}
+                    activeItem={mapNearHomeOnly ? "Próximas" : null}
+                    onItemClick={(label) => {
+                      if (label === "Próximas") {
+                        setMapNearHomeOnly((current) => !current);
+                      }
+                    }}
+                  />
+                </div>
 
                 {mapNearHomeOnly && (
-                  <div className="rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+                  <div
+                    data-quark-report-filter
+                    className="rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-muted-foreground"
+                  >
                     Filtro ativo: mostrando apenas {mapNearPunches.length} batida(s) dentro de{" "}
                     {homeRadiusMeters} m da moradia, em {mapNearHomeDates.size} dia(s). O mapa e a
                     tabela abaixo mostram exatamente os mesmos registros. Clique em{" "}
@@ -2188,6 +2284,7 @@ function QuarkPage() {
                 <QuarkLocationMap
                   person={mapPerson}
                   punches={visibleMapPunches}
+                  punchNumbers={mapDayNumbers}
                   radiusMeters={homeRadiusMeters}
                 />
 
@@ -2245,7 +2342,7 @@ function QuarkPage() {
                           return (
                             <TableRow key={punch.point_id}>
                               <TableCell className="font-black">
-                                {visibleMapNumbers.get(punch.point_id) ?? 1}
+                                {mapDayNumbers.get(punch.point_id) ?? "—"}
                               </TableCell>
                               <TableCell>
                                 {localeDate(punch.work_date)}

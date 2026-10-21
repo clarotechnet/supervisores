@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Home, LocateFixed, Minus, Plus } from "lucide-react";
 import { distanceMeters, type QuarkPersonView, type QuarkPunch } from "@/lib/quark";
-import { numberedQuarkPunchesByDay } from "@/lib/quark-location-report";
 import { cn } from "@/lib/utils";
 
 const TILE_SIZE = 256;
@@ -71,11 +70,14 @@ function fitView(points: Point[], size: Size): { center: Point; zoom: number } {
 export function QuarkLocationMap({
   person,
   punches,
+  punchNumbers,
   radiusMeters,
   className,
 }: {
   person: QuarkPersonView;
   punches: QuarkPunch[];
+  /** Number of the punch within its date, calculated before any location filtering. */
+  punchNumbers: Map<string, number>;
   radiusMeters: number;
   className?: string;
 }) {
@@ -108,8 +110,6 @@ export function QuarkLocationMap({
         ),
     [punches],
   );
-
-  const dailyNumbers = useMemo(() => numberedQuarkPunchesByDay(mappedPunches), [mappedPunches]);
 
   const fitPoints = useMemo(() => {
     const points: Point[] = mappedPunches.map((punch) => ({
@@ -281,7 +281,7 @@ export function QuarkLocationMap({
           );
         })()}
 
-      {mappedPunches.map((punch, index) => {
+      {mappedPunches.map((punch) => {
         const point = screenPoint({ latitude: punch.latitude, longitude: punch.longitude });
         const meters = person.home
           ? distanceMeters(
@@ -302,7 +302,7 @@ export function QuarkLocationMap({
             style={{ left: point.left, top: point.top, transform: "translate(-50%, -50%)" }}
             title={punch.location ?? "Batida"}
           >
-            {dailyNumbers.get(punch.point_id) ?? index + 1}
+            {punchNumbers.get(punch.point_id) ?? "—"}
           </div>
         );
       })}
