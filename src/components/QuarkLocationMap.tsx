@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Home, LocateFixed, Minus, Plus } from "lucide-react";
 import { distanceMeters, type QuarkPersonView, type QuarkPunch } from "@/lib/quark";
+import { numberedQuarkPunchesByDay } from "@/lib/quark-location-report";
 import { cn } from "@/lib/utils";
 
 const TILE_SIZE = 256;
@@ -107,6 +108,8 @@ export function QuarkLocationMap({
         ),
     [punches],
   );
+
+  const dailyNumbers = useMemo(() => numberedQuarkPunchesByDay(mappedPunches), [mappedPunches]);
 
   const fitPoints = useMemo(() => {
     const points: Point[] = mappedPunches.map((punch) => ({
@@ -299,7 +302,7 @@ export function QuarkLocationMap({
             style={{ left: point.left, top: point.top, transform: "translate(-50%, -50%)" }}
             title={punch.location ?? "Batida"}
           >
-            {index + 1}
+            {dailyNumbers.get(punch.point_id) ?? index + 1}
           </div>
         );
       })}

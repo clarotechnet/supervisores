@@ -6,7 +6,10 @@ import {
   Clock3,
   Database,
   ExternalLink,
+  FileDown,
   FileUp,
+  ImageDown,
+  Printer,
   Home,
   Loader2,
   MapPin,
@@ -69,6 +72,8 @@ import {
   type QuarkSyncRun,
 } from "@/lib/quark";
 import { parseDirectoryWorkbook } from "@/lib/quark-directory-import";
+import { buildQuarkNearHomeReport, numberedQuarkPunchesByDay } from "@/lib/quark-location-report";
+import { createQuarkLocationWorkbook } from "@/lib/quark-location-export";
 import {
   deleteQuarkDirectory,
   deleteQuarkHome,
@@ -200,12 +205,18 @@ function QuarkPage() {
   const [saving, setSaving] = useState(false);
   const [homeRadiusMeters, setHomeRadiusMeters] = useState(200);
   const [nearHomeOnly, setNearHomeOnly] = useState(false);
+  const [showAllNearRanking, setShowAllNearRanking] = useState(false);
+  const [showNearReport, setShowNearReport] = useState(false);
+  const [exportingReport, setExportingReport] = useState(false);
+  const reportPrintRef = useRef<HTMLDivElement | null>(null);
+  const mapTableRef = useRef<HTMLDivElement | null>(null);
   const [mapPerson, setMapPerson] = useState<QuarkPersonView | null>(null);
   const [mapMode, setMapMode] = useState<"day" | "month" | "period">("month");
   const [mapNearHomeOnly, setMapNearHomeOnly] = useState(false);
   const [mapDate, setMapDate] = useState(endDate);
   const [mapMonth, setMapMonth] = useState(endDate.slice(0, 7));
   const [syncingLocations, setSyncingLocations] = useState(false);
+  const [mapRefreshedKey, setMapRefreshedKey] = useState<string | null>(null);
   const [directoryAddOpen, setDirectoryAddOpen] = useState(false);
   const [directoryCandidateKey, setDirectoryCandidateKey] = useState("");
   const [directoryImporting, setDirectoryImporting] = useState(false);
@@ -425,6 +436,10 @@ function QuarkPage() {
     (sum, item) => sum + item.noReference,
     0,
   );
+  const nearReport = useMemo(
+    () => buildQuarkNearHomeReport(locationPeople, locationPunches, homeRadiusMeters),
+    [locationPeople, locationPunches, homeRadiusMeters],
+  );
   const visibleLocationSummaries = useMemo(
     () =>
       nearHomeOnly
@@ -444,6 +459,13 @@ function QuarkPage() {
     if (mapMode === "month") return monthPeriod(mapMonth);
     return { startDate, endDate };
   }, [mapMode, mapDate, mapMonth, startDate, endDate]);
+  const mapRangeKey = mapPerson
+    ? `${personKey(mapPerson)}:${mapRange.startDate}:${mapRange.endDate}`
+    : null;
+  const mapRangeOutsidePanel =
+    Boolean(mapRange.startDate && mapRange.endDate) &&
+    (mapRange.startDate < startDate || mapRange.endDate > endDate);
+  const mapHasUnloadedRange = mapRangeOutsidePanel && mapRefreshedKey !== mapRangeKey;
   const mapPunches = useMemo(() => {
     if (!mapPerson || !mapRange.startDate || !mapRange.endDate) return [];
     return punches
@@ -451,14 +473,15 @@ function QuarkPage() {
         (punch) =>
           personKey(punch) === personKey(mapPerson) &&
           punch.work_date >= mapRange.startDate &&
-          punch.work_date <= mapRange.endDate,
+          punch.work_date <= mapRange.endDate &&
+          punch.work_date <= todayKey,
       )
       .sort((a, b) =>
         `${a.work_date} ${a.punch_time ?? ""}`.localeCompare(
           `${b.work_date} ${b.punch_time ?? ""}`,
         ),
       );
-  }, [mapPerson, mapRange, punches]);
+  }, [mapPerson, mapRange, punches, todayKey]);
   const mapStats = useMemo(() => {
     let near = 0;
     let outside = 0;
@@ -503,12 +526,21 @@ function QuarkPage() {
     }
     return dates;
   }, [mapPunches, mapPerson, homeRadiusMeters]);
-  const visibleMapPunches = useMemo(
-    () =>
-      mapNearHomeOnly
-        ? mapPunches.filter((punch) => mapNearHomeDates.has(punch.work_date))
-        : mapPunches,
-    [mapPunches, mapNearHomeOnly, mapNearHomeDates],
+  const mapNearPunches = useMemo(() => {
+    if (!mapPerson?.home) return [];
+    const home = mapPerson.home;
+    return mapPunches.filter(
+      (punch) =>
+        punch.latitude !== null &&
+        punch.longitude !== null &&
+        distanceMeters(punch.latitude, punch.longitude, home.latitude, home.longitude) <=
+          homeRadiusMeters,
+    );
+  }, [mapPunches, mapPerson, homeRadiusMeters]);
+  const visibleMapPunches = mapNearHomeOnly ? mapNearPunches : mapPunches;
+  const visibleMapNumbers = useMemo(
+    () => numberedQuarkPunchesByDay(visibleMapPunches),
+    [visibleMapPunches],
   );
 
   const bankRows = useMemo(
@@ -553,6 +585,171 @@ function QuarkPage() {
     }
   }
 
+  function downloadBlob(blob: Blob, fileName: string) {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  }
+
+  async function downloadNearReport(kind: "ranking" | "details" | "individual" | "complete") {
+    if (exportingReport) return;
+    setExportingReport(true);
+    try {
+      const report =
+        kind === "individual" && mapPerson
+          ? buildQuarkNearHomeReport([mapPerson], mapPunches, homeRadiusMeters)
+          : nearReport;
+      const rangeStart = kind === "individual" ? mapRange.startDate : startDate;
+      const rangeEnd = kind === "individual" ? mapRange.endDate : endDate;
+      const bytes = await createQuarkLocationWorkbook(
+        report,
+        rangeStart,
+        rangeEnd,
+        homeRadiusMeters,
+        kind,
+        kind === "complete"
+          ? {
+              collaborator: search.trim() || "Todos",
+              unit: unit === "all" ? "Todas" : (units.find(([id]) => id === unit)?.[1] ?? unit),
+              city: city === "all" ? "Todas" : city,
+              sector: sector === "all" ? "Todos" : sector,
+              supervisor: supervisor === "all" ? "Todos" : supervisor,
+            }
+          : {},
+      );
+      const blob = new Blob([bytes], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const suffix =
+        kind === "individual" && mapPerson
+          ? `colaborador_${mapPerson.collaborator_id}`
+          : kind === "ranking"
+            ? "ranking_proximidade"
+            : kind === "complete"
+              ? "relatorio_completo_proximidade"
+              : "batidas_proximas";
+      downloadBlob(blob, `quark_${suffix}_${rangeStart}_a_${rangeEnd}.xlsx`);
+    } catch (error) {
+      console.error("[Quark] Erro ao gerar XLSX", error);
+      toast.error("Não foi possível gerar o relatório XLSX.");
+    } finally {
+      setExportingReport(false);
+    }
+  }
+
+  async function prepareNearHomeReport() {
+    if (!mapPerson?.home || !mapNearPunches.length) {
+      toast.error("Este colaborador não possui batidas próximas para gerar o relatório.");
+      return false;
+    }
+    if (mapHasUnloadedRange) {
+      toast.error("Atualize pela API o período selecionado antes de gerar o relatório.");
+      return false;
+    }
+    if (!mapNearHomeOnly) {
+      setMapNearHomeOnly(true);
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    }
+    return true;
+  }
+
+  async function saveIndividualImage() {
+    if (exportingReport || !(await prepareNearHomeReport()) || !reportPrintRef.current) return;
+    setExportingReport(true);
+    const table = mapTableRef.current;
+    const previousMaxHeight = table?.style.maxHeight;
+    const previousOverflow = table?.style.overflow;
+    try {
+      if (table) {
+        table.style.maxHeight = "none";
+        table.style.overflow = "visible";
+      }
+      const { toPng } = await import("html-to-image");
+      const captureOptions = {
+        backgroundColor: "#081321",
+        pixelRatio: 1.5,
+        cacheBust: true,
+      };
+      let png: string;
+      try {
+        png = await toPng(reportPrintRef.current, captureOptions);
+      } catch (tileError) {
+        // A screenshot must still work if a map-tile host blocks cross-origin reads.
+        console.warn("[Quark] Captura sem tiles após falha de imagem externa", tileError);
+        png = await toPng(reportPrintRef.current, {
+          ...captureOptions,
+          filter: (element) =>
+            !(
+              element instanceof HTMLImageElement &&
+              element.src.startsWith("https://tile.openstreetmap.org/")
+            ),
+        });
+      }
+      const response = await fetch(png);
+      downloadBlob(
+        await response.blob(),
+        `quark_proximas_${mapPerson?.collaborator_id}_${mapRange.startDate}_a_${mapRange.endDate}.png`,
+      );
+    } catch (error) {
+      console.error("[Quark] Erro na imagem do relatório", error);
+      toast.error("Não foi possível salvar a imagem. Use Imprimir relatório como alternativa.");
+    } finally {
+      if (table) {
+        table.style.maxHeight = previousMaxHeight ?? "";
+        table.style.overflow = previousOverflow ?? "";
+      }
+      setExportingReport(false);
+    }
+  }
+
+  async function printIndividualReport() {
+    // Reserve the tab from the actual click to avoid popup blockers.
+    const reportWindow = window.open("", "_blank");
+    if (!reportWindow) {
+      toast.error("Autorize a abertura de uma nova aba para imprimir o relatório.");
+      return;
+    }
+    if (!(await prepareNearHomeReport()) || !reportPrintRef.current) {
+      reportWindow.close();
+      return;
+    }
+    const cloned = reportPrintRef.current.cloneNode(true) as HTMLElement;
+    const table = cloned.querySelector("[data-quark-report-table]") as HTMLElement | null;
+    if (table) {
+      table.style.maxHeight = "none";
+      table.style.overflow = "visible";
+    }
+    const styles = Array.from(document.querySelectorAll('link[rel="stylesheet"], style'))
+      .map((node) => node.outerHTML)
+      .join("\n");
+    reportWindow.document.open();
+    reportWindow.document.write(
+      `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><base href="${window.location.origin}/"><title>Quark | Relatório individual</title>${styles}<style>
+      @page { size: A4 landscape; margin: 12mm; }
+      body { background: #081321; color: #e5e7eb; padding: 16px; }
+      #quark-report-print { width: 100%; max-width: 1050px; margin: auto; }
+      tr { break-inside: avoid; }
+      .print-hide { display: none !important; }
+      </style></head><body><div id="quark-report-print">${cloned.outerHTML}</div></body></html>`,
+    );
+    reportWindow.document.close();
+    reportWindow.setTimeout(async () => {
+      try {
+        await reportWindow.document.fonts.ready;
+      } catch {
+        // The report content is still printable without custom fonts.
+      }
+      reportWindow.focus();
+      reportWindow.print();
+    }, 1200);
+  }
+
   function openLocationMap(person: QuarkPersonView) {
     const latest = punches
       .filter((punch) => personKey(punch) === personKey(person))
@@ -564,8 +761,10 @@ function QuarkPage() {
     const date = latest?.work_date ?? endDate;
     setMapDate(date);
     setMapMonth(date.slice(0, 7));
-    setMapMode("month");
+    // Same date interval as the team summary: identical radius + punches = identical totals.
+    setMapMode("period");
     setMapNearHomeOnly(false);
+    setMapRefreshedKey(null);
     setMapPerson(person);
   }
 
@@ -596,6 +795,7 @@ function QuarkPage() {
         ),
         ...refreshed,
       ]);
+      setMapRefreshedKey(mapRangeKey);
       toast.success(`${refreshed.length} batida(s) de localização atualizadas.`);
     } catch (error) {
       console.error("[Quark] Falha ao atualizar localizações", error);
@@ -1201,6 +1401,29 @@ function QuarkPage() {
               }}
             />
 
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3">
+              <div>
+                <b className="text-xs">Relatório completo da equipe</b>
+                <p className="mt-1 text-[10px] text-muted-foreground">
+                  Inclui os {nearReport.ranking.length} colaboradores com batidas próximas e todas
+                  as {nearReport.details.length} batidas dentro do raio, respeitando os filtros e o
+                  período selecionados.
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                disabled={exportingReport || !nearReport.details.length}
+                onClick={() => void downloadNearReport("complete")}
+              >
+                {exportingReport ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <FileDown className="size-4" />
+                )}
+                Baixar relatório completo XLSX
+              </Button>
+            </div>
+
             <Panel
               title="Resumo da equipe"
               subtitle={
@@ -1343,6 +1566,138 @@ function QuarkPage() {
                 />
               )}
             </Panel>
+            <div className="flex justify-end">
+              <Button variant="outline" onClick={() => setShowNearReport((value) => !value)}>
+                <FileDown className="size-4" />
+                {showNearReport
+                  ? "Ocultar relatório de proximidade"
+                  : "Abrir relatório de proximidade"}
+              </Button>
+            </div>
+            {showNearReport && (
+              <>
+                <Panel
+                  title="Relatório de proximidade — maiores recorrências"
+                  subtitle={`De ${localeDate(startDate)} a ${localeDate(endDate)} · até ${homeRadiusMeters} m da moradia · filtros de colaborador, unidade, cidade, setor e supervisor aplicados.`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="max-w-2xl text-xs text-muted-foreground">
+                      Ranking por quantidade de batidas próximas, com desempate por dias distintos.
+                      O percentual considera apenas batidas com GPS válido. Os registros são
+                      indícios para conferência, não prova de irregularidade; valide o local e a
+                      precisão do GPS.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={!nearReport.ranking.length}
+                        onClick={() => void downloadNearReport("ranking")}
+                      >
+                        <FileDown className="size-4" /> Baixar ranking XLSX
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={!nearReport.details.length}
+                        onClick={() => void downloadNearReport("details")}
+                      >
+                        <FileDown className="size-4" /> Baixar batidas XLSX
+                      </Button>
+                    </div>
+                  </div>
+                  <KpiGrid
+                    items={[
+                      ["Pessoas com batidas próximas", nearReport.ranking.length],
+                      ["Batidas próximas", nearReport.details.length],
+                      [
+                        "Dias distintos com proximidade",
+                        new Set(nearReport.details.map((item) => item.punch.work_date)).size,
+                      ],
+                      ["Sem GPS / referência", locationNoReferenceCount],
+                    ]}
+                  />
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>#</TableHead>
+                        <TableHead>Colaborador / supervisor</TableHead>
+                        <TableHead>Unidade / setor</TableHead>
+                        <TableHead>Próximas</TableHead>
+                        <TableHead>Dias distintos</TableHead>
+                        <TableHead>% com GPS</TableHead>
+                        <TableHead>Último dia próximo</TableHead>
+                        <TableHead className="text-right">Conferir</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {nearReport.ranking
+                        .slice(0, showAllNearRanking ? undefined : 10)
+                        .map((entry, index) => (
+                          <TableRow key={personKey(entry.person)}>
+                            <TableCell className="font-black">{index + 1}</TableCell>
+                            <TableCell>
+                              <b>{entry.person.full_name}</b>
+                              <small className="block text-muted-foreground">
+                                {entry.person.directory?.supervisor ?? "Sem supervisor"}
+                              </small>
+                            </TableCell>
+                            <TableCell>
+                              {entry.person.unit_name}
+                              <small className="block text-muted-foreground">
+                                {resolvePersonSector(entry.person)}
+                              </small>
+                            </TableCell>
+                            <TableCell>
+                              <span className="rounded-full bg-success-soft px-2 py-1 text-xs font-black text-success-foreground">
+                                {entry.nearPunches}
+                              </span>
+                            </TableCell>
+                            <TableCell>{entry.nearDays}</TableCell>
+                            <TableCell>
+                              {entry.nearRate.toFixed(1).replace(".", ",")}%
+                              <small className="block text-muted-foreground">
+                                {entry.validPunches} com GPS
+                              </small>
+                            </TableCell>
+                            <TableCell>
+                              {localeDate(entry.lastNearDate)}
+                              <small className="block text-muted-foreground">
+                                Mínima: {formatDistance(entry.nearestDistanceMeters)}
+                              </small>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => openLocationMap(entry.person)}
+                              >
+                                <MapPin className="size-3.5" /> Mapa
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                    </TableBody>
+                  </Table>
+                  {!nearReport.ranking.length && (
+                    <Empty text="Nenhuma batida próxima da moradia encontrada no período e nos filtros selecionados." />
+                  )}
+                  {nearReport.ranking.length > 10 && (
+                    <div className="flex justify-center">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setShowAllNearRanking((current) => !current)}
+                      >
+                        {showAllNearRanking
+                          ? "Mostrar somente os 10 primeiros"
+                          : `Ver todos os ${nearReport.ranking.length} colaboradores`}
+                      </Button>
+                    </div>
+                  )}
+                </Panel>
+              </>
+            )}
           </TabsContent>
 
           <TabsContent value="directory" className="space-y-4">
@@ -1735,139 +2090,212 @@ function QuarkPage() {
                 </div>
               )}
 
-              <KpiGrid
-                items={[
-                  ["Batidas", mapPunches.length],
-                  ["Próximas", mapStats.near],
-                  ["Fora do raio", mapStats.outside],
-                  ["Sem referência", mapStats.noReference],
-                ]}
-                clickableItems={["Próximas"]}
-                activeItem={mapNearHomeOnly ? "Próximas" : null}
-                onItemClick={(label) => {
-                  if (label === "Próximas") {
-                    setMapNearHomeOnly((current) => !current);
-                  }
-                }}
-              />
-
-              {mapNearHomeOnly && (
-                <div className="rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
-                  Filtro ativo: exibindo somente os {mapNearHomeDates.size} dia(s) em que houve pelo
-                  menos uma batida a até {homeRadiusMeters} m da moradia. Clique em
-                  <b className="mx-1 text-foreground">Próximas</b>
-                  novamente para voltar ao mês completo.
+              {mapHasUnloadedRange && (
+                <div className="rounded-xl border border-warning/30 bg-warning/10 p-3 text-xs">
+                  <b>O período escolhido não está completamente carregado no painel.</b> Os números
+                  deste mapa podem estar incompletos. Clique em
+                  <b className="mx-1">Atualizar pela API</b>
+                  para consultar e salvar no Supabase todas as batidas desse intervalo. Para
+                  comparar diretamente com o Resumo da equipe, selecione
+                  <b className="mx-1">Período do painel</b>.
                 </div>
               )}
 
-              <QuarkLocationMap
-                person={mapPerson}
-                punches={visibleMapPunches}
-                radiusMeters={homeRadiusMeters}
-              />
-
-              <div className="flex flex-wrap gap-2 text-[10px]">
-                <span className="rounded-full border border-border bg-card px-3 py-1.5">
-                  <span className="mr-1.5 inline-block size-2 rounded-full bg-slate-950" />
-                  Moradia
-                </span>
-                <span className="rounded-full border border-border bg-card px-3 py-1.5">
-                  <span className="mr-1.5 inline-block size-2 rounded-full bg-emerald-600" />
-                  Até {homeRadiusMeters} m
-                </span>
-                <span className="rounded-full border border-border bg-card px-3 py-1.5">
-                  <span className="mr-1.5 inline-block size-2 rounded-full bg-primary" />
-                  Fora do raio
-                </span>
-                <span className="rounded-full border border-border bg-card px-3 py-1.5">
-                  Distância média: {formatDistance(mapStats.average)}
-                </span>
-              </div>
-
-              <div className="rounded-xl border border-border">
-                <div className="border-b border-border px-4 py-3">
-                  <b className="text-xs">Batidas exibidas no mapa</b>
-                  <p className="text-[10px] text-muted-foreground">
-                    {mapNearHomeOnly
-                      ? `${mapNearHomeDates.size} dia(s) com batida próxima da moradia · ${visibleMapPunches.length} batida(s) exibida(s)`
-                      : mapRange.startDate && mapRange.endDate
-                        ? `${localeDate(mapRange.startDate)} a ${localeDate(mapRange.endDate)}`
-                        : "Selecione um período válido."}
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-3">
+                <div>
+                  <b className="text-xs">Relatório individual de batidas próximas</b>
+                  <p className="mt-1 text-[10px] text-muted-foreground">
+                    Salve ou imprima a análise deste colaborador com apenas as batidas a até{" "}
+                    {homeRadiusMeters} m da moradia.
                   </p>
                 </div>
-                <div className="max-h-64 overflow-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>#</TableHead>
-                        <TableHead>Data / hora</TableHead>
-                        <TableHead>Local</TableHead>
-                        <TableHead>Distância</TableHead>
-                        <TableHead>Coordenadas</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {visibleMapPunches.map((punch, index) => {
-                        const meters =
-                          mapPerson.home && punch.latitude !== null && punch.longitude !== null
-                            ? distanceMeters(
-                                punch.latitude,
-                                punch.longitude,
-                                mapPerson.home.latitude,
-                                mapPerson.home.longitude,
-                              )
-                            : null;
-                        return (
-                          <TableRow key={punch.point_id}>
-                            <TableCell className="font-black">{index + 1}</TableCell>
-                            <TableCell>
-                              {localeDate(punch.work_date)}
-                              <small className="block text-muted-foreground">
-                                {punch.punch_time?.slice(0, 5) ?? "—"}
-                              </small>
-                            </TableCell>
-                            <TableCell>{punch.location ?? "Local não informado"}</TableCell>
-                            <TableCell>
-                              <span
-                                className={
-                                  meters !== null && meters <= homeRadiusMeters
-                                    ? "font-bold text-success-foreground"
-                                    : meters !== null
-                                      ? "font-bold text-late-foreground"
-                                      : "text-muted-foreground"
-                                }
-                              >
-                                {formatDistance(meters)}
-                              </span>
-                            </TableCell>
-                            <TableCell>
-                              {punch.latitude !== null && punch.longitude !== null ? (
-                                <a
-                                  className="font-bold text-primary hover:underline"
-                                  href={`https://www.google.com/maps?q=${punch.latitude},${punch.longitude}`}
-                                  target="_blank"
-                                  rel="noreferrer"
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={exportingReport || !mapNearPunches.length || mapHasUnloadedRange}
+                    onClick={() => void saveIndividualImage()}
+                  >
+                    <ImageDown className="size-4" /> Salvar imagem PNG
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={exportingReport || !mapNearPunches.length || mapHasUnloadedRange}
+                    onClick={() => void printIndividualReport()}
+                  >
+                    <Printer className="size-4" /> Imprimir / PDF
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={exportingReport || !mapNearPunches.length || mapHasUnloadedRange}
+                    onClick={() => void downloadNearReport("individual")}
+                  >
+                    <FileDown className="size-4" /> XLSX individual
+                  </Button>
+                </div>
+              </div>
+
+              <div
+                ref={reportPrintRef}
+                className="space-y-4 rounded-xl border border-border bg-background p-3"
+              >
+                <div className="rounded-xl border border-border bg-card px-4 py-3">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-primary">
+                    TechNET · Quark · Relatório individual
+                  </span>
+                  <h3 className="mt-1 text-base font-black">{mapPerson.full_name}</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Supervisor: {mapPerson.directory?.supervisor ?? "Sem supervisor"} ·{" "}
+                    {mapPerson.unit_name} · {resolvePersonSector(mapPerson)}
+                  </p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Moradia: {mapPerson.home?.address ?? "Não cadastrada"} ·{" "}
+                    {localeDate(mapRange.startDate)} a {localeDate(mapRange.endDate)} · Raio:{" "}
+                    {homeRadiusMeters} metros
+                  </p>
+                  <p className="mt-1 text-[10px] text-muted-foreground">
+                    Conferência operacional baseada em GPS; proximidade não comprova irregularidade.
+                  </p>
+                </div>
+                <KpiGrid
+                  items={[
+                    ["Batidas", mapPunches.length],
+                    ["Próximas", mapStats.near],
+                    ["Fora do raio", mapStats.outside],
+                    ["Sem referência", mapStats.noReference],
+                  ]}
+                  clickableItems={["Próximas"]}
+                  activeItem={mapNearHomeOnly ? "Próximas" : null}
+                  onItemClick={(label) => {
+                    if (label === "Próximas") {
+                      setMapNearHomeOnly((current) => !current);
+                    }
+                  }}
+                />
+
+                {mapNearHomeOnly && (
+                  <div className="rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+                    Filtro ativo: mostrando apenas {mapNearPunches.length} batida(s) dentro de{" "}
+                    {homeRadiusMeters} m da moradia, em {mapNearHomeDates.size} dia(s). O mapa e a
+                    tabela abaixo mostram exatamente os mesmos registros. Clique em{" "}
+                    <b className="mx-1 text-foreground">Próximas</b>
+                    para voltar a todas as batidas.
+                  </div>
+                )}
+
+                <QuarkLocationMap
+                  person={mapPerson}
+                  punches={visibleMapPunches}
+                  radiusMeters={homeRadiusMeters}
+                />
+
+                <div className="flex flex-wrap gap-2 text-[10px]">
+                  <span className="rounded-full border border-border bg-card px-3 py-1.5">
+                    <span className="mr-1.5 inline-block size-2 rounded-full bg-slate-950" />
+                    Moradia
+                  </span>
+                  <span className="rounded-full border border-border bg-card px-3 py-1.5">
+                    <span className="mr-1.5 inline-block size-2 rounded-full bg-emerald-600" />
+                    Até {homeRadiusMeters} m
+                  </span>
+                  <span className="rounded-full border border-border bg-card px-3 py-1.5">
+                    <span className="mr-1.5 inline-block size-2 rounded-full bg-primary" />
+                    Fora do raio
+                  </span>
+                  <span className="rounded-full border border-border bg-card px-3 py-1.5">
+                    Distância média: {formatDistance(mapStats.average)}
+                  </span>
+                </div>
+
+                <div className="rounded-xl border border-border">
+                  <div className="border-b border-border px-4 py-3">
+                    <b className="text-xs">Batidas exibidas no mapa</b>
+                    <p className="text-[10px] text-muted-foreground">
+                      {mapNearHomeOnly
+                        ? `${visibleMapPunches.length} batida(s) próximas em ${mapNearHomeDates.size} dia(s) · somente pontos até ${homeRadiusMeters} m`
+                        : mapRange.startDate && mapRange.endDate
+                          ? `${localeDate(mapRange.startDate)} a ${localeDate(mapRange.endDate)}`
+                          : "Selecione um período válido."}
+                    </p>
+                  </div>
+                  <div ref={mapTableRef} data-quark-report-table className="max-h-64 overflow-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Batida do dia</TableHead>
+                          <TableHead>Data / hora</TableHead>
+                          <TableHead>Local</TableHead>
+                          <TableHead>Distância</TableHead>
+                          <TableHead>Coordenadas</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {visibleMapPunches.map((punch) => {
+                          const meters =
+                            mapPerson.home && punch.latitude !== null && punch.longitude !== null
+                              ? distanceMeters(
+                                  punch.latitude,
+                                  punch.longitude,
+                                  mapPerson.home.latitude,
+                                  mapPerson.home.longitude,
+                                )
+                              : null;
+                          return (
+                            <TableRow key={punch.point_id}>
+                              <TableCell className="font-black">
+                                {visibleMapNumbers.get(punch.point_id) ?? 1}
+                              </TableCell>
+                              <TableCell>
+                                {localeDate(punch.work_date)}
+                                <small className="block text-muted-foreground">
+                                  {punch.punch_time?.slice(0, 5) ?? "—"}
+                                </small>
+                              </TableCell>
+                              <TableCell>{punch.location ?? "Local não informado"}</TableCell>
+                              <TableCell>
+                                <span
+                                  className={
+                                    meters !== null && meters <= homeRadiusMeters
+                                      ? "font-bold text-success-foreground"
+                                      : meters !== null
+                                        ? "font-bold text-late-foreground"
+                                        : "text-muted-foreground"
+                                  }
                                 >
-                                  {punch.latitude.toFixed(6)}, {punch.longitude.toFixed(6)}
-                                </a>
-                              ) : (
-                                "—"
-                              )}
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                  {!visibleMapPunches.length && (
-                    <Empty
-                      text={
-                        mapNearHomeOnly
-                          ? "Nenhum dia com batida próxima da moradia neste recorte."
-                          : "Nenhuma batida carregada para este recorte. Use Atualizar pela API."
-                      }
-                    />
-                  )}
+                                  {formatDistance(meters)}
+                                </span>
+                              </TableCell>
+                              <TableCell>
+                                {punch.latitude !== null && punch.longitude !== null ? (
+                                  <a
+                                    className="font-bold text-primary hover:underline"
+                                    href={`https://www.google.com/maps?q=${punch.latitude},${punch.longitude}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    {punch.latitude.toFixed(6)}, {punch.longitude.toFixed(6)}
+                                  </a>
+                                ) : (
+                                  "—"
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                    {!visibleMapPunches.length && (
+                      <Empty
+                        text={
+                          mapNearHomeOnly
+                            ? "Nenhum dia com batida próxima da moradia neste recorte."
+                            : "Nenhuma batida carregada para este recorte. Use Atualizar pela API."
+                        }
+                      />
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
