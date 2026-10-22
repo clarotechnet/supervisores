@@ -15,6 +15,22 @@ const ast = ts.createSourceFile("sla.js", source, ts.ScriptTarget.Latest, true, 
 const empty = { source: "Nenhuma base importada", sourceType: "", stats: {}, fields: [], rows: [] };
 const edits = [];
 for (const node of ast.statements) {
+  if (ts.isFunctionDeclaration(node) && node.name?.text === "renderCodes") {
+    const original = node.getText(ast);
+    const updated = original
+      .replace("Códigos de baixa · ofensoras", "Códigos de baixa · ofensores")
+      .replace(
+        "LIST_COD_BX_OS_OFENSOR, vinculado às OS ofensoras informadas.",
+        "LIST_COD_BX_OS_OFENSOR, vinculado às OS ofensoras informadas. Exibe apenas códigos ≥ 100; participação sobre todos os logs do recorte.",
+      )
+      .replace(
+        "for(const o of g.offenders){const name=o.codes||'Não informado';",
+        "for(const o of g.offenders){if(!isSlaOffenderChartCode(o.codes))continue;const name=o.codes;",
+      );
+    if (!updated.includes("if(!isSlaOffenderChartCode(o.codes))continue;"))
+      throw Error("Unexpected detailed offender-code chart in SLA reference.");
+    edits.push([node.getStart(ast), node.end, updated]);
+  }
   if (
     ts.isFunctionDeclaration(node) &&
     ["loadFileV15", "loadFileV16", "loadFile"].includes(node.name?.text)
@@ -82,7 +98,7 @@ if(!environment.editable){$('fileInput').disabled=true;document.querySelector('l
 `;
 fs.writeFileSync(
   `${folder}/sla-engine.js`,
-  `// Reviewed SLA reference ${hash}. No embedded personal records.\nexport function mountSla(environment){\nconst {document,window}=environment;\n${code}\n${adapter}\nreturn window;\n}\n`,
+  `// Reviewed SLA reference ${hash}. No embedded personal records.\nimport { isSlaOffenderChartCode } from '../../../lib/sla-code-chart';\nexport function mountSla(environment){\nconst {document,window}=environment;\n${code}\n${adapter}\nreturn window;\n}\n`,
 );
 fs.writeFileSync(
   `${folder}/sla-engine.d.ts`,

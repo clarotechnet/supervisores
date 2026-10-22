@@ -1,4 +1,5 @@
 // Reviewed SLA reference 4ba57ce2a356a8acedc270648099194f68cdc22fef6610d5a61d9853db8d4545. No embedded personal records.
+import { isSlaOffenderChartCode } from '../../../lib/sla-code-chart';
 export function mountSla(environment){
 const {document,window}=environment;
 
@@ -451,8 +452,8 @@ function searchText(r){return fold([r.contract,r.os,r.city,r.uf,r.tech,r.company
 function selectedCodeLabel(g){return g.selectedOffender||((norm(g.selectedCode)&&norm(g.selectedCode)!=='-3')?String(g.selectedCode)+' · sem descrição':'Não informado');}
 function renderCodes(){
  if(!rawCurrent.some(isConsolidated)){
-  $('codeTitle').textContent='Códigos de baixa · ofensoras';$('codeNote').textContent='Quantidade e participação nos logs por atendimento';$('codeSourceNote').textContent='LIST_COD_BX_OS_OFENSOR, vinculado às OS ofensoras informadas.';
-  const map=new Map();for(const g of groupedCurrent)for(const o of g.offenders){const name=o.codes||'Não informado';if(!map.has(name))map.set(name,{name,value:0,groups:new Map()});const d=map.get(name);d.value++;d.groups.set(g.key,g);}
+  $('codeTitle').textContent='Códigos de baixa · ofensores';$('codeNote').textContent='Quantidade e participação nos logs por atendimento';$('codeSourceNote').textContent='LIST_COD_BX_OS_OFENSOR, vinculado às OS ofensoras informadas. Exibe apenas códigos ≥ 100; participação sobre todos os logs do recorte.';
+  const map=new Map();for(const g of groupedCurrent)for(const o of g.offenders){if(!isSlaOffenderChartCode(o.codes))continue;const name=o.codes;if(!map.has(name))map.set(name,{name,value:0,groups:new Map()});const d=map.get(name);d.value++;d.groups.set(g.key,g);}
   renderBars('codigoChart',[...map.values()].map(d=>({...d,rows:[...d.groups.values()]})).sort((a,b)=>b.value-a.value),{value:'value',percent:true,total:calc(groupedCurrent,'attendance').logs,onClick:d=>openDrill(d.rows,`Baixa ${d.name}`,'all')});return;
  }
  $('codeTitle').textContent='Ofensor selecionado · código de baixa';$('codeNote').textContent='Atendimentos com log e sua participação no recorte';$('codeSourceNote').textContent='COD_OFENSOR / COD_BAIXA_OFENSOR. Uma classificação selecionada por atendimento; não é a contagem individual de todos os logs.';
