@@ -1,7 +1,41 @@
 // Reviewed SLA reference 4ba57ce2a356a8acedc270648099194f68cdc22fef6610d5a61d9853db8d4545. No embedded personal records.
 import { isSlaOffenderChartCode } from '../../../lib/sla-code-chart';
+import { createSlaDirectoryPresentation } from '../../../lib/sla-directory';
+import { createSlaTableSort } from '../../../lib/sla-table-sort';
 export function mountSla(environment){
 const {document,window}=environment;
+const technicians=createSlaDirectoryPresentation(()=>window.parent.getSupervisorMap());
+
+const serviceSort=createSlaTableSort(document,'serviceBody',[
+ {type:'text',value:r=>r.name},
+ {type:'number',value:r=>r.os},
+ {type:'number',value:r=>r.os},
+ {type:'number',value:r=>r.total},
+ {type:'number',value:r=>r.revis},
+ {type:'number',value:r=>r.logs},
+ {type:'number',value:r=>r.sla}
+],()=>renderServiceTable());
+const techSort=createSlaTableSort(document,'techBody',[
+ {type:'text',value:r=>technicians.text(r.name)},
+ {type:'number',value:r=>r.total},
+ {type:'number',value:r=>r.good},
+ {type:'number',value:r=>r.revis},
+ {type:'number',value:r=>r.logs},
+ {type:'number',value:r=>r.sla}
+],()=>renderTechTable());
+const detailSort=createSlaTableSort(document,'detailBody',[
+ {type:'date',value:r=>r.reportDate},
+ {type:'text',value:r=>r.contract},
+ {type:'text',value:r=>r.city},
+ {type:'text',value:r=>technicians.text(r.tech)},
+ {type:'text',value:r=>r.businessUnit},
+ {type:'text',value:r=>r.os},
+ {type:'number',value:r=>r.taskCount},
+ {type:'number',value:r=>r.logs},
+ {type:'text',value:r=>r.revisit?'SEM PADRÃO':'COM PADRÃO'},
+ {type:'text',value:r=>r.typeOS}
+],()=>{page=1;renderDetails();});
+
 
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
@@ -154,7 +188,7 @@ function downloadRows(data,name){
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 
-function searchText(r){return fold([r.contract,r.os,r.city,r.tech,r.company,r.typeOS,r.businessUnit,r.offenderOS,r.offenderCodes,r.offenderCompanies,r.offenderTypes,r.offenderDates].join(' '));}
+function searchText(r){return fold([technicians.text(r.tech),r.contract,r.os,r.city,r.tech,r.company,r.typeOS,r.businessUnit,r.offenderOS,r.offenderCodes,r.offenderCompanies,r.offenderTypes,r.offenderDates].join(' '));}
 
 function sourceList(value){
   const s=norm(value);
@@ -199,7 +233,7 @@ function dimensionV15(rows,field){const map=new Map();for(const r of rows){const
 function action(fn){const id=String(++actionSeq);actions.set(id,fn);return `data-action="${id}"`;}
 function link(label,fn,title='Abrir contratos, OS e ofensores'){return `<button class="text-link" ${action(fn)} title="${esc(title)}">${esc(label)}</button>`;}
 function hit(fn,title){return `${action(fn)} role="button" tabindex="0" aria-label="${esc(title)}"`;}
-function tooltip(d){return `${d.name}: ${intfmt(d.total)} ${modeLabel(metricMode)}; ${intfmt(d.revis)} sem padrão; ${intfmt(d.logs)} logs; SLA ${pct(d.sla)}`;}
+function tooltip(d){return `${d.technicianLabel||d.name}: ${intfmt(d.total)} ${modeLabel(metricMode)}; ${intfmt(d.revis)} sem padrão; ${intfmt(d.logs)} logs; SLA ${pct(d.sla)}`;}
 function drillFor(d,title,filter='bad',context={}){openDrill(d.rows,title||d.name,filter,context);}
 function optionFill(id,values,first='Todos'){const el=$(id),prev=el.value;el.innerHTML=`<option value="">${first}</option>`+values.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');if(values.includes(prev))el.value=prev;}
 function populateFiltersV15(latest=false){
@@ -257,7 +291,8 @@ function renderGeography(){
 }
 function renderCombo(id,data,{daily=false,volumeOnly=false}={}){
  const target=$(id);if(!data.length){target.innerHTML='<div class="msg">Sem dados.</div>';return;}
- const step=daily?76:volumeOnly?68:140,W=Math.max(volumeOnly?600:460,data.length*step+88),H=daily?280:250,ml=45,mr=43,mt=43,mb=volumeOnly?72:40,ih=H-mt-mb,iw=W-ml-mr,s=iw/data.length;
+ const named=volumeOnly&&data.some(d=>d.technicianLabel);
+ const step=daily?76:volumeOnly?68:140,W=Math.max(volumeOnly?600:460,data.length*step+88+(named?55:0)),H=daily?280:named?310:250,ml=named?100:45,mr=43,mt=43,mb=volumeOnly?(named?132:72):40,ih=H-mt-mb,iw=W-ml-mr,s=iw/data.length;
  const max=Math.max(1,...data.map(d=>Math.max(d.total,d.logs))),top=Math.ceil(max/4)*4;
  let svg=`<svg viewBox="0 0 ${W} ${H}" style="min-width:${W}px" aria-label="${daily?'Evolução diária':'Volume e SLA'}"><text class="lab" x="${ml}" y="12">Quantidade</text><text class="lab" x="${W-mr}" y="12" text-anchor="end">SLA %</text>`;
  for(let j=0;j<=4;j++){const y=mt+ih-ih*j/4;svg+=`<line class="grid" x1="${ml}" y1="${y}" x2="${W-mr}" y2="${y}"/><text class="lab" x="${ml-7}" y="${y+3}" text-anchor="end">${intfmt(top*j/4)}</text><text class="lab" x="${W-mr+8}" y="${y+3}">${j*25}%</text>`;}
@@ -269,8 +304,8 @@ function renderCombo(id,data,{daily=false,volumeOnly=false}={}){
   svg+=`<g ${hit(fn,title)}><title>${esc(title)}</title>`;
   if(d.total){const fields=volumeOnly?['total']:['total','revis','logs'];fields.forEach((f,j)=>{const val=d[f],x=volumeOnly?cx-bw/2:cx+(j-1)*bw-bw/2,color=f==='total'?(daily?`var(--${kindOf(d.name)})`:'var(--total)'):f==='revis'?'var(--revis)':'var(--logs)';svg+=`<rect x="${x}" y="${mt+ih-val/top*ih}" width="${bw-1}" height="${val/top*ih}" fill="${color}"/>`;if(!daily&&!volumeOnly)svg+=`<text class="lab" x="${x+bw/2}" y="${mt+ih-val/top*ih-5}" text-anchor="middle">${intfmt(val)}</text>`;});}
   else svg+=`<text class="lab" x="${cx}" y="${mt+ih-7}" text-anchor="middle">—</text>`;
-  const name=daily?shortDate(d.name):d.name;
-  svg+=volumeOnly?`<text class="lab" x="${cx}" y="${mt+ih+14}" text-anchor="end" transform="rotate(-40 ${cx} ${mt+ih+14})">${esc(name)}</text>`:`<text class="lab" x="${cx}" y="${H-19}" text-anchor="middle">${esc(name)}</text>`;
+  const name=daily?shortDate(d.name):(d.axisName||d.name);
+  svg+=volumeOnly?`<text class="lab" x="${cx}" y="${mt+ih+14}" text-anchor="end" transform="rotate(-40 ${cx} ${mt+ih+14})">${esc(name)}${d.technicianLabel?`<tspan x="${cx}" dy="13">${esc(d.axisLogin)}</tspan>`:''}</text>`:`<text class="lab" x="${cx}" y="${H-19}" text-anchor="middle">${esc(name)}</text>`;
   if(daily)svg+=`<text class="lab" style="font-size:9px" x="${cx}" y="${H-6}" text-anchor="middle">${['dom','seg','ter','qua','qui','sex','sáb'][dateDay(d.name)]}</text>`;
   svg+='</g>';
  });
@@ -305,19 +340,19 @@ function renderServiceAndTechV15(){
  serviceData=dimension(rawCurrent,'typeOS').sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
  renderBars('servicesChart',serviceData.filter(d=>d.withLog>0).sort((a,b)=>b.withLog-a.withLog),{value:'withLog',onClick:d=>openDrill(groupRows(d.raw.filter(r=>r.logs>0)),`${d.name} · OS com log`,'all',{note:`${intfmt(d.withLog)} OS de origem com pelo menos um log, agrupadas nos atendimentos abaixo.`})});
  const c=calc(groupedCurrent);$('serviceCount').textContent=`${serviceData.length} tipos de OS`;
- $('serviceBody').innerHTML=serviceData.map(d=>`<tr><td class="wrap-cell">${esc(d.name)}</td><td class="num">${intfmt(d.os)}</td><td class="num">${link(pct(d.os/rawCurrent.length*100),()=>drillFor(d,d.name,'all'))}</td><td class="num">${intfmt(d.total)}</td><td class="num">${intfmt(d.revis)}</td><td class="num">${intfmt(d.logs)}</td><td class="num">${link(pct(d.sla),()=>drillFor(d,d.name))}</td></tr>`).join('');
+ renderServiceTable();
  $('serviceFoot').innerHTML=`<tr><td>Total distinto do recorte</td><td class="num">${intfmt(rawCurrent.length)}</td><td class="num">${rawCurrent.length?'100,00%':'—'}</td><td class="num">${intfmt(c.total)}</td><td class="num">${intfmt(c.revis)}</td><td class="num">${intfmt(c.logs)}</td><td class="num">${link(pct(c.sla),()=>openDrill(groupedCurrent,'Todos os serviços'))}</td></tr>`;
  techData=dimension(rawCurrent,'tech').sort((a,b)=>$('techOrder').value==='volume'?(b.total-a.total||a.sla-b.sla):(a.sla-b.sla||b.total-a.total));
- renderCombo('techChart',techData.slice(0,25),{volumeOnly:true});$('techCount').textContent=`${techData.length} matrículas`;
- $('techBody').innerHTML=techData.map(d=>`<tr><td>${esc(d.name)}</td><td class="num">${intfmt(d.total)}</td><td class="num">${intfmt(d.good)}</td><td class="num">${intfmt(d.revis)}</td><td class="num">${intfmt(d.logs)}</td><td class="num">${link(pct(d.sla),()=>drillFor(d,`Matrícula ${d.name}`))}</td></tr>`).join('');
+ renderCombo('techChart',techData.slice(0,25).map(d=>technicians.chart(d)),{volumeOnly:true});$('techCount').textContent=`${techData.length} matrículas`;
+ renderTechTable();
  renderBars('unitChart',dimension(rawCurrent,'businessUnit').sort((a,b)=>a.sla-b.sla).slice(0,20),{color:'var(--red)',onClick:d=>drillFor(d,`Unidade ${d.name}`)});
 }
-function filteredDetails(){const q=fold($('detailSearch').value);return q?groupedCurrent.filter(r=>searchText(r).includes(q)):groupedCurrent;}
+function filteredDetails(){const q=fold($('detailSearch').value);return detailSort.rows(q?groupedCurrent.filter(r=>searchText(r).includes(q)):groupedCurrent);}
 function renderDetailsV15(){
  const data=filteredDetails(),pages=Math.max(1,Math.ceil(data.length/PAGE_SIZE));page=Math.min(page,pages);
  $('detailCount').textContent=`${intfmt(data.length)} atendimentos · ${intfmt(data.reduce((s,g)=>s+g.osCount,0))} OS`;
  $('pageInfo').textContent=`Página ${page} de ${pages}`;$('prevBtn').disabled=page===1;$('nextBtn').disabled=page===pages;
- $('detailBody').innerHTML=data.slice((page-1)*PAGE_SIZE,page*PAGE_SIZE).map(g=>`<tr><td>${esc(g.reportDate)}</td><td>${link(g.contract,()=>openDrill([g],`Contrato ${g.contract} · ${g.city}`,'all'))}</td><td>${esc(g.city)}</td><td>${esc(g.tech)}</td><td>${esc(g.businessUnit)}</td><td>${link(g.os,()=>openDrill([g],`OS do contrato ${g.contract}`,'all'))}</td><td class="num">${intfmt(g.logs)}</td><td><span class="badge ${g.revisit?'no':'ok'}">${g.revisit?'SEM':'COM'} PADRÃO</span>${g.noLogException?' <span class="muted">sem log detalhado</span>':''}</td><td class="wrap-cell">${esc(g.typeOS)}</td></tr>`).join('')||'<tr><td colspan="9" class="msg">Sem registros para esta busca.</td></tr>';
+ $('detailBody').innerHTML=data.slice((page-1)*PAGE_SIZE,page*PAGE_SIZE).map(g=>`<tr><td>${esc(g.reportDate)}</td><td>${link(g.contract,()=>openDrill([g],`Contrato ${g.contract} · ${g.city}`,'all'))}</td><td>${esc(g.city)}</td><td>${technicians.cell(g.tech)}</td><td>${esc(g.businessUnit)}</td><td>${link(g.os,()=>openDrill([g],`OS do contrato ${g.contract}`,'all'))}</td><td class="num">${intfmt(g.logs)}</td><td><span class="badge ${g.revisit?'no':'ok'}">${g.revisit?'SEM':'COM'} PADRÃO</span>${g.noLogException?' <span class="muted">sem log detalhado</span>':''}</td><td class="wrap-cell">${esc(g.typeOS)}</td></tr>`).join('')||'<tr><td colspan="9" class="msg">Sem registros para esta busca.</td></tr>';
 }
 function daysBetween(a,b){const x=parseDate(a),y=parseDate(b);return x&&y?Math.round((Date.UTC(x.getFullYear(),x.getMonth(),x.getDate())-Date.UTC(y.getFullYear(),y.getMonth(),y.getDate()))/86400000):NaN;}
 function renderAuditV15(){
@@ -448,7 +483,7 @@ function renderHeaderV16(){
  if(anomaly.length)$('qualityNotice').innerHTML=`${link(`${anomaly.length} atendimento sem padrão, sem log detalhado`,()=>openDrill(anomaly,'Classificação do analítico · sem padrão / zero logs','all'))}. A classificação informada no arquivo foi mantida.`;
  $('qualityNotice').hidden=!anomaly.length;
 }
-function searchText(r){return fold([r.contract,r.os,r.city,r.uf,r.tech,r.company,r.typeOS,r.businessUnit,r.unitOriginal,r.rawCodeList,r.selectedCode,r.selectedOffender,r.offenderFamily,r.offenderReason,r.offenderOS,r.offenderCodes,r.offenderCompanies,r.offenderTypes,r.offenderDates].join(' '));}
+function searchText(r){return fold([technicians.text(r.tech),r.contract,r.os,r.city,r.uf,r.tech,r.company,r.typeOS,r.businessUnit,r.unitOriginal,r.rawCodeList,r.selectedCode,r.selectedOffender,r.offenderFamily,r.offenderReason,r.offenderOS,r.offenderCodes,r.offenderCompanies,r.offenderTypes,r.offenderDates].join(' '));}
 function selectedCodeLabel(g){return g.selectedOffender||((norm(g.selectedCode)&&norm(g.selectedCode)!=='-3')?String(g.selectedCode)+' · sem descrição':'Não informado');}
 function renderCodes(){
  if(!rawCurrent.some(isConsolidated)){
@@ -472,7 +507,7 @@ function renderDetails(){
  const data=filteredDetails(),pages=Math.max(1,Math.ceil(data.length/PAGE_SIZE));page=Math.min(page,pages);const c=calc(data);
  $('detailCount').textContent=`${intfmt(data.length)} atendimentos · ${intfmt(c.tasks.total)} tarefas · ${intfmt(data.reduce((s,g)=>s+g.osCount,0))} OS identificadas`;
  $('pageInfo').textContent=`Página ${page} de ${pages}`;$('prevBtn').disabled=page===1;$('nextBtn').disabled=page===pages;
- $('detailBody').innerHTML=data.slice((page-1)*PAGE_SIZE,page*PAGE_SIZE).map(g=>`<tr><td>${esc(g.reportDate)}</td><td>${link(g.contract,()=>openDrill([g],`Contrato ${g.contract} · ${g.city}`,'all'))}</td><td>${esc(g.city)}</td><td>${esc(g.tech)}</td><td>${esc(g.businessUnit)}</td><td>${link(g.os,()=>openDrill([g],`OS registrada do contrato ${g.contract}`,'all'))}</td><td class="num">${intfmt(g.taskCount)}</td><td class="num">${intfmt(g.logs)}</td><td><span class="badge ${g.revisit?'no':'ok'}">${g.revisit?'SEM':'COM'} PADRÃO</span></td><td class="wrap-cell">${esc(g.typeOS)}</td></tr>`).join('')||'<tr><td colspan="10" class="msg">Sem registros.</td></tr>';
+ $('detailBody').innerHTML=data.slice((page-1)*PAGE_SIZE,page*PAGE_SIZE).map(g=>`<tr><td>${esc(g.reportDate)}</td><td>${link(g.contract,()=>openDrill([g],`Contrato ${g.contract} · ${g.city}`,'all'))}</td><td>${esc(g.city)}</td><td>${technicians.cell(g.tech)}</td><td>${esc(g.businessUnit)}</td><td>${link(g.os,()=>openDrill([g],`OS registrada do contrato ${g.contract}`,'all'))}</td><td class="num">${intfmt(g.taskCount)}</td><td class="num">${intfmt(g.logs)}</td><td><span class="badge ${g.revisit?'no':'ok'}">${g.revisit?'SEM':'COM'} PADRÃO</span></td><td class="wrap-cell">${esc(g.typeOS)}</td></tr>`).join('')||'<tr><td colspan="10" class="msg">Sem registros.</td></tr>';
 }
 function openDrill(rows,title,filter='bad',context={}){
  drillRows=rows;drillPage=1;drillTrigger=document.activeElement;drillContext=context;const mode=context.mode||metricMode,c=calc(rows,mode);
@@ -485,7 +520,7 @@ function renderDrill(){
  $('drillCount').textContent=`${intfmt(data.length)} atendimentos · ${intfmt(calc(data).tasks.total)} tarefas · página ${drillPage} de ${pages}`;$('drillPrev').disabled=drillPage===1;$('drillNext').disabled=drillPage===pages;
  const detailedDrill=drillRows.some(g=>!isConsolidated(g));$('drillOSHeader').textContent=detailedDrill?'OS de origem / matrículas':'OS registrada / matrículas';$('drillOffenderHeader').textContent=detailedDrill?'Tipo de OS ofensora':'Ofensor selecionado';
  $('drillBody').innerHTML=data.slice((drillPage-1)*DRILL_SIZE,drillPage*DRILL_SIZE).map(g=>{
-  const con=isConsolidated(g);return `<tr><td><b>${esc(g.contract)}</b><br>${esc(g.city)} / ${esc(g.uf)}</td><td>${g.rows.map(r=>`<div><b>${esc(r.os)}</b></div>`).join('')}<span class="muted">${esc(g.tech)}</span></td><td>${esc(g.reportDate)}<br><span class="muted">Exec.: ${esc(g.execDate)}</span></td><td class="wrap-cell">${esc(g.typeOS)}<br><b>${esc(g.businessUnit)}</b>${con&&g.unitOriginal!==g.businessUnit?`<br><span class="muted">Original: ${esc(g.unitOriginal)}; UN: ${esc(g.unitPreferred)}</span>`:''}</td><td class="num">${g.taskCount}</td><td><span class="badge ${g.revisit?'no':'ok'}">${g.revisit?'SEM':'COM'} PADRÃO</span><br>${g.logs} logs${g.noLogException?'<br><span class="source-warning">Sem padrão, sem logs</span>':''}</td><td class="wrap-cell">${con?historicOffenderLink(g):sourceList(g.offenderOS)}</td><td class="wrap-cell">${con?esc(rawDisplay(g.rawCodeList)):sourceList(g.offenderCodes)}${con&&typeof g.rawCodeList==='number'&&!Number.isInteger(g.rawCodeList)?'<br><span class="muted">Célula numérica preservada; não separada em códigos.</span>':''}</td><td class="wrap-cell">${con?esc(selectedCodeLabel(g)):sourceList(g.offenderTypes)}${g.offenderReason?'<br>'+esc(g.offenderReason):''}</td><td class="wrap-cell">${esc(g.offenderFamily||'Não informado')}</td><td class="wrap-cell">${con?'Excel consolidado: logs de QTD_LOG_OS_VT; tarefas de QTD_TAREFAS. A OS exibida não é a lista de todas as tarefas.':`${sourceList(g.offenderCompanies)}<br>${sourceList(g.offenderDates)}`}</td></tr>`;
+  const con=isConsolidated(g);return `<tr><td><b>${esc(g.contract)}</b><br>${esc(g.city)} / ${esc(g.uf)}</td><td>${g.rows.map(r=>`<div><b>${esc(r.os)}</b></div>`).join('')}${technicians.cell(g.tech)}</td><td>${esc(g.reportDate)}<br><span class="muted">Exec.: ${esc(g.execDate)}</span></td><td class="wrap-cell">${esc(g.typeOS)}<br><b>${esc(g.businessUnit)}</b>${con&&g.unitOriginal!==g.businessUnit?`<br><span class="muted">Original: ${esc(g.unitOriginal)}; UN: ${esc(g.unitPreferred)}</span>`:''}</td><td class="num">${g.taskCount}</td><td><span class="badge ${g.revisit?'no':'ok'}">${g.revisit?'SEM':'COM'} PADRÃO</span><br>${g.logs} logs${g.noLogException?'<br><span class="source-warning">Sem padrão, sem logs</span>':''}</td><td class="wrap-cell">${con?historicOffenderLink(g):sourceList(g.offenderOS)}</td><td class="wrap-cell">${con?esc(rawDisplay(g.rawCodeList)):sourceList(g.offenderCodes)}${con&&typeof g.rawCodeList==='number'&&!Number.isInteger(g.rawCodeList)?'<br><span class="muted">Célula numérica preservada; não separada em códigos.</span>':''}</td><td class="wrap-cell">${con?esc(selectedCodeLabel(g)):sourceList(g.offenderTypes)}${g.offenderReason?'<br>'+esc(g.offenderReason):''}</td><td class="wrap-cell">${esc(g.offenderFamily||'Não informado')}</td><td class="wrap-cell">${con?'Excel consolidado: logs de QTD_LOG_OS_VT; tarefas de QTD_TAREFAS. A OS exibida não é a lista de todas as tarefas.':`${sourceList(g.offenderCompanies)}<br>${sourceList(g.offenderDates)}`}</td></tr>`;
  }).join('')||'<tr><td colspan="11" class="msg">Nenhum atendimento neste filtro. Escolha “Todos os atendimentos” para ver a base completa do percentual.</td></tr>';
 }
 function referenceGroups(unit=false){return groupRows(allRows.filter(r=>r.indicator==='Sla Garantia Total'&&yyyymm(r.reportDate)===referenceConfig.month&&referenceConfig.cities.includes(r.city)&&r.uf===referenceConfig.uf&&(!unit||r.businessUnit===referenceConfig.unit)));}
@@ -615,7 +650,7 @@ function renderHeader(){
  const detailed=rawCurrent.some(r=>!isConsolidated(r));
  $('familySection').hidden=detailed;
  $('unitFilterLabel').textContent=detailed?'Unidade do técnico':'Unidade consolidada';
- $('detailsOSHeader').textContent=detailed?'OS de origem':'OS registrada';
+ $('detailsOSHeader').textContent=detailed?'OS de origem':'OS registrada';detailSort.syncHeaders();
  $('drillOSHeader').textContent=detailed?'OS de origem / matrículas':'OS registrada / matrículas';
  $('drillOffenderHeader').textContent=detailed?'Tipo de OS ofensora':'Ofensor selecionado';
 }
@@ -770,6 +805,10 @@ $('drillExport').addEventListener('click',()=>downloadRows(filteredDrill(),'SLA_
 populateFilters(true);renderAll();
 
 
+function renderServiceTable(){ $('serviceBody').innerHTML=serviceSort.rows(serviceData).map(d=>`<tr><td class="wrap-cell">${esc(d.name)}</td><td class="num">${intfmt(d.os)}</td><td class="num">${link(pct(d.os/rawCurrent.length*100),()=>drillFor(d,d.name,'all'))}</td><td class="num">${intfmt(d.total)}</td><td class="num">${intfmt(d.revis)}</td><td class="num">${intfmt(d.logs)}</td><td class="num">${link(pct(d.sla),()=>drillFor(d,d.name))}</td></tr>`).join('');}
+
+function renderTechTable(){ $('techBody').innerHTML=techSort.rows(techData).map(d=>`<tr><td>${technicians.cell(d.name)}</td><td class="num">${intfmt(d.total)}</td><td class="num">${intfmt(d.good)}</td><td class="num">${intfmt(d.revis)}</td><td class="num">${intfmt(d.logs)}</td><td class="num">${link(pct(d.sla),()=>drillFor(d,`Matrícula ${d.name}`))}</td></tr>`).join('');}
+
 
 async function loadFile(file){await environment.importFile('qq',file);}
 function projectPayload(base){return {source:base?.source||'Nenhuma base importada',sourceType:base?.sourceType||'',stats:base?.stats||{},fields:[],rows:[]};}
@@ -786,6 +825,7 @@ window.loadProjectData=function(snapshot){
  $('baseSelect').value='current';populateFilters(!previous);renderAll();
 };
 window.redraw=()=>renderAll();window.isModalOpen=()=>$('drillDialog').open;
+window.refreshSupervisorRegistry=()=>{renderServiceAndTech();renderDetails();if($('drillDialog').open)renderDrill();};
 window.closeModal=()=>{if($('drillDialog').open)closeDrill();};
 window.getProjectState=()=>({rows:allRows,filtered:rawCurrent,groups:groupedCurrent,metrics:calc(groupedCurrent),mode:metricMode,indicator:currentIndicator,source:activeBase});
 $('clearDataBtn').hidden=true;$('fileInput').accept='.csv,.xlsx';

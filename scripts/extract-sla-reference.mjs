@@ -3,6 +3,8 @@ import fs from "node:fs";
 import crypto from "node:crypto";
 import ts from "typescript";
 import postcss from "postcss";
+import { applySlaDirectoryBindings } from "./sla-directory-bindings.mjs";
+import { applySlaTableSortBindings, slaTableSortSetup } from "./sla-table-sort-bindings.mjs";
 const path = process.argv[2];
 if (!path) throw Error("Provide the reviewed SLA HTML.");
 const html = fs.readFileSync(path, "utf8");
@@ -70,6 +72,8 @@ code = code.replace(
   "populateFilters(true);applyFortaleza();",
   "populateFilters(true);renderAll();",
 );
+code = applySlaDirectoryBindings(code);
+code = applySlaTableSortBindings(code);
 if (/\b(?:eval\s*\(|fetch\s*\(|XLSX\.|new Function)/.test(code))
   throw Error("Unexpected external/executable dependency in SLA port.");
 const folder = "src/components/quality/sla-reference";
@@ -90,6 +94,7 @@ window.loadProjectData=function(snapshot){
  $('baseSelect').value='current';populateFilters(!previous);renderAll();
 };
 window.redraw=()=>renderAll();window.isModalOpen=()=>$('drillDialog').open;
+window.refreshSupervisorRegistry=()=>{renderServiceAndTech();renderDetails();if($('drillDialog').open)renderDrill();};
 window.closeModal=()=>{if($('drillDialog').open)closeDrill();};
 window.getProjectState=()=>({rows:allRows,filtered:rawCurrent,groups:groupedCurrent,metrics:calc(groupedCurrent),mode:metricMode,indicator:currentIndicator,source:activeBase});
 $('clearDataBtn').hidden=true;$('fileInput').accept='.csv,.xlsx';
@@ -98,7 +103,7 @@ if(!environment.editable){$('fileInput').disabled=true;document.querySelector('l
 `;
 fs.writeFileSync(
   `${folder}/sla-engine.js`,
-  `// Reviewed SLA reference ${hash}. No embedded personal records.\nimport { isSlaOffenderChartCode } from '../../../lib/sla-code-chart';\nexport function mountSla(environment){\nconst {document,window}=environment;\n${code}\n${adapter}\nreturn window;\n}\n`,
+  `// Reviewed SLA reference ${hash}. No embedded personal records.\nimport { isSlaOffenderChartCode } from '../../../lib/sla-code-chart';\nimport { createSlaDirectoryPresentation } from '../../../lib/sla-directory';\nimport { createSlaTableSort } from '../../../lib/sla-table-sort';\nexport function mountSla(environment){\nconst {document,window}=environment;\nconst technicians=createSlaDirectoryPresentation(()=>window.parent.getSupervisorMap());\n${slaTableSortSetup}\n${code}\n${adapter}\nreturn window;\n}\n`,
 );
 fs.writeFileSync(
   `${folder}/sla-engine.d.ts`,

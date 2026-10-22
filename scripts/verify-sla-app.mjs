@@ -96,6 +96,15 @@ let qualityImports = [seedManifest],
   missingSLA = false;
 let slaReads = 0,
   qqReads = 0;
+let directoryRecords = [
+  {
+    login: "Z1",
+    full_name: "QA Técnico",
+    city: "NATAL/PARNAMIRIM",
+    sector: "ADESÃO/SERVIÇOS",
+    supervisor: "QA Supervisor",
+  },
+];
 const canonical = (value) =>
   Array.isArray(value)
     ? value.map(canonical)
@@ -158,16 +167,13 @@ try {
         sectors: null,
       };
     if (table === "quality_supervisor_registry") result = null;
-    if (table === "quality_technician_directory")
-      result = [
-        {
-          login: "Z1",
-          full_name: "QA Técnico",
-          city: "NATAL/PARNAMIRIM",
-          sector: "ADESÃO/SERVIÇOS",
-          supervisor: "QA Supervisor",
-        },
-      ];
+    if (table === "quality_technician_directory") result = directoryRecords;
+    if (table === "save_quality_directory") {
+      for (const entry of body.p_entries) {
+        directoryRecords = [...directoryRecords.filter((row) => row.login !== entry.login), entry];
+      }
+      result = null;
+    }
     if (table === "quality_imports" || table === "sla_warranty_imports") {
       const sla = table.startsWith("sla");
       let list = sla ? slaImports : qualityImports;
@@ -303,6 +309,48 @@ try {
     .getByText("SLA atualizado", { exact: false })
     .waitFor();
   await page.locator("#referenceSLA #kSlaValue").getByText("33,33%", { exact: true }).waitFor();
+  const identities = page.locator("#referenceSLA #techBody");
+  assert.match(await identities.innerText(), /QA Técnico/);
+  assert.match(await identities.innerText(), /Login: Z1/);
+  assert.match(await identities.innerText(), /Supervisor: QA Supervisor/);
+  assert.match(await page.locator("#referenceSLA #techChart").innerText(), /QA Técnico/);
+  assert.match(
+    await page
+      .locator("#referenceSLA #techChart g[role=button]")
+      .first()
+      .getAttribute("aria-label"),
+    /Supervisor: QA Supervisor/,
+  );
+  const identityImportCount = slaImports.length;
+  await page.locator("#referenceSLA #fMonth").selectOption("2026/10");
+  await page.locator("#goSupervisors").click();
+  await page.getByRole("button", { name: "Editar Z1", exact: true }).click();
+  const edit = page.getByRole("dialog", { name: "Editar login" });
+  await edit.getByLabel("Nome", { exact: true }).fill("QA Técnico Atualizado");
+  await edit.getByLabel("Supervisor", { exact: true }).fill("Nova QA Supervisora");
+  await edit.getByRole("button", { name: "Salvar cadastro", exact: true }).click();
+  await edit.waitFor({ state: "hidden" });
+  await page.locator("#goSLA").click();
+  await identities.getByText("QA Técnico Atualizado", { exact: true }).waitFor();
+  assert.match(await identities.innerText(), /Supervisor: Nova QA Supervisora/);
+  assert.equal(
+    await page.locator("#referenceSLA #fMonth").inputValue(),
+    "2026/10",
+    "Directory changes preserve SLA filters",
+  );
+  assert.equal(await page.locator("#referenceSLA #kSlaValue").innerText(), "33,33%");
+  assert.equal(slaImports.length, identityImportCount, "Identity changes never reimport SLA data");
+  await page.locator("#referenceSLA #kLogsButton").click();
+  assert.match(await page.locator("#referenceSLA #drillBody").innerText(), /QA Técnico Atualizado/);
+  assert.match(
+    await page.locator("#referenceSLA #drillBody").innerText(),
+    /Supervisor: Nova QA Supervisora/,
+  );
+  await page.locator("#referenceSLA #drillClose").click();
+  await page.locator("#referenceSLA #detailSearch").fill("Nova QA Supervisora");
+  assert.equal(await page.locator("#referenceSLA #detailBody tr").count(), 2);
+  await page.locator("#referenceSLA #detailSearch").fill("");
+  await page.locator("#referenceSLA #clearFiltersBtn").click();
   await page.locator("#referenceSLA #metricTasks").click();
   assert.equal(await page.locator("#referenceSLA #kSlaValue").innerText(), "25,00%");
   await page.locator("#referenceSLA #metricAttendance").click();
@@ -500,6 +548,8 @@ try {
       compactPresentation: true,
       sameFilterState: true,
       unchangedPresentationSvg: true,
+      sharedTechnicianAndSupervisor: true,
+      directoryEditUpdatesSlaWithoutReimport: true,
       productionWrites: 0,
     }),
   );

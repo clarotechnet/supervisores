@@ -1,0 +1,17 @@
+.sla-technician {
+  min-width: 140px;
+  max-width: 280px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.sla-technician + .sla-technician {
+  margin-top: 7px;
+}
+.sla-technician b {
+  display: block;
+}
+.sla-technician .muted {
+  margin-top: 3px;
+  font-size: 10px;
+  line-height: 1.4;
+}

@@ -268,7 +268,7 @@ export function QualityDashboard({
       await saveQualityDirectory(rows);
       const entries = await fetchQualityDirectory();
       client.setQueryData(qualityKeys.directory(profile?.id), entries);
-      toast.success("Cadastro atualizado nos painéis de QQ, TC e Visita técnica.");
+      toast.success("Cadastro atualizado nos painéis de QQ, TC, SLA e Visita técnica.");
     } finally {
       busy.current = false;
       setSaving("");
@@ -318,7 +318,7 @@ export function QualityDashboard({
             ? undefined
             : (active, presenting) => (
                 <Suspense fallback={<p role="status">Carregando SLA Garantia…</p>}>
-                  <SlaWarrantyPanel active={active} presenting={presenting} />
+                  <SlaWarrantyPanel active={active} presenting={presenting} registry={registry} />
                 </Suspense>
               )
         }

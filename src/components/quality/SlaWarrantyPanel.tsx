@@ -10,22 +10,28 @@ import { mountSla } from "./sla-reference/sla-engine";
 import { slaMarkup, slaStyle } from "./sla-reference/templates";
 import type { SlaEngine } from "./sla-types";
 import type { ReferenceParent } from "./reference-types";
+import type { QualityRegistry } from "@/lib/quality";
 import { slaPresentation } from "./sla-presentation";
 import presentationStyle from "./sla-presentation.css?inline";
+import directoryStyle from "./sla-directory.css?inline";
+import tableSortStyle from "./sla-table-sort.css?inline";
 import "./sla-warranty.css";
 
 interface Props {
   active: boolean;
   presenting: boolean;
+  registry: QualityRegistry;
 }
-export function SlaWarrantyPanel({ active, presenting }: Props) {
+export function SlaWarrantyPanel({ active, presenting, registry }: Props) {
   const [opened, setOpened] = useState(active);
   useEffect(() => {
     if (active) setOpened(true);
   }, [active]);
-  return opened ? <SlaContents active={active} presenting={presenting} /> : null;
+  return opened ? (
+    <SlaContents active={active} presenting={presenting} registry={registry} />
+  ) : null;
 }
-function SlaContents({ active, presenting }: Props) {
+function SlaContents({ active, presenting, registry }: Props) {
   const { profile, isAdmin } = useAuth();
   const client = useQueryClient();
   const key = ["sla-warranty", profile?.id];
@@ -40,8 +46,8 @@ function SlaContents({ active, presenting }: Props) {
     engine = useRef<SlaEngine | null>(null),
     presentation = useRef<ReturnType<typeof slaPresentation> | null>(null),
     fileInput = useRef<HTMLInputElement>(null);
-  const latest = useRef({ dataset: query.data, isAdmin, user: profile?.id });
-  latest.current = { dataset: query.data, isAdmin, user: profile?.id };
+  const latest = useRef({ dataset: query.data, isAdmin, user: profile?.id, registry });
+  latest.current = { dataset: query.data, isAdmin, user: profile?.id, registry };
   const busy = useRef(false);
   const [operation, setOperation] = useState("");
   const [progress, setProgress] = useState(0);
@@ -101,7 +107,7 @@ function SlaContents({ active, presenting }: Props) {
   };
   useEffect(() => {
     const parent: ReferenceParent = {
-      getSupervisorMap: () => ({}),
+      getSupervisorMap: () => latest.current.registry,
       refreshUnifiedMonth() {},
       setUnifiedMonths() {},
       setUnifiedDates() {},
@@ -111,7 +117,7 @@ function SlaContents({ active, presenting }: Props) {
     };
     const scope = referenceScope(
       host.current!,
-      `${slaStyle}\n${presentationStyle}`,
+      `${slaStyle}\n${presentationStyle}\n${directoryStyle}\n${tableSortStyle}`,
       slaMarkup,
       parent,
       isAdmin,
@@ -130,6 +136,9 @@ function SlaContents({ active, presenting }: Props) {
   useEffect(() => {
     if (query.data?.snapshot) engine.current?.loadProjectData(query.data.snapshot);
   }, [query.data?.snapshot, isAdmin, profile?.id]);
+  useEffect(() => {
+    engine.current?.refreshSupervisorRegistry();
+  }, [registry, isAdmin, profile?.id]);
   useEffect(() => {
     if (!active) {
       engine.current?.closeModal();

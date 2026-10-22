@@ -1,0 +1,36 @@
+th .sla-sort-header {
+  all: unset;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  vertical-align: middle;
+}
+th.num .sla-sort-header {
+  justify-content: flex-end;
+}
+th .sla-sort-header:hover,
+th[aria-sort="ascending"] .sla-sort-header,
+th[aria-sort="descending"] .sla-sort-header {
+  color: var(--red, #da0016);
+}
+th .sla-sort-header:focus-visible {
+  outline: 2px solid var(--red, #da0016);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+.sla-sort-arrow {
+  flex-shrink: 0;
+  width: 0.8em;
+  font-size: 1em;
+  text-align: center;
+  opacity: 0.6;
+}
+th[aria-sort="ascending"] .sla-sort-arrow,
+th[aria-sort="descending"] .sla-sort-arrow {
+  opacity: 1;
+}
