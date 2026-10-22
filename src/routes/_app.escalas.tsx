@@ -165,12 +165,18 @@ function SchedulesPage() {
     (item) => item.city === city && item.sector === sector && item.schedule_month === month,
   );
   const selectedSummaryId = selectedSummary?.id;
+  // Updating via Sheets/Excel upserts the same row, so its ID stays unchanged.
+  // Reload the payload when that row's imported/updated version changes too.
+  const selectedSummaryVersion = selectedSummary
+    ? `${selectedSummary.imported_at}|${selectedSummary.updated_at}`
+    : undefined;
 
   useEffect(() => {
     let active = true;
     if (!selectedSummaryId) {
       setSchedule(null);
       setDateNotes([]);
+      setLoadingSchedule(false);
       return;
     }
     setLoadingSchedule(true);
@@ -193,7 +199,7 @@ function SchedulesPage() {
     return () => {
       active = false;
     };
-  }, [selectedSummaryId]);
+  }, [selectedSummaryId, selectedSummaryVersion]);
 
   const frontOptions = useMemo(() => {
     const options = [...scheduleFrontOptionsForCity(city)];
