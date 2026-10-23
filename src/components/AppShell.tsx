@@ -24,6 +24,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
 import { BrandMark } from "@/components/BrandMark";
 import { useTheme } from "@/hooks/useTheme";
+import { NotificationBell } from "@/components/NotificationBell";
 
 interface NavItem {
   to: string;
@@ -31,7 +32,6 @@ interface NavItem {
   hint: string;
   icon: typeof CalendarCheck;
 }
-
 
 const SUPERVISOR_NAV: NavItem[] = [
   { to: "/painel", label: "Minha rotina", hint: "Checklist do dia", icon: CalendarCheck },
@@ -257,7 +257,7 @@ export function AppShell({
           style={presentation ? { display: "none" } : undefined}
           className="sticky top-0 z-30 flex h-[70px] items-center justify-between gap-4 border-b border-border bg-card/95 px-4 backdrop-blur md:px-8"
         >
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 items-center gap-3">
             <button
               type="button"
               aria-label="Abrir menu"
@@ -267,7 +267,7 @@ export function AppShell({
               <Menu className="size-4" />
             </button>
             <div className="min-w-0">
-              <span className="block text-[9px] font-extrabold uppercase tracking-[0.14em] text-muted-foreground">
+              <span className="hidden text-[9px] font-extrabold uppercase tracking-[0.14em] text-muted-foreground sm:block">
                 {isAdmin
                   ? "Painel do administrador"
                   : isController
@@ -277,7 +277,8 @@ export function AppShell({
               <b className="block truncate text-sm">{profile?.full_name || "Usuário"}</b>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
+            <NotificationBell />
             <button
               type="button"
               onClick={toggleTheme}
@@ -291,9 +292,11 @@ export function AppShell({
             <button
               type="button"
               onClick={handleSignOut}
+              aria-label="Sair"
+              title="Sair"
               className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-[11px] font-bold text-muted-foreground transition-colors hover:bg-secondary"
             >
-              <LogOut className="size-3.5" /> Sair
+              <LogOut className="size-3.5" /> <span className="hidden sm:inline">Sair</span>
             </button>
             <span className="grid size-9 place-items-center rounded-full bg-navy text-[10px] font-black text-white">
               {initials}

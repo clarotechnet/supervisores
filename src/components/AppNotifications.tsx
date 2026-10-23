@@ -1,6 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -11,45 +10,135 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useAuth } from "@/hooks/useAuth";
+import { AppNotificationsContext } from "@/hooks/useAppNotifications";
 import { supabase } from "@/integrations/supabase/client";
 import {
   applyCurrentSupervisorNames,
-  formatAssignmentNotification,
-  formatNotificationDescription,
-  formatOverdueTask,
-  groupOverdueTasks,
   notificationTaskTitle,
   type OverdueTask,
 } from "@/lib/assignment-notification";
 import { nowTime, todayKey } from "@/lib/date-utils";
 import type { AppNotification, ConversationMessage } from "@/lib/types";
+import {
+  isIncomingMessage,
+  notificationCenterItems,
+  updateUnreadItem,
+  type NotificationItem,
+} from "@/lib/notification-center";
 
 const OVERDUE_CHECK_INTERVAL = 60_000;
 
 async function markNotificationRead(notificationId: string) {
-  await supabase
+  const { error } = await supabase
     .from("notifications")
     .update({ read_at: new Date().toISOString() })
     .eq("id", notificationId);
+  if (error) throw error;
 }
 
 async function markMessageRead(messageId: string) {
-  await supabase
+  const { error } = await supabase
     .from("conversation_messages")
     .update({ read_at: new Date().toISOString() })
     .eq("id", messageId);
+  if (error) throw error;
 }
 
-export function AppNotifications() {
+export function AppNotifications({ children }: { children: ReactNode }) {
+  const { profile } = useAuth();
+  // Discard private alerts and dismissed IDs immediately when the account changes.
+  return (
+    <NotificationSession key={`${profile?.id}:${profile?.role}:${profile?.status}`}>
+      {children}
+    </NotificationSession>
+  );
+}
+
+function NotificationSession({ children }: { children: ReactNode }) {
   const { profile } = useAuth();
   const navigate = useNavigate();
   const [openedMention, setOpenedMention] = useState<AppNotification | null>(null);
-  const deliveredNotificationIds = useRef(new Set<string>());
-  const deliveredMessageIds = useRef(new Set<string>());
-  const notifiedOverdueIds = useRef(new Set<string>());
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [overdueTasks, setOverdueTasks] = useState<OverdueTask[]>([]);
+  const [dismissedOverdueIds, setDismissedOverdueIds] = useState(new Set<string>());
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const [loadErrors, setLoadErrors] = useState({ notifications: "", messages: "", overdue: "" });
+  const handledNotificationIds = useRef(new Set<string>());
+  const handledMessageIds = useRef(new Set<string>());
+  const busy = useRef(false);
+  const mounted = useRef(true);
   const profileId = profile?.id;
   const profileRole = profile?.role;
   const profileStatus = profile?.status;
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  const items = useMemo(
+    () =>
+      notificationCenterItems(
+        notifications,
+        messages,
+        overdueTasks,
+        dismissedOverdueIds,
+        profileRole ?? "supervisor",
+      ),
+    [notifications, messages, overdueTasks, dismissedOverdueIds, profileRole],
+  );
+
+  async function handleItem(item: NotificationItem, open = false): Promise<boolean> {
+    if (busy.current) return false;
+    busy.current = true;
+    setBusyKey(item.key);
+    setError("");
+    try {
+      if (item.kind === "task" || item.kind === "mention") {
+        await markNotificationRead(item.notification.id);
+        if (!mounted.current) return false;
+        handledNotificationIds.current.add(item.notification.id);
+        setNotifications((current) => current.filter((row) => row.id !== item.notification.id));
+      } else if (item.kind === "message") {
+        await markMessageRead(item.message.id);
+        if (!mounted.current) return false;
+        handledMessageIds.current.add(item.message.id);
+        setMessages((current) => current.filter((row) => row.id !== item.message.id));
+      } else {
+        setDismissedOverdueIds(
+          (current) => new Set([...current, ...item.group.tasks.map((task) => task.id)]),
+        );
+      }
+      if (open) {
+        if (item.kind === "mention") setOpenedMention(item.notification);
+        else if (item.kind === "task") void navigate({ to: "/tarefas" });
+        else if (item.kind === "message") {
+          if (profileRole === "supervisor") void navigate({ to: "/mensagens" });
+          else
+            void navigate({
+              to: "/admin/supervisor/$profileId",
+              params: { profileId: item.message.supervisor_id },
+            });
+        } else if (item.group.supervisorId) {
+          void navigate({
+            to: "/admin/supervisor/$profileId",
+            params: { profileId: item.group.supervisorId },
+          });
+        }
+      }
+      return true;
+    } catch {
+      if (mounted.current) setError("Não foi possível marcar o aviso como lido. Tente novamente.");
+      return false;
+    } finally {
+      busy.current = false;
+      if (mounted.current) setBusyKey(null);
+    }
+  }
 
   useEffect(() => {
     if (!profileId || profileRole !== "supervisor" || profileStatus !== "active") return;
@@ -59,50 +148,19 @@ export function AppNotifications() {
     const deliver = (notification: AppNotification) => {
       if (
         !active ||
-        !["task_assigned", "task_note_mention"].includes(notification.type) ||
-        deliveredNotificationIds.current.has(notification.id)
+        notification.recipient_id !== profileId ||
+        !["task_assigned", "task_note_mention"].includes(notification.type)
       ) {
         return;
       }
 
-      deliveredNotificationIds.current.add(notification.id);
-      const toastId = `${notification.type}-${notification.id}`;
-      const markRead = () => void markNotificationRead(notification.id);
-
-      if (notification.type === "task_note_mention") {
-        toast.info(notification.title, {
-          id: toastId,
-          description: formatNotificationDescription(notification),
-          duration: Infinity,
-          closeButton: true,
-          onDismiss: markRead,
-          action: {
-            label: "Abrir",
-            onClick: () => {
-              setOpenedMention(notification);
-              markRead();
-              toast.dismiss(toastId);
-            },
-          },
-        });
+      if (notification.read_at) {
+        handledNotificationIds.current.add(notification.id);
+        setNotifications((current) => current.filter((row) => row.id !== notification.id));
         return;
       }
-
-      toast.info(notification.title, {
-        id: toastId,
-        description: formatAssignmentNotification(notification),
-        duration: Infinity,
-        closeButton: true,
-        onDismiss: markRead,
-        action: {
-          label: "Ver tarefas",
-          onClick: () => {
-            markRead();
-            toast.dismiss(toastId);
-            void navigate({ to: "/tarefas" });
-          },
-        },
-      });
+      if (!handledNotificationIds.current.has(notification.id))
+        setNotifications((current) => updateUnreadItem(current, notification));
     };
 
     const channel = supabase
@@ -110,12 +168,20 @@ export function AppNotifications() {
       .on(
         "postgres_changes",
         {
-          event: "INSERT",
+          event: "*",
           schema: "public",
           table: "notifications",
           filter: `recipient_id=eq.${profileId}`,
         },
-        (payload) => deliver(payload.new as unknown as AppNotification),
+        (payload) => {
+          if (payload.eventType === "DELETE") {
+            const id = payload.old["id"];
+            if (active && typeof id === "string") {
+              handledNotificationIds.current.add(id);
+              setNotifications((current) => current.filter((row) => row.id !== id));
+            }
+          } else deliver(payload.new as unknown as AppNotification);
+        },
       )
       .subscribe();
 
@@ -127,10 +193,17 @@ export function AppNotifications() {
       .order("created_at", { ascending: true })
       .limit(50)
       .then(({ data, error }) => {
+        if (!active) return;
         if (error) {
           console.error("Não foi possível carregar as notificações.", error);
+          setLoadErrors((current) => ({
+            ...current,
+            notifications:
+              "Não foi possível carregar todos os avisos. Atualize a página para tentar novamente.",
+          }));
           return;
         }
+        setLoadErrors((current) => ({ ...current, notifications: "" }));
         for (const notification of data ?? []) {
           deliver(notification as unknown as AppNotification);
         }
@@ -140,48 +213,22 @@ export function AppNotifications() {
       active = false;
       void supabase.removeChannel(channel);
     };
-  }, [navigate, profileId, profileRole, profileStatus]);
+  }, [profileId, profileRole, profileStatus]);
 
   useEffect(() => {
-    if (!profileId || !profileRole || profileStatus !== "active") return;
+    if (!profileId || !profileRole || profileRole === "controller" || profileStatus !== "active")
+      return;
 
     let active = true;
     const deliver = (message: ConversationMessage) => {
-      const isIncoming =
-        message.sender_id !== profileId &&
-        ((profileRole === "supervisor" && message.sender_role === "admin") ||
-          (profileRole === "admin" && message.sender_role === "supervisor"));
-      if (!active || !isIncoming || deliveredMessageIds.current.has(message.id)) return;
-
-      deliveredMessageIds.current.add(message.id);
-      const toastId = `conversation-message-${message.id}`;
-      const markRead = () => void markMessageRead(message.id);
-      toast.info(
-        profileRole === "supervisor" ? "Nova mensagem da gestão" : "Nova resposta de supervisor",
-        {
-          id: toastId,
-          description:
-            message.body.length > 160 ? `${message.body.slice(0, 157)}...` : message.body,
-          duration: Infinity,
-          closeButton: true,
-          onDismiss: markRead,
-          action: {
-            label: "Abrir conversa",
-            onClick: () => {
-              markRead();
-              toast.dismiss(toastId);
-              if (profileRole === "supervisor") {
-                void navigate({ to: "/mensagens" });
-              } else {
-                void navigate({
-                  to: "/admin/supervisor/$profileId",
-                  params: { profileId: message.supervisor_id },
-                });
-              }
-            },
-          },
-        },
-      );
+      if (!active || !isIncomingMessage(message, profileId, profileRole)) return;
+      if (message.read_at) {
+        handledMessageIds.current.add(message.id);
+        setMessages((current) => current.filter((row) => row.id !== message.id));
+        return;
+      }
+      if (!handledMessageIds.current.has(message.id))
+        setMessages((current) => updateUnreadItem(current, message));
     };
 
     const channel = supabase
@@ -189,12 +236,20 @@ export function AppNotifications() {
       .on(
         "postgres_changes",
         {
-          event: "INSERT",
+          event: "*",
           schema: "public",
           table: "conversation_messages",
           ...(profileRole === "supervisor" ? { filter: `supervisor_id=eq.${profileId}` } : {}),
         },
-        (payload) => deliver(payload.new as unknown as ConversationMessage),
+        (payload) => {
+          if (payload.eventType === "DELETE") {
+            const id = payload.old["id"];
+            if (active && typeof id === "string") {
+              handledMessageIds.current.add(id);
+              setMessages((current) => current.filter((row) => row.id !== id));
+            }
+          } else deliver(payload.new as unknown as ConversationMessage);
+        },
       )
       .subscribe();
 
@@ -209,10 +264,17 @@ export function AppNotifications() {
     else unreadQuery = unreadQuery.eq("sender_role", "supervisor");
 
     void unreadQuery.then(({ data, error }) => {
+      if (!active) return;
       if (error) {
         console.error("Não foi possível carregar mensagens não lidas.", error);
+        setLoadErrors((current) => ({
+          ...current,
+          messages:
+            "Não foi possível carregar todas as mensagens. Atualize a página para tentar novamente.",
+        }));
         return;
       }
+      setLoadErrors((current) => ({ ...current, messages: "" }));
       for (const message of data ?? []) deliver(message as ConversationMessage);
     });
 
@@ -220,7 +282,7 @@ export function AppNotifications() {
       active = false;
       void supabase.removeChannel(channel);
     };
-  }, [navigate, profileId, profileRole, profileStatus]);
+  }, [profileId, profileRole, profileStatus]);
 
   useEffect(() => {
     if (!profileId || profileRole !== "admin" || profileStatus !== "active") return;
@@ -252,6 +314,7 @@ export function AppNotifications() {
           );
           supervisorNamesLoadedAt = Date.now();
         }
+        if (!active) return;
 
         const { data, error } = await supabase
           .from("daily_task_records")
@@ -262,57 +325,25 @@ export function AppNotifications() {
           .order("scheduled_time", { ascending: true });
         if (error) throw error;
         if (!active) return;
+        setLoadErrors((current) => ({ ...current, overdue: "" }));
 
-        const overdueTasks = applyCurrentSupervisorNames(
+        const currentOverdueTasks = applyCurrentSupervisorNames(
           (data ?? []) as OverdueTask[],
           supervisorNames,
         );
-        const currentIds = new Set(overdueTasks.map((task) => task.id));
-        for (const notifiedId of notifiedOverdueIds.current) {
-          if (!currentIds.has(notifiedId)) notifiedOverdueIds.current.delete(notifiedId);
-        }
-
-        for (const group of groupOverdueTasks(overdueTasks)) {
-          const hasNewOverdueTask = group.tasks.some(
-            (task) => !notifiedOverdueIds.current.has(task.id),
-          );
-          if (!hasNewOverdueTask) continue;
-
-          for (const task of group.tasks) notifiedOverdueIds.current.add(task.id);
-          const count = group.tasks.length;
-          const title = `${group.supervisorName} está com ${count} ${count === 1 ? "atividade atrasada" : "atividades atrasadas"}`;
-          const description = (
-            <div className="grid gap-1">
-              {group.tasks.slice(0, 5).map((task) => (
-                <span key={task.id} className="block">
-                  {formatOverdueTask(task)}
-                </span>
-              ))}
-              {count > 5 && <span className="font-bold">+ {count - 5} outras atividades</span>}
-            </div>
-          );
-
-          toast.error(title, {
-            id: `overdue-${group.key}`,
-            description,
-            duration: Infinity,
-            closeButton: true,
-            ...(group.supervisorId
-              ? {
-                  action: {
-                    label: "Ver supervisor",
-                    onClick: () =>
-                      void navigate({
-                        to: "/admin/supervisor/$profileId",
-                        params: { profileId: group.supervisorId! },
-                      }),
-                  },
-                }
-              : {}),
-          });
-        }
+        setOverdueTasks(currentOverdueTasks);
+        const currentIds = new Set(currentOverdueTasks.map((task) => task.id));
+        setDismissedOverdueIds(
+          (current) => new Set([...current].filter((id) => currentIds.has(id))),
+        );
       } catch (error) {
         console.error("Não foi possível verificar as atividades atrasadas.", error);
+        if (active)
+          setLoadErrors((current) => ({
+            ...current,
+            overdue:
+              "Não foi possível conferir as atividades atrasadas. Uma nova tentativa será feita automaticamente.",
+          }));
       } finally {
         checking = false;
         if (active && checkAgain) {
@@ -331,7 +362,6 @@ export function AppNotifications() {
       )
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "profiles" }, () => {
         supervisorNamesLoadedAt = 0;
-        notifiedOverdueIds.current.clear();
         void checkOverdueTasks();
       })
       .subscribe();
@@ -348,42 +378,56 @@ export function AppNotifications() {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       void supabase.removeChannel(channel);
     };
-  }, [navigate, profileId, profileRole, profileStatus]);
+  }, [profileId, profileRole, profileStatus]);
 
   return (
-    <Dialog open={openedMention !== null} onOpenChange={(open) => !open && setOpenedMention(null)}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Observação marcada para você</DialogTitle>
-          <DialogDescription>
-            O gestor marcou você em uma observação da rotina dele.
-          </DialogDescription>
-        </DialogHeader>
+    <AppNotificationsContext.Provider
+      value={{
+        items,
+        busyKey,
+        error: [error, ...Object.values(loadErrors)].filter(Boolean).join(" "),
+        openItem: (item) => handleItem(item, true),
+        dismissItem: (item) => handleItem(item),
+      }}
+    >
+      {children}
+      <Dialog
+        open={openedMention !== null}
+        onOpenChange={(open) => !open && setOpenedMention(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Observação marcada para você</DialogTitle>
+            <DialogDescription>
+              O gestor marcou você em uma observação da rotina dele.
+            </DialogDescription>
+          </DialogHeader>
 
-        <div className="grid gap-4">
-          <div className="grid gap-1 rounded-xl border border-border bg-secondary/50 p-4">
-            <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-              Atividade
-            </span>
-            <p className="font-semibold text-foreground">
-              {openedMention ? notificationTaskTitle(openedMention) : ""}
-            </p>
+          <div className="grid gap-4">
+            <div className="grid gap-1 rounded-xl border border-border bg-secondary/50 p-4">
+              <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                Atividade
+              </span>
+              <p className="font-semibold text-foreground">
+                {openedMention ? notificationTaskTitle(openedMention) : ""}
+              </p>
+            </div>
+
+            <div className="grid gap-1 rounded-xl border border-border p-4">
+              <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                Observação
+              </span>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+                {openedMention?.message}
+              </p>
+            </div>
           </div>
 
-          <div className="grid gap-1 rounded-xl border border-border p-4">
-            <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-              Observação
-            </span>
-            <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
-              {openedMention?.message}
-            </p>
-          </div>
-        </div>
-
-        <DialogFooter>
-          <Button onClick={() => setOpenedMention(null)}>Fechar</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          <DialogFooter>
+            <Button onClick={() => setOpenedMention(null)}>Fechar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </AppNotificationsContext.Provider>
   );
 }

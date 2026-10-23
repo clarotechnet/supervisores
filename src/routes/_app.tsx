@@ -45,9 +45,8 @@ function AppLayout() {
   }
 
   return (
-    <>
-      <AppNotifications />
+    <AppNotifications>
       <Outlet />
-    </>
+    </AppNotifications>
   );
 }
