@@ -177,6 +177,24 @@ for (const [kind, id, name] of [
       "if(state.ready)svReconcileSelection(tcSupervisors",
       "if(state.ready&&!document.body.classList.contains('presentation-mode'))svReconcileSelection(tcSupervisors",
     );
+    // Keep the original DATA_NOTA/work-day closing logic; only select the
+    // reference competence from the user's month filter, not the full base.
+    adapt(
+      "/* The two fixed columns always use the newest DATA_NOTA month in the full base. */",
+      "/* Reference columns follow the latest selected DATA_NOTA competence. */",
+    );
+    adapt(
+      "state.currentMonth=uniq(state.rows.filter(tcDatePass).map(monthKey)).sort().at(-1)||'';",
+      "state.currentMonth=referenceTCMonth(uniq(state.rows.filter(tcDatePass).map(monthKey)),tcSelectedMonths());",
+    );
+    adapt(
+      'title="Último mês disponível na base"',
+      'title="Competência de referência do filtro de meses"',
+    );
+    adapt(
+      'title="Ordenação fixa: ofensores do último mês primeiro"',
+      'title="Ordenação fixa: ofensores da competência de referência primeiro"',
+    );
     adapt(
       "\n    const $ = s => document.querySelector(s)",
       "\nconst tcSelectedUnits = new Set();\n    const $ = s => document.querySelector(s)",
@@ -307,7 +325,7 @@ for (const [kind, id, name] of [
   `;
   const imports =
     kind === "tc"
-      ? 'import { referenceCertificationRule } from "../reference-certification-rule";\nimport { referenceCityMembers } from "../reference-city-members";\n'
+      ? 'import { referenceCertificationRule } from "../reference-certification-rule";\nimport { referenceCityMembers } from "../reference-city-members";\nimport { referenceTCMonth } from "../reference-tc-month";\n'
       : 'import { qqChartPointMarkup, wireQQChartDrilldown } from "../reference-qq-charts";\n';
   const output = `// Reviewed reference ${hash}; generated visual engine. No personal seed data.\n${imports}export function ${name}(environment) {\nconst {document,window,localStorage,location,ResizeObserver,setTimeout,clearTimeout,requestAnimationFrame}=environment;\n${code}\n${load}\nreturn window;\n}\n`;
   fs.writeFileSync(`${folder}/${kind}-engine.js`, output);

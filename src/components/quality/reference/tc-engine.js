@@ -1,6 +1,7 @@
 // Reviewed reference e2a41044c855276006e3d977a81bbd10ca220f96a720b7dfedf1f6888fde7dd2; generated visual engine. No personal seed data.
 import { referenceCertificationRule } from "../reference-certification-rule";
 import { referenceCityMembers } from "../reference-city-members";
+import { referenceTCMonth } from "../reference-tc-month";
 export function mountTC(environment) {
 const {document,window,localStorage,location,ResizeObserver,setTimeout,clearTimeout,requestAnimationFrame}=environment;
 const BUSINESS_UNITS=Object.freeze(["FTZ-DMV_01_VT","FTZ-DMV_01","FTZ-DMV_ADM","MRO-DMV","NTL-DMV_ADM","PWM-DMV_ADM","NTL-DMV","PWM-DMV","NTL-DMV_VT","PWM-DMV_VT","JCR-DMV","JCR-DMV_ADM"]);
@@ -504,7 +505,7 @@ function renderTable(){
  head.innerHTML=`<tr class="tc-groups"><th rowspan="2" class="tc-identity-head" data-sort="name">TÉCNICO${marks('name')}</th>${months.map((m,i)=>{
   const data=[...(state.monthly.get(m)?.values()||[])],n=data.filter(a=>a.prod!=null).length,c=data.filter(a=>a.status).length;
   return `<th colspan="3" class="tc-month-head month-${i%2}" title="${esc(n?c+' certificados de '+n+' avaliados no mês':'Sem dados neste mês e recorte')}">${esc(monthLabel(m))}${n?'':'<small>Sem dados</small>'}</th>`;
- }).join('')}<th rowspan="2" class="tc-projection-head" title="Produção adicional por dia de trabalho previsto para fechar o TC dentro de cada meta">PROJEÇÃO NECESSÁRIA / DIA<small>${esc(currentLabel)} · ${state.projectionContext.workDays} dias previstos</small></th><th rowspan="2" class="tc-volume-head tc-fixed-volume" title="Último mês disponível na base">VOLUME<small>${esc(currentLabel)}</small></th><th rowspan="2" class="tc-status-head tc-fixed-status" data-sort="status" title="Ordenação fixa: ofensores do último mês primeiro">CERTIFICAÇÃO ▲<small>${esc(currentLabel)}</small><small class="tc-current-priority">Ofensores primeiro</small></th></tr>
+ }).join('')}<th rowspan="2" class="tc-projection-head" title="Produção adicional por dia de trabalho previsto para fechar o TC dentro de cada meta">PROJEÇÃO NECESSÁRIA / DIA<small>${esc(currentLabel)} · ${state.projectionContext.workDays} dias previstos</small></th><th rowspan="2" class="tc-volume-head tc-fixed-volume" title="Competência de referência do filtro de meses">VOLUME<small>${esc(currentLabel)}</small></th><th rowspan="2" class="tc-status-head tc-fixed-status" data-sort="status" title="Ordenação fixa: ofensores da competência de referência primeiro">CERTIFICAÇÃO ▲<small>${esc(currentLabel)}</small><small class="tc-current-priority">Ofensores primeiro</small></th></tr>
  <tr class="tc-columns">${months.map(m=>['revisit','tec1','prod'].map((k,i)=>`<th data-sort="${k}" data-month="${m}" class="${i===0?'tc-month-start':''}">${k==='revisit'?'REVISITA':k==='tec1'?'TEC1':'PONTOS/DIA'}${marks(k,m)}<small>${esc(tcMetricTarget(k))}</small></th>`).join('')).join('')}</tr>`;
  head.querySelectorAll('[data-sort]').forEach(h=>h.onclick=()=>{const key=h.dataset.sort,month=h.dataset.month||null,current=state.sort.key===key&&(state.sort.month||null)===month;state.sort=key==='status'?{key:'status',month:null,dir:1}:{key,month,dir:current?-state.sort.dir:key==='name'?1:-1};render();});
  requestAnimationFrame(tcUpdateCurrentPins);
@@ -585,9 +586,9 @@ function tcUpdateMetaProgress(score){
  root.innerHTML=`<div class="tc-goal-state"><span class="tc-goal-dot" aria-hidden="true"></span><span>${status}</span></div><div class="score-goal-track" role="progressbar" aria-label="Cumprimento da meta de certificação" aria-valuemin="0" aria-valuemax="100" ${hasData?`aria-valuenow="${progress.toFixed(2)}"`:''} aria-valuetext="${detail}"><span class="score-goal-fill" style="width:${progress||0}%"></span></div>`;
 }
 
-/* The two fixed columns always use the newest DATA_NOTA month in the full base. */
+/* Reference columns follow the latest selected DATA_NOTA competence. */
 function tcBuildCurrentMonth(){
- state.currentMonth=uniq(state.rows.filter(tcDatePass).map(monthKey)).sort().at(-1)||'';
+ state.currentMonth=referenceTCMonth(uniq(state.rows.filter(tcDatePass).map(monthKey)),tcSelectedMonths());
  state.currentRows=state.rows.filter(r=>monthKey(r)===state.currentMonth&&rowPass(r,true));
  if(state.monthly.has(state.currentMonth))state.currentTech=state.monthly.get(state.currentMonth);
  else{
