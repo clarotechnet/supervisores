@@ -23,11 +23,26 @@ src/lib/schedule-generator-rules.ts contém os requisitos recebidos:
 - RN: Adesão/Serviço, VT, MDU, Construção, Desconexão, Mossoró.
 - CE: Instalação, Manutenção (Fábio T. 1 / 3 por plantão), Desconexão (sábado M. 1).
 - PE: Instalação (1 por plantão), Desconexão.
-- Controle RN: exclusão dos 11 nomes, com cobertura multicidade pendente.
+- Controle RN: referência fornecida no Excel 12-2026; 42 colaboradores,
+  plantões de 3 pessoas por domingo/feriado, incluindo pelo menos
+  1 supervisor COP e 1 controlador de Adesão, mantendo turno T. 1 e código PLANTÃO.
+  Os 11 nomes excluídos continuam proibidos de plantão.
+- Folgas fixas de Controle podem ser segunda–sábado, recuperadas pelo padrão
+  do mês anterior. Se o histórico não demonstrar repetição da folga, o motor
+  bloqueia aprovação para revisão; não inventa uma folga como se fosse confirmada.
+- O modelo Excel de Controle possui 31 dias de dezembro + 01–03/01. As
+  datas de janeiro estão internamente gravadas com serial de janeiro/2026;
+  o importador interpreta janeiro/2027 pela âncora 12-2026 e emite aviso.
+  As marcações herdadas dos dias 01–03/01 não são sobrescritas ao gerar janeiro.
+- O Excel de referência tem 15 ocorrências de semanas completas com menos
+  de duas folgas, envolvendo 9 pessoas. É necessária conferência antes de
+  tratar esse histórico como escala 5x2 validada.
 
 Quantidades NÃO informadas continuam null e bloqueiam publicação:
 - Fortaleza Instalação: quantidade de técnicos por plantão.
-- Controle RN: quantidade por plantão distribuída por função/localidade.
+- Controle RN: cobertura total e mínimo por tipo de função foram inferidos
+  do arquivo de dezembro; detalhes por cidade/localidade e horários efetivos
+  continuam sujeitos à confirmação operacional.
 
 ## Fonte de dados e persistência
 Já existe sincronização Google Sheets => schedule_uploads no Supabase.

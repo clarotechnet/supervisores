@@ -10,10 +10,15 @@ export type ScheduleGenerationRule = {
   sundayDutyCount: number | null;
   holidayDutyCount: number | null;
   holidayWeekdaysOnly?: boolean;
-  saturdayShift: "M. 1" | "M. 2";
+  saturdayShift: "M. 1" | "M. 2" | "T. 1";
   defaultShift: "M. 1" | "T. 1";
   minimumIntermediateDuties: number;
   excludedFromDuty: readonly string[];
+  // 0 = domingo, 1 = segunda, ... 6 = sábado.
+  fixedOffWeekdays?: readonly number[];
+  dutyCode?: "M. 1" | "T. 1" | "PLANTÃO";
+  minimumSupervisorDuty?: number;
+  minimumAdesaoControllerDuty?: number;
   personShiftOverrides?: Readonly<Record<string, "M. 1" | "T. 1">>;
   dateDutyOverrides?: Readonly<Record<string, number>>;
   additionalHolidays?: readonly string[]; // MM-DD
@@ -112,16 +117,20 @@ export const scheduleGenerationRules: readonly ScheduleGenerationRule[] = [
   },
   {
     city: "natal", sector: "controle-operacional", label: "Controle RN · Multicidade",
-    sundayDutyCount: null, holidayDutyCount: null,
-    saturdayShift: "M. 1", defaultShift: "T. 1",
-    minimumIntermediateDuties: 0, requiresRoleBasedCoverage: true,
+    sundayDutyCount: 3, holidayDutyCount: 3,
+    saturdayShift: "T. 1", defaultShift: "T. 1",
+    minimumIntermediateDuties: 0,
+    fixedOffWeekdays: [1, 2, 3, 4, 5, 6],
+    dutyCode: "PLANTÃO",
+    minimumSupervisorDuty: 1,
+    minimumAdesaoControllerDuty: 1,
     excludedFromDuty: [
       "MATHEUS FREITAS", "JEFERSON FERREIRA", "JOSUE MOURA",
       "JUDSON BERTO", "VICTOR HUGO", "WELLINGTON RAFAEL",
       "RODRIGO PESSOA", "CARLOS ADRIANO", "JOSE VICTOR",
       "STUART ARAUJO", "EVANIO",
     ],
-    notes: "Fonte original agrupa NTL, FTZ e RCF. Exigir cobertura por função/cidade antes de publicar.",
+    notes: "Referência dez/2026: 3 por domingo/feriado, incluindo 1 supervisor COP e no mínimo 1 controlador de Adesão. Conferir cobertura por cidade e cargo antes de publicar.",
   },
 ];
 

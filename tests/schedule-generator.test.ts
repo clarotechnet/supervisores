@@ -46,7 +46,9 @@ describe("catálogo de regras de escalas", () => {
     expect(rule.excludedFromDuty).toHaveLength(11);
     expect(isExcludedFromDuty("José Victor", rule)).toBe(true);
     expect(isExcludedFromDuty("Matheus Freitas", rule)).toBe(true);
-    expect(rule.sundayDutyCount).toBeNull();
+    expect(rule.sundayDutyCount).toBe(3);
+    expect(rule.holidayDutyCount).toBe(3);
+    expect(rule.dutyCode).toBe("PLANTÃO");
   });
   it("adota sábado M. 1 em Desconexão CE e PE", () => {
     expect(getScheduleGenerationRule("fortaleza", "desconexao")?.saturdayShift).toBe("M. 1");
@@ -98,6 +100,54 @@ describe("semanas completas nas viradas de mês", () => {
   it("rejeita usar a própria competência como fonte", () => {
     expect(() => generateSchedulePreview(source("recife", "desconexao", names(3)), "2026-11"))
       .toThrow("mês anterior");
+  });
+});
+
+describe("Controle RN: referência de dezembro e plantões semanais", () => {
+  it("aloca 3 plantonistas por evento, incluindo supervisor e controlador de Adesão", () => {
+    const s = source("natal", "controle-operacional", names(15), "2026-11");
+    s.payload.people.forEach((p, i) => {
+      p.jobTitle = i < 3 ? "SUPERVISOR COP (ADESÃO)" :
+        i < 10 ? "CONTROLADOR (ADESÃO) - NTL" : "CONTROLADOR (DESC NTL)";
+      // Folgas de sexta-feira extraídas do mês anterior para uma pessoa.
+      for (const day of ["2026-11-06", "2026-11-13", "2026-11-20", "2026-11-27"]) {
+        p.assignments[day] = "Folga";
+      }
+    });
+    const preview = generateSchedulePreview(s, "2026-12");
+    expect(preview.eventCoverage.every((day) =>
+      day.assigned === 3)).toBe(true);
+    for (const event of preview.eventCoverage) {
+      const staff = preview.payload.people.filter((p) =>
+        p.assignments[event.date] === "PLANTÃO");
+      expect(staff).toHaveLength(3);
+      expect(staff.some((p) => p.jobTitle.startsWith("SUPERVISOR COP"))).toBe(true);
+      expect(staff.some((p) => p.jobTitle.startsWith("CONTROLADOR (ADESÃO)"))).toBe(true);
+    }
+    expect(preview.payload.people.every((p) =>
+      p.assignments["2026-12-05"] !== "M. 1")).toBe(true);
+  });
+
+  it("preserva 01–03/01 já programados no modelo de dezembro", () => {
+    const s = source("natal", "controle-operacional", names(12), "2026-12");
+    s.payload.people.forEach((p, i) => {
+      p.jobTitle = i < 2 ? "SUPERVISOR COP (ADESÃO)" :
+        i < 7 ? "CONTROLADOR (ADESÃO) - NTL" : "CONTROLADOR (DESC NTL)";
+      for (const d of ["2026-12-04", "2026-12-11", "2026-12-18", "2026-12-25"]) {
+        p.assignments[d] = "Folga";
+      }
+      p.assignments["2027-01-01"] = i < 3 ? "PLANTÃO" : "Folga";
+      p.assignments["2027-01-02"] = "Folga";
+      p.assignments["2027-01-03"] = i < 3 ? "PLANTÃO" : "Folga";
+    });
+    const preview = generateSchedulePreview(s, "2027-01");
+    for (let i = 0; i < s.payload.people.length; i++) {
+      const p = preview.payload.people[i]!;
+      expect(p.assignments["2027-01-01"]).toBe(s.payload.people[i]?.assignments["2027-01-01"]);
+      expect(p.assignments["2027-01-02"]).toBe("Folga");
+      expect(p.assignments["2027-01-03"]).toBe(s.payload.people[i]?.assignments["2027-01-03"]);
+    }
+    expect(preview.eventCoverage.find((d) => d.date === "2027-01-03")?.assigned).toBe(3);
   });
 });
 

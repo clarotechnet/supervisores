@@ -51,14 +51,30 @@ const isWork = (code: string | undefined) => !!code && scheduleCodeKind(code) ==
 const isOff = (code: string | undefined) =>
   !!code && (code === "Folga" || scheduleCodeKind(code) === "vacation");
 
-function historicalFixedDay(person: SchedulePerson, month: string, position: number): number {
-  const counts = [2, 3, 4].map((day) => ({
+function historicalFixedDay(
+  person: SchedulePerson, month: string, position: number,
+  rule: ScheduleGenerationRule,
+): { day: number; confident: boolean } {
+  const allowed = rule.fixedOffWeekdays?.length ? rule.fixedOffWeekdays : [2, 3, 4];
+  const counts = allowed.map((day) => ({
     day,
     n: scheduleMonthDates(month).filter((date) =>
       weekday(date) === day && person.assignments[date] === OFF).length,
   }));
   counts.sort((a, b) => b.n - a.n || a.day - b.day);
-  return counts[0]!.n >= 2 ? counts[0]!.day : [2, 3, 4][position % 3]!;
+  const confident = (counts[0]?.n ?? 0) >= 2;
+  return {
+    day: confident ? counts[0]!.day : allowed[position % allowed.length]!,
+    confident,
+  };
+}
+
+function isControlSupervisor(person: SchedulePerson) {
+  return normalizeScheduleEmployeeName(person.jobTitle).includes("SUPERVISOR COP");
+}
+function isControlAdesao(person: SchedulePerson) {
+  return normalizeScheduleEmployeeName(person.jobTitle).includes("CONTROLADOR") &&
+    normalizeScheduleEmployeeName(person.jobTitle).includes("ADESAO");
 }
 
 function dateIsHoliday(date: string, rule: ScheduleGenerationRule) {
@@ -114,6 +130,7 @@ export function generateSchedulePreview(
     lastEventIndex: number;
     protectedStatus: string | null;
     assignedDutyDays: Set<string>;
+    inheritedDays: Set<string>;
   };
   const people: GeneratedPerson[] = source.payload.people.map((person, index) => {
     const lastStatus = person.assignments[sourceDates.at(-1) || ""] || "";
@@ -127,8 +144,17 @@ export function generateSchedulePreview(
     const shiftOverride =
       rule.personShiftOverrides?.[normalizeScheduleEmployeeName(person.name)];
     const shift = shiftOverride || rule.defaultShift;
-    const fixed = historicalFixedDay(person, src, index);
+    const inferred = historicalFixedDay(person, src, index, rule);
+    const fixed = inferred.day;
+    if (!inferred.confident && rule.fixedOffWeekdays) {
+      blockingIssues.push(person.name +
+        ": folga fixa não identificada no mês anterior; confirmar dia antes de aprovar.");
+    }
+    const inheritedDays = new Set(dates.filter((date) =>
+      typeof person.assignments[date] === "string" && person.assignments[date]!.trim() !== ""));
     const assignments = Object.fromEntries(dates.map((date) => {
+      // O modelo importado inclui 01–03/01. Esses dias não podem ser substituídos.
+      if (inheritedDays.has(date)) return [date, person.assignments[date]!];
       if (protectedStatus) return [date, protectedStatus];
       if (weekday(date) === 0 || weekday(date) === fixed || dateIsHoliday(date, rule)) {
         return [date, OFF];
@@ -139,6 +165,7 @@ export function generateSchedulePreview(
       ...person, assignments, source: person, fixed,
       dutyCount: 0, lastEventIndex: -1000, protectedStatus,
       assignedDutyDays: new Set<string>(),
+      inheritedDays,
     };
   });
 
@@ -172,8 +199,25 @@ export function generateSchedulePreview(
       continue;
     }
     const absoluteIndex = sourceEvents.length + idx;
+    const inherited = people.filter((person) => {
+      if (!person.inheritedDays.has(date)) return false;
+      const code = person.assignments[date] || "";
+      return rule.dutyCode === "PLANTÃO"
+        ? normalizeScheduleEmployeeName(code) === "PLANTAO" : isWork(code);
+    });
+    if (inherited.length > quota) {
+      blockingIssues.push(date + ": o mês anterior já definiu " +
+        inherited.length + " plantões, acima da demanda " + quota + ".");
+    }
+    const assigned = [...inherited];
+    for (const person of inherited) {
+      if (isExcludedFromDuty(person.name, rule)) {
+        blockingIssues.push(date + ": plantão herdado de colaborador excluído: " + person.name);
+      }
+    }
     const candidates = people.filter((p) =>
       !p.protectedStatus &&
+      !p.inheritedDays.has(date) &&
       !isExcludedFromDuty(p.name, rule) &&
       !p.assignments[date]?.startsWith("Férias") &&
       (weekday(date) !== 0 || moveDate(date, -1) >= dates[0]! ||
@@ -183,27 +227,65 @@ export function generateSchedulePreview(
       a.dutyCount - b.dutyCount ||
       a.lastEventIndex - b.lastEventIndex ||
       nameKey(a).localeCompare(nameKey(b), "pt-BR"));
-    const assigned = candidates.slice(0, quota);
+    const assignRequired = (
+      minimum: number | undefined,
+      predicate: (person: SchedulePerson) => boolean,
+      label: string,
+    ) => {
+      if (!minimum) return;
+      while (assigned.filter(predicate).length < minimum && assigned.length < quota) {
+        const next = candidates.find((p) => !assigned.includes(p) && predicate(p));
+        if (!next) {
+          blockingIssues.push(date + ": falta cobertura de " + label + ".");
+          break;
+        }
+        assigned.push(next);
+      }
+    };
+    assignRequired(rule.minimumSupervisorDuty, isControlSupervisor, "supervisor COP");
+    assignRequired(rule.minimumAdesaoControllerDuty, isControlAdesao, "controlador de Adesão");
+    for (const person of candidates) {
+      if (assigned.length >= quota) break;
+      if (!assigned.includes(person)) assigned.push(person);
+    }
     for (const person of assigned) {
-      person.assignments[date] =
-        rule.personShiftOverrides?.[normalizeScheduleEmployeeName(person.name)] ||
-        rule.defaultShift;
+      if (!person.inheritedDays.has(date)) {
+        person.assignments[date] = rule.dutyCode ||
+          rule.personShiftOverrides?.[normalizeScheduleEmployeeName(person.name)] ||
+          rule.defaultShift;
+      }
       person.lastEventIndex = absoluteIndex;
       person.dutyCount++;
       person.assignedDutyDays.add(date);
       const saturday = compSaturday(date, dates);
-      if (saturday) person.assignments[saturday] = OFF;
-      else if (weekday(date) === 0) {
+      if (saturday) {
+        if (person.inheritedDays.has(saturday)) {
+          if (!isOff(person.assignments[saturday])) {
+            blockingIssues.push(person.name + ": sábado " + saturday +
+              " já está definido como trabalho no mês anterior.");
+          }
+        } else person.assignments[saturday] = OFF;
+      } else if (weekday(date) === 0) {
         const previousSaturday = moveDate(date, -1);
         if (previousSaturday < dates[0]!) {
           const actual = person.source.assignments[previousSaturday];
-          if (!isOff(actual)) blockingIssues.push(person.name + ": sábado anterior (" + previousSaturday + ") não foi folga; revisão necessária.");
+          if (!isOff(actual)) blockingIssues.push(person.name + ": sábado anterior (" +
+            previousSaturday + ") não foi folga; revisão necessária.");
         }
-      } else warnings.push(person.name + ": compensação após o dia " + date + " requer conferir o mês seguinte.");
+      } else warnings.push(person.name + ": compensação após " + date +
+        " exige conferir o próximo mês.");
     }
     if (assigned.length < quota) {
       blockingIssues.push(date + ": cobertura insuficiente (" +
         assigned.length + "/" + quota + ").");
+    }
+    if (rule.minimumSupervisorDuty &&
+      assigned.filter(isControlSupervisor).length < rule.minimumSupervisorDuty) {
+      blockingIssues.push(date + ": falta supervisor COP entre os plantonistas.");
+    }
+    if (rule.minimumAdesaoControllerDuty &&
+      assigned.filter(isControlAdesao).length < rule.minimumAdesaoControllerDuty) {
+      blockingIssues.push(date + ": falta controlador de Adesão entre os plantonistas.");
     }
     eventCoverage.push({ date, planned: quota, assigned: assigned.length });
   }
@@ -250,7 +332,8 @@ export function generateSchedulePreview(
         const candidates = week.filter((day) =>
           day >= firstDate &&
           isWork(full[day]) &&
-          !person.assignedDutyDays.has(day));
+          !person.assignedDutyDays.has(day) &&
+          !person.inheritedDays.has(day));
         candidates.sort((a, b) => {
           const coverage = (day: string) => people.filter((p) =>
             isWork(p.assignments[day])).length;
@@ -293,7 +376,7 @@ export function generateSchedulePreview(
   const outPeople: SchedulePerson[] = people.map(
     ({ source: _source, fixed: _fixed, dutyCount: _count,
       lastEventIndex: _index, protectedStatus: _protected,
-      assignedDutyDays: _duties, ...person }) => person,
+      assignedDutyDays: _duties, inheritedDays: _inherited, ...person }) => person,
   );
   return {
     rule, sourceMonth: src, targetMonth: target, eventCoverage,
