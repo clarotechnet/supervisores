@@ -16,6 +16,9 @@ export interface ScheduleGeneratedPreview {
   blockingIssues: string[];
   sourceMonth: string;
   targetMonth: string;
+  calendarWeeks: string[][];
+  // Dias fora da competência: mês anterior é histórico imutável; próximo mês é provisório.
+  outsideAssignments: Record<string, string>[];
 }
 
 const OFF = "Folga";
@@ -25,6 +28,23 @@ const nationalHolidays = new Set([
 ]);
 const iso = (day: string) => day.slice(5, 10);
 const weekday = (day: string) => new Date(day + "T12:00:00Z").getUTCDay();
+const moveDate = (day: string, amount: number) => {
+  const value = new Date(day + "T12:00:00Z");
+  value.setUTCDate(value.getUTCDate() + amount);
+  return value.toISOString().slice(0, 10);
+};
+
+export function scheduleCalendarWeeks(month: string): string[][] {
+  const dates = scheduleMonthDates(month);
+  const first = dates[0]!;
+  const last = dates.at(-1)!;
+  const start = moveDate(first, -(weekday(first) + 6) % 7);
+  const weeks: string[][] = [];
+  for (let monday = start; monday <= last; monday = moveDate(monday, 7)) {
+    weeks.push(Array.from({ length: 7 }, (_, index) => moveDate(monday, index)));
+  }
+  return weeks;
+}
 const nameKey = (person: SchedulePerson) =>
   normalizeScheduleEmployeeName(person.login || person.name);
 const isWork = (code: string | undefined) => !!code && scheduleCodeKind(code) === "work";
@@ -74,15 +94,15 @@ export function generateSchedulePreview(
   }
   const target = targetMonth.slice(0, 7);
   const src = source.schedule_month.slice(0, 7);
-  if (src === target) throw new Error("Selecione um mês diferente do período de origem.");
+  if (src !== getPreviousMonth(target)) {
+    throw new Error("A base da geração deve ser exatamente o mês anterior.");
+  }
   const dates = scheduleMonthDates(target);
   const sourceDates = scheduleMonthDates(src);
+  const calendarWeeks = scheduleCalendarWeeks(target);
   const warnings: string[] = [];
   const blockingIssues: string[] = [];
 
-  if (src !== getPreviousMonth(target)) {
-    warnings.push("Use preferencialmente o mês anterior como base para preservar o rodízio.");
-  }
   if (rule.requiresRoleBasedCoverage) {
     blockingIssues.push("Controle RN: informar cobertura por cidade/função antes da publicação.");
   }
@@ -93,6 +113,7 @@ export function generateSchedulePreview(
     dutyCount: number;
     lastEventIndex: number;
     protectedStatus: string | null;
+    assignedDutyDays: Set<string>;
   };
   const people: GeneratedPerson[] = source.payload.people.map((person, index) => {
     const lastStatus = person.assignments[sourceDates.at(-1) || ""] || "";
@@ -117,6 +138,7 @@ export function generateSchedulePreview(
     return {
       ...person, assignments, source: person, fixed,
       dutyCount: 0, lastEventIndex: -1000, protectedStatus,
+      assignedDutyDays: new Set<string>(),
     };
   });
 
@@ -154,6 +176,8 @@ export function generateSchedulePreview(
       !p.protectedStatus &&
       !isExcludedFromDuty(p.name, rule) &&
       !p.assignments[date]?.startsWith("Férias") &&
+      (weekday(date) !== 0 || moveDate(date, -1) >= dates[0]! ||
+        isOff(p.source.assignments[moveDate(date, -1)])) &&
       absoluteIndex - p.lastEventIndex > rule.minimumIntermediateDuties);
     candidates.sort((a, b) =>
       a.dutyCount - b.dutyCount ||
@@ -166,9 +190,16 @@ export function generateSchedulePreview(
         rule.defaultShift;
       person.lastEventIndex = absoluteIndex;
       person.dutyCount++;
+      person.assignedDutyDays.add(date);
       const saturday = compSaturday(date, dates);
       if (saturday) person.assignments[saturday] = OFF;
-      else warnings.push(person.name + ": sábado de compensação fora da competência em " + date);
+      else if (weekday(date) === 0) {
+        const previousSaturday = moveDate(date, -1);
+        if (previousSaturday < dates[0]!) {
+          const actual = person.source.assignments[previousSaturday];
+          if (!isOff(actual)) blockingIssues.push(person.name + ": sábado anterior (" + previousSaturday + ") não foi folga; revisão necessária.");
+        }
+      } else warnings.push(person.name + ": compensação após o dia " + date + " requer conferir o mês seguinte.");
     }
     if (assigned.length < quota) {
       blockingIssues.push(date + ": cobertura insuficiente (" +
@@ -177,34 +208,96 @@ export function generateSchedulePreview(
     eventCoverage.push({ date, planned: quota, assigned: assigned.length });
   }
 
-  // Verifica apenas semanas inteiramente contidas no mês; fronteiras exigem o mês vizinho.
-  const firstMonday = dates.findIndex((d) => weekday(d) === 1);
-  for (const person of people) {
+  // Projeta o calendário inteiro da primeira à última semana (segunda a domingo).
+  // Nunca modifica dias já ocorridos no mês-base; janeiro é apenas uma simulação
+  // quando a semana de dezembro termina depois da virada do mês.
+  const firstDate = dates[0]!;
+  const lastDate = dates.at(-1)!;
+  const calendarDates = calendarWeeks.flat();
+  const outsideAssignments = people.map((person) => Object.fromEntries(
+    calendarDates.filter((day) => day < firstDate || day > lastDate)
+      .map((day) => {
+        if (day < firstDate) {
+          const historical = person.source.assignments[day] || "Sem informação";
+          if (historical === "Sem informação") {
+            blockingIssues.push(person.name + ": falta histórico em " + day);
+          }
+          return [day, historical];
+        }
+        if (person.protectedStatus) return [day, person.protectedStatus];
+        const override = rule.personShiftOverrides?.[
+          normalizeScheduleEmployeeName(person.name)
+        ];
+        const shift = override || rule.defaultShift;
+        const code = weekday(day) === 0 || weekday(day) === person.fixed ||
+          dateIsHoliday(day, rule)
+          ? OFF
+          : weekday(day) === 6 ? (override || rule.saturdayShift) : shift;
+        return [day, code];
+      }),
+  ));
+  // O último domingo da competência pode depender de descanso em janeiro.
+  // Esses dias aparecem claramente como provisórios na prévia.
+  for (let index = 0; index < people.length; index++) {
+    const person = people[index]!;
     if (person.protectedStatus) continue;
-    for (let i = firstMonday; i >= 0 && i + 6 < dates.length; i += 7) {
-      const week = dates.slice(i, i + 7);
-      const rest = week.filter((day) => isOff(person.assignments[day])).length;
-      if (rest < 2) blockingIssues.push(person.name + ": apenas " +
-        rest + " folga(s) na semana de " + week[0]);
+    const full = { ...outsideAssignments[index], ...person.assignments };
+    for (const week of calendarWeeks) {
+      const countRest = () => week.filter((day) => isOff(full[day])).length;
+      while (countRest() < 2) {
+        // Primeiro ajusta somente a competência a ser gerada, depois os
+        // dias futuros provisórios. Nunca altera o histórico já importado.
+        const candidates = week.filter((day) =>
+          day >= firstDate &&
+          isWork(full[day]) &&
+          !person.assignedDutyDays.has(day));
+        candidates.sort((a, b) => {
+          const coverage = (day: string) => people.filter((p) =>
+            isWork(p.assignments[day])).length;
+          const inMonthA = a <= lastDate ? 0 : 1;
+          const inMonthB = b <= lastDate ? 0 : 1;
+          return inMonthA - inMonthB ||
+            coverage(b) - coverage(a) || a.localeCompare(b);
+        });
+        const chosen = candidates[0];
+        if (!chosen) break;
+        full[chosen] = OFF;
+        if (chosen <= lastDate) person.assignments[chosen] = OFF;
+        else outsideAssignments[index]![chosen] = OFF;
+      }
+      const rest = countRest();
+      if (rest < 2) {
+        blockingIssues.push(person.name + ": apenas " + rest +
+          " descanso(s) na semana " + week[0] + " a " + week[6]);
+      }
+      const worked = week.filter((day) => isWork(full[day])).length;
+      if (worked > 5) {
+        blockingIssues.push(person.name + ": " + worked +
+          " dias de trabalho na semana " + week[0] + " a " + week[6]);
+      }
     }
     let consecutive = 0;
-    for (const date of dates) {
-      consecutive = isWork(person.assignments[date]) ? consecutive + 1 : 0;
+    for (const day of calendarDates) {
+      consecutive = isWork(full[day]) ? consecutive + 1 : 0;
       if (consecutive > 6) {
-        blockingIssues.push(person.name + ": mais de 6 dias seguidos até " + date);
+        blockingIssues.push(person.name + ": mais de 6 dias consecutivos até " + day);
         break;
       }
     }
   }
-  warnings.push("Conferir horas de jornada, intervalos, legislação e CCT com RH.");
-  warnings.push("Conferir as semanas que atravessam a virada do mês.");
+  if (calendarDates.at(-1)! > lastDate) {
+    warnings.push("Os dias do mês seguinte são provisórios: confirme-os ao gerar a próxima competência.");
+  }
+  warnings.push("Conferir horas efetivas, intervalos, legislação e CCT com RH.");
 
   const outPeople: SchedulePerson[] = people.map(
     ({ source: _source, fixed: _fixed, dutyCount: _count,
-      lastEventIndex: _index, protectedStatus: _protected, ...person }) => person,
+      lastEventIndex: _index, protectedStatus: _protected,
+      assignedDutyDays: _duties, ...person }) => person,
   );
   return {
     rule, sourceMonth: src, targetMonth: target, eventCoverage,
+    calendarWeeks, outsideAssignments,
     warnings, blockingIssues,
     payload: {
       dates, people: outPeople,

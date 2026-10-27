@@ -8,7 +8,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import type { ScheduleUpload } from "@/lib/types";
+import type { ScheduleUpload, ScheduleUploadSummary } from "@/lib/types";
+import { fetchScheduleUpload } from "@/services/schedules";
 import {
   generateSchedulePreview, type ScheduleGeneratedPreview,
 } from "@/lib/schedule-generator";
@@ -25,37 +26,60 @@ import {
 interface ScheduleGeneratorDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  source: ScheduleUpload | null;
+  sourceSummary: ScheduleUploadSummary | null;
+  targetMonth: string;
   userId: string;
 }
-function nextMonth(value: string) {
+function previousMonth(value: string) {
   const [year, month] = value.slice(0, 7).split("-").map(Number);
-  const date = new Date(Date.UTC(year!, month!, 1));
-  return String(date.getUTCFullYear()) + "-" +
-    String(date.getUTCMonth() + 1).padStart(2, "0");
+  const date = new Date(Date.UTC(year!, month! - 2, 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 function brDate(value: string) {
   return value.slice(8, 10) + "/" + value.slice(5, 7) + "/" + value.slice(0, 4);
 }
 
 export function ScheduleGeneratorDialog({
-  open, onOpenChange, source, userId,
+  open, onOpenChange, sourceSummary, targetMonth, userId,
 }: ScheduleGeneratorDialogProps) {
-  const [month, setMonth] = useState("");
+  const month = targetMonth.slice(0, 7);
+  const [source, setSource] = useState<ScheduleUpload | null>(null);
+  const [loadingSource, setLoadingSource] = useState(false);
+  const [sourceError, setSourceError] = useState("");
   const [preview, setPreview] = useState<ScheduleGeneratedPreview | null>(null);
   const [exporting, setExporting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [drafts, setDrafts] = useState<GenerationDraft[]>([]);
   const [loadingDrafts, setLoadingDrafts] = useState(false);
   const [savedRevision, setSavedRevision] = useState<number | null>(null);
+  const [weekIndex, setWeekIndex] = useState(0);
   const rule = source ? getScheduleGenerationRule(source.city, source.sector) : null;
 
   useEffect(() => {
     if (!open) return;
-    setMonth(source ? nextMonth(source.schedule_month) : "");
     setPreview(null);
+    setWeekIndex(0);
     setSavedRevision(null);
-  }, [open, source?.id, source?.schedule_month]);
+  }, [open, targetMonth, sourceSummary?.id]);
+
+  useEffect(() => {
+    let active = true;
+    setSource(null);
+    setSourceError("");
+    if (!open || !sourceSummary) { setLoadingSource(false); return; }
+    setLoadingSource(true);
+    void fetchScheduleUpload(sourceSummary.id)
+      .then((row) => {
+        if (!active) return;
+        if (!row) throw new Error("Escala anterior não encontrada no banco.");
+        setSource(row);
+      })
+      .catch((error: unknown) => {
+        if (active) setSourceError(error instanceof Error ? error.message : "Não foi possível carregar o mês anterior.");
+      })
+      .finally(() => { if (active) setLoadingSource(false); });
+    return () => { active = false; };
+  }, [open, sourceSummary?.id]);
 
   useEffect(() => {
     if (!open || !source || !month) {
@@ -76,6 +100,7 @@ export function ScheduleGeneratorDialog({
     try {
       const result = generateSchedulePreview(source, month);
       setPreview(result);
+      setWeekIndex(0);
       setSavedRevision(null);
       if (result.blockingIssues.length) {
         toast.warning("Prévia criada com pendências obrigatórias.");
@@ -106,8 +131,8 @@ export function ScheduleGeneratorDialog({
   }
   function openDraft(draft: GenerationDraft) {
     if (!rule) return;
-    setMonth(draft.schedule_month.slice(0, 7));
     setPreview(restoreGenerationPreview(draft, rule));
+    setWeekIndex(0);
     setSavedRevision(draft.revision);
   }
   async function exportPreview() {
@@ -144,10 +169,14 @@ export function ScheduleGeneratorDialog({
             a IA online será conectada em uma etapa separada.
           </DialogDescription>
         </DialogHeader>
-        {!source || !rule ? (
+        {loadingSource ? (
+          <p className="flex items-center gap-2 text-sm"><Loader2 className="size-4 animate-spin" /> Buscando escala anterior...</p>
+        ) : !sourceSummary || !source ? (
           <p className="rounded-lg border border-dashed p-4 text-sm">
-            Selecione uma cidade, frente e escala importada com regra cadastrada.
+            {sourceError || `Não foi encontrada a escala-base de ${previousMonth(month)} para esta cidade e frente. Importe ou sincronize o mês anterior; não é necessário importar ${month}.`}
           </p>
+        ) : !rule ? (
+          <p className="rounded-lg border border-dashed p-4 text-sm">Não existe uma regra configurada para esta cidade e frente.</p>
         ) : (
           <div className="space-y-4">
             <div className="rounded-lg bg-muted/50 p-3 text-sm">
@@ -160,13 +189,8 @@ export function ScheduleGeneratorDialog({
             </div>
             <div className="flex flex-wrap items-end gap-3">
               <div className="grid gap-1">
-                <Label htmlFor="schedule-generate-month">Gerar competência</Label>
-                <Input id="schedule-generate-month" type="month" value={month}
-                  onChange={(event) => {
-                    setMonth(event.target.value);
-                    setPreview(null);
-                    setSavedRevision(null);
-                  }} />
+                <Label htmlFor="schedule-generate-month">Mês de destino (selecionado na página)</Label>
+                <Input id="schedule-generate-month" type="month" value={month} readOnly />
               </div>
               <Button onClick={generate} disabled={!month}>
                 <CalendarClock className="size-4" /> Gerar prévia
@@ -223,6 +247,64 @@ export function ScheduleGeneratorDialog({
                     <div className="text-xl font-bold">{preview.blockingIssues.length}</div>
                   </div>
                 </div>
+                {preview.calendarWeeks.length > 0 && (
+                  <section className="rounded-lg border p-3">
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <h3 className="text-sm font-bold">Escala semanal 5x2 (segunda a domingo)</h3>
+                        <p className="text-xs text-muted-foreground">
+                          Dias anteriores são históricos; dias do mês seguinte são provisórios.
+                        </p>
+                      </div>
+                      <select
+                        aria-label="Escolher semana da prévia"
+                        className="rounded-md border border-input bg-background px-3 py-2 text-xs"
+                        value={weekIndex}
+                        onChange={(event) => setWeekIndex(Number(event.target.value))}
+                      >
+                        {preview.calendarWeeks.map((week, index) => (
+                          <option key={week[0]} value={index}>
+                            {brDate(week[0]!)} a {brDate(week[6]!)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="max-h-96 overflow-auto">
+                      <table className="min-w-[760px] w-full border-collapse text-left text-xs">
+                        <thead className="sticky top-0 bg-card">
+                          <tr>
+                            <th className="sticky left-0 z-10 min-w-48 border-b bg-card p-2">Colaborador</th>
+                            {preview.calendarWeeks[weekIndex]?.map((day) => (
+                              <th key={day}
+                                className={`min-w-20 border-b p-2 text-center ${day.slice(0, 7) !== month ? "text-muted-foreground" : ""}`}>
+                                {new Date(day + "T12:00:00Z").toLocaleDateString("pt-BR", { weekday: "short", timeZone: "UTC" })}
+                                <div>{brDate(day).slice(0, 5)}</div>
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {preview.payload.people.map((person, index) => (
+                            <tr key={person.login || `${person.name}-${index}`} className="border-b">
+                              <td className="sticky left-0 bg-card p-2 font-medium">{person.name}</td>
+                              {preview.calendarWeeks[weekIndex]?.map((day) => {
+                                const code = day.slice(0, 7) === month
+                                  ? person.assignments[day]
+                                  : preview.outsideAssignments[index]?.[day];
+                                return (
+                                  <td key={day}
+                                    className={`p-2 text-center ${day.slice(0, 7) !== month ? "bg-muted/50 text-muted-foreground" : ""}`}>
+                                    {code || "—"}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                )}
                 {preview.blockingIssues.length > 0 && (
                   <section className="rounded-lg border border-destructive/35 bg-destructive/5 p-3">
                     <h3 className="text-sm font-bold">Pendências que impedem publicação</h3>

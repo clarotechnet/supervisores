@@ -58,6 +58,8 @@ export async function saveGeneratedDraft({
     const snapshot = {
       rule: preview.rule,
       eventCoverage: preview.eventCoverage,
+      calendarWeeks: preview.calendarWeeks,
+      outsideAssignments: preview.outsideAssignments,
       sourceMonth: preview.sourceMonth,
       engine: "deterministic-5x2-v1",
       published: false,
@@ -134,6 +136,10 @@ export function restoreGenerationPreview(
     blockingIssues: notices
       .filter((x) => x["level"] === "blocking" && typeof x["message"] === "string")
       .map((x) => String(x["message"])),
+    calendarWeeks: Array.isArray(snap["calendarWeeks"])
+      ? (snap["calendarWeeks"] as string[][]) : [],
+    outsideAssignments: Array.isArray(snap["outsideAssignments"])
+      ? (snap["outsideAssignments"] as Record<string, string>[]) : [],
     sourceMonth: String(snap["sourceMonth"] ?? draft.source_month ?? "").slice(0, 7),
     targetMonth: draft.schedule_month.slice(0, 7),
   };

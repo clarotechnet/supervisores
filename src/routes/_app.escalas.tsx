@@ -167,6 +167,16 @@ function SchedulesPage() {
   const selectedSummary = summaries.find(
     (item) => item.city === city && item.sector === sector && item.schedule_month === month,
   );
+  // O mês selecionado é o destino da geração; a base vem do mês anterior.
+  const previousMonth = (() => {
+    if (!month) return "";
+    const [year, monthNumber] = month.slice(0, 7).split("-").map(Number);
+    const previous = new Date(Date.UTC(year!, monthNumber! - 2, 1));
+    return `${previous.getUTCFullYear()}-${String(previous.getUTCMonth() + 1).padStart(2, "0")}-01`;
+  })();
+  const generatorSourceSummary = summaries.find((item) =>
+    item.city === city && item.sector === sector && item.schedule_month === previousMonth,
+  ) ?? null;
   const selectedSummaryId = selectedSummary?.id;
   // Updating via Sheets/Excel upserts the same row, so its ID stays unchanged.
   // Reload the payload when that row's imported/updated version changes too.
@@ -432,8 +442,8 @@ function SchedulesPage() {
               <Button
                 variant="outline"
                 onClick={() => setGeneratorOpen(true)}
-                disabled={!schedule || loadingSchedule || syncingSheets}
-                title="Gera uma prévia 5x2 sem substituir a escala atual"
+                disabled={loading || syncingSheets || !city || !sector || !month}
+                title="Usa a escala do mês anterior para gerar a competência selecionada, sem alterar a escala oficial"
               >
                 <Sparkles className="size-4" /> Gerar prévia 5x2
               </Button>
@@ -465,7 +475,7 @@ function SchedulesPage() {
           onChange={chooseSector}
         />
         <div className="grid gap-1.5">
-          <Label htmlFor="schedule-month">Mês</Label>
+          <Label htmlFor="schedule-month">Mês de consulta ou destino da nova escala</Label>
           <Input
             id="schedule-month"
             type="month"
@@ -541,7 +551,9 @@ function SchedulesPage() {
           <h2 className="mt-3 text-sm font-bold">Nenhuma escala para este filtro</h2>
           <p className="mt-1 text-xs text-muted-foreground">
             {canManageSchedules
-              ? "Atualize via API, importe o Excel desta cidade e frente ou escolha outra combinação."
+              ? generatorSourceSummary
+                ? `Ainda não existe escala publicada para ${monthLabel(month)}. Clique em Gerar prévia 5x2 para criar com base em ${monthLabel(previousMonth)}.`
+                : `Não existe escala de ${monthLabel(month)} nem base do mês anterior nesta frente. Importe ou sincronize ${monthLabel(previousMonth)} para gerar a nova.`
               : "Escolha outra combinação de cidade, frente e mês."}
           </p>
         </section>
@@ -645,7 +657,8 @@ function SchedulesPage() {
         <ScheduleGeneratorDialog
           open={generatorOpen}
           onOpenChange={setGeneratorOpen}
-          source={schedule}
+          sourceSummary={generatorSourceSummary}
+          targetMonth={month}
           userId={profile?.id ?? ""}
         />
       )}

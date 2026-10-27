@@ -38,6 +38,7 @@ export const scheduleGenerationRules: readonly ScheduleGenerationRule[] = [
     minimumIntermediateDuties: 0,
     dateDutyOverrides: { "2026-12-27": 20 },
     excludedFromDuty: excludedAdesaoNatal,
+    additionalHolidays: ["11-21"],
     notes: "A cobertura especial de 27/12/2026 não se repete automaticamente em outros meses.",
   },
   {
@@ -45,12 +46,14 @@ export const scheduleGenerationRules: readonly ScheduleGenerationRule[] = [
     sundayDutyCount: 0, holidayDutyCount: 1, holidayWeekdaysOnly: true,
     saturdayShift: "M. 1", defaultShift: "M. 1",
     minimumIntermediateDuties: 0, excludedFromDuty: [],
+    additionalHolidays: ["11-21"],
   },
   {
     city: "natal", sector: "vt", label: "Natal · VT",
     sundayDutyCount: 5, holidayDutyCount: 5,
     saturdayShift: "M. 1", defaultShift: "M. 1",
     minimumIntermediateDuties: 2, excludedFromDuty: [],
+    additionalHolidays: ["11-21"],
   },
   {
     city: "natal", sector: "construcao", label: "Natal · Construção",
