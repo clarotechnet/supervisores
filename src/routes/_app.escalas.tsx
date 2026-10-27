@@ -4,6 +4,7 @@ import {
   CalendarDays,
   FileSpreadsheet,
   Lightbulb,
+  Sparkles,
   Loader2,
   RefreshCw,
   StickyNote,
@@ -16,6 +17,7 @@ import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
 import { ScheduleDateNoteDialog } from "@/components/ScheduleDateNoteDialog";
 import { ScheduleSuggestionsDialog } from "@/components/ScheduleSuggestionsDialog";
+import { ScheduleGeneratorDialog } from "@/components/ScheduleGeneratorDialog";
 import { ScheduleComparisonTable } from "@/components/ScheduleComparisonTable";
 import { SchedulePeoplePicker } from "@/components/SchedulePeoplePicker";
 import { SchedulePdfButton } from "@/components/SchedulePdfButton";
@@ -126,6 +128,7 @@ function SchedulesPage() {
   const [dutyDateChoice, setDutyDateChoice] = useState("");
   const [importOpen, setImportOpen] = useState(false);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const [generatorOpen, setGeneratorOpen] = useState(false);
   const [dateNotes, setDateNotes] = useState<ScheduleDateNote[]>([]);
   const [noteDate, setNoteDate] = useState<string | null>(null);
   const [noteOpen, setNoteOpen] = useState(false);
@@ -428,6 +431,14 @@ function SchedulesPage() {
               </Button>
               <Button
                 variant="outline"
+                onClick={() => setGeneratorOpen(true)}
+                disabled={!schedule || loadingSchedule || syncingSheets}
+                title="Gera uma prévia 5x2 sem substituir a escala atual"
+              >
+                <Sparkles className="size-4" /> Gerar prévia 5x2
+              </Button>
+              <Button
+                variant="outline"
                 onClick={() => setImportOpen(true)}
                 disabled={syncingSheets || exportingReport}
               >
@@ -630,6 +641,14 @@ function SchedulesPage() {
         </div>
       )}
 
+      {canManageSchedules && (
+        <ScheduleGeneratorDialog
+          open={generatorOpen}
+          onOpenChange={setGeneratorOpen}
+          source={schedule}
+          userId={profile?.id ?? ""}
+        />
+      )}
       {canManageSchedules && (
         <ImportScheduleDialog
           open={importOpen}

@@ -686,6 +686,76 @@ export type Database = {
           },
         ];
       };
+      schedule_generation_policies: QualityTable<
+        {
+          id: string;
+          city: string;
+          sector: string;
+          rules: Json;
+          version: number;
+          updated_by: string | null;
+          created_at: string;
+          updated_at: string;
+        },
+        {
+          city: string;
+          sector: string;
+          rules: Json;
+          version?: number;
+          updated_by?: string | null;
+          id?: string;
+        }
+      >;
+      schedule_generation_drafts: QualityTable<
+        {
+          id: string;
+          city: string;
+          sector: string;
+          schedule_month: string;
+          revision: number;
+          source_upload_id: string | null;
+          source_month: string | null;
+          payload: Json;
+          policy_snapshot: Json;
+          warnings: Json;
+          status: "draft" | "approved" | "rejected";
+          created_by: string;
+          reviewed_by: string | null;
+          reviewed_at: string | null;
+          created_at: string;
+          updated_at: string;
+        },
+        {
+          city: string;
+          sector: string;
+          schedule_month: string;
+          revision: number;
+          source_upload_id?: string | null;
+          source_month?: string | null;
+          payload: Json;
+          policy_snapshot: Json;
+          warnings: Json;
+          status?: "draft" | "approved" | "rejected";
+          created_by: string;
+        }
+      >;
+      schedule_generation_events: QualityTable<
+        {
+          id: string;
+          draft_id: string;
+          actor_id: string;
+          action: "generated" | "edited" | "validated" | "submitted" | "approved" | "rejected";
+          changes: Json;
+          created_at: string;
+        },
+        {
+          draft_id: string;
+          actor_id: string;
+          action: "generated" | "edited" | "validated" | "submitted" | "approved" | "rejected";
+          changes?: Json;
+          id?: string;
+        }
+      >;
       schedule_date_notes: {
         Row: {
           author_id: string | null;
