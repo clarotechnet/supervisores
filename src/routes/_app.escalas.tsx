@@ -1,9 +1,24 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { SchedulePersonDetails } from "@/components/SchedulePersonDetails";
+import "@/components/schedule-layout.css";
+import { ScheduleTeamWorkspace } from "@/components/ScheduleTeamWorkspace";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import { ScheduleOfficialEditDialog } from "@/components/ScheduleOfficialEditDialog";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import {
   CalendarDays,
+  MoreHorizontal,
+  Pencil,
   FileSpreadsheet,
   Lightbulb,
+  Sparkles,
+  History,
   Loader2,
   RefreshCw,
   StickyNote,
@@ -16,8 +31,10 @@ import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
 import { ScheduleDateNoteDialog } from "@/components/ScheduleDateNoteDialog";
 import { ScheduleSuggestionsDialog } from "@/components/ScheduleSuggestionsDialog";
-import { ScheduleComparisonTable } from "@/components/ScheduleComparisonTable";
-import { SchedulePeoplePicker } from "@/components/SchedulePeoplePicker";
+import { ScheduleGeneratorDialog } from "@/components/ScheduleGeneratorDialog";
+import { ScheduleOperationalDialog } from "@/components/ScheduleOperationalDialog";
+import { ScheduleOperationalPreview } from "@/components/ScheduleOperationalPreview";
+import { latestOperationalSource, syncOperationalSheet } from "@/services/schedule-operational";
 import { SchedulePdfButton } from "@/components/SchedulePdfButton";
 import { Button } from "@/components/ui/button";
 import {
@@ -38,6 +55,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useAuth } from "@/hooks/useAuth";
+import { useControlScheduleAccess } from "@/hooks/useControlScheduleAccess";
+import { ScheduleControlAccessGate } from "@/components/ScheduleControlAccessGate";
+import { ScheduleControlAccessDialog } from "@/components/ScheduleControlAccessDialog";
 import {
   SCHEDULE_CITY_OPTIONS,
   SCHEDULE_SECTOR_OPTIONS,
@@ -66,14 +86,13 @@ import { cn } from "@/lib/utils";
 import { todayKey } from "@/lib/date-utils";
 import { canManageSchedulesForRole } from "@/lib/access";
 import {
-  reconcileScheduleSelection,
   scheduleMonthDates,
   scheduleDutyDate,
   schedulePeopleOnDuty,
   schedulePeopleOnDutyInMonth,
   SCHEDULE_KIND_STYLE,
 } from "@/lib/schedule-view";
-import { downloadScheduleReport, isLunchExcludedM2 } from "@/lib/schedule-report";
+import { downloadScheduleReport } from "@/lib/schedule-report";
 
 export const Route = createFileRoute("/_app/escalas")({
   head: () => ({
@@ -121,19 +140,41 @@ function SchedulesPage() {
   const [month, setMonth] = useState("");
   const [selectedPersonNames, setSelectedPersonNames] = useState<string[]>([]);
   const [personSearch, setPersonSearch] = useState("");
+  const [inspectName, setInspectName] = useState("");
+  const [inspectDate, setInspectDate] = useState("");
+  const loadedScheduleId = useRef<string | null>(null);
   const [dutyScope, setDutyScope] = useState<"day" | "month" | null>(null);
   const onDutyOnly = dutyScope !== null;
   const [dutyDateChoice, setDutyDateChoice] = useState("");
   const [importOpen, setImportOpen] = useState(false);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const [generatorOpen, setGeneratorOpen] = useState(false);
+  const [operationalOpen, setOperationalOpen] = useState(false);
+  const [officialEditOpen, setOfficialEditOpen] = useState(false);
   const [dateNotes, setDateNotes] = useState<ScheduleDateNote[]>([]);
   const [noteDate, setNoteDate] = useState<string | null>(null);
   const [noteOpen, setNoteOpen] = useState(false);
   const [savingNote, setSavingNote] = useState(false);
   const [syncingSheets, setSyncingSheets] = useState(false);
+  const [operationalRefreshKey, setOperationalRefreshKey] = useState(0);
   const [exportingReport, setExportingReport] = useState(false);
-  const canManageSchedules = profile ? canManageSchedulesForRole(profile.role) : false;
-  const canUseSuggestions = isAdmin || isController;
+  const [accessDialogOpen, setAccessDialogOpen] = useState(false);
+  const scopeAccess = useControlScheduleAccess(profile?.id, isAdmin, city, sector);
+  const canManageSchedules = profile ? canManageSchedulesForRole(profile.role, sector) : false;
+  const canUseSuggestions = (isAdmin || isController) && scopeAccess.allowed;
+
+  useEffect(() => {
+    if (scopeAccess.allowed) return;
+    setNoteOpen(false);
+    setSuggestionsOpen(false);
+    setGeneratorOpen(false);
+    setOperationalOpen(false);
+    setOfficialEditOpen(false);
+    setImportOpen(false);
+    setSelectedPersonNames([]);
+    setDateNotes([]);
+    setInspectName("");
+  }, [scopeAccess.allowed]);
 
   const loadSummaries = useCallback(async () => {
     setLoading(true);
@@ -161,10 +202,26 @@ function SchedulesPage() {
     void loadSummaries();
   }, [loadSummaries]);
 
+  useEffect(() => {
+    if (scopeAccess.restricted && scopeAccess.allowed && !isAdmin) void loadSummaries();
+  }, [scopeAccess.restricted, scopeAccess.allowed, city, isAdmin, loadSummaries]);
+
   const selectedSummary = summaries.find(
     (item) => item.city === city && item.sector === sector && item.schedule_month === month,
   );
-  const selectedSummaryId = selectedSummary?.id;
+  // O mês selecionado é o destino da geração; a base vem do mês anterior.
+  const previousMonth = (() => {
+    if (!month) return "";
+    const [year, monthNumber] = month.slice(0, 7).split("-").map(Number);
+    const previous = new Date(Date.UTC(year!, monthNumber! - 2, 1));
+    return `${previous.getUTCFullYear()}-${String(previous.getUTCMonth() + 1).padStart(2, "0")}-01`;
+  })();
+  const generatorSourceSummary =
+    summaries.find(
+      (item) =>
+        item.city === city && item.sector === sector && item.schedule_month === previousMonth,
+    ) ?? null;
+  const selectedSummaryId = scopeAccess.allowed ? selectedSummary?.id : undefined;
   // Updating via Sheets/Excel upserts the same row, so its ID stays unchanged.
   // Reload the payload when that row's imported/updated version changes too.
   const selectedSummaryVersion = selectedSummary
@@ -188,9 +245,14 @@ function SchedulesPage() {
         if (!active) return;
         setSchedule(data);
         setDateNotes(notes);
+        const changed = loadedScheduleId.current !== data?.id;
+        loadedScheduleId.current = data?.id || null;
         setSelectedPersonNames((current) =>
-          reconcileScheduleSelection(current, data?.payload.people ?? []),
+          changed
+            ? data?.payload.people.map((person) => person.name) || []
+            : current.filter((name) => data?.payload.people.some((person) => person.name === name)),
         );
+        if (changed) setInspectName("");
       })
       .catch(() => toast.error("Não foi possível abrir esta escala."))
       .finally(() => {
@@ -227,23 +289,7 @@ function SchedulesPage() {
     () => selectedPersonNames.filter((name) => eligibleNames.has(name)),
     [selectedPersonNames, eligibleNames],
   );
-  const people = useMemo(() => {
-    const query = personSearch.trim().toLocaleLowerCase("pt-BR");
-    return eligiblePeople.filter(
-      (person) =>
-        !query ||
-        person.name.toLocaleLowerCase("pt-BR").includes(query) ||
-        (person.login ?? "").toLocaleLowerCase("pt-BR").includes(query) ||
-        person.jobTitle.toLocaleLowerCase("pt-BR").includes(query),
-    );
-  }, [eligiblePeople, personSearch]);
 
-  const selectedPeople = useMemo(() => {
-    const names = new Set(selectedPersonNames);
-    return eligiblePeople.filter((person) => names.has(person.name));
-  }, [eligiblePeople, selectedPersonNames]);
-  const person = selectedPeople[0] ?? null;
-  const multiplePeople = selectedPeople.length > 1;
   const dutyFilterDescription =
     dutyScope === "day"
       ? `Plantão em ${dateFromIso(dutyDate).toLocaleDateString("pt-BR")} - calendário completo do mês dos colaboradores selecionados`
@@ -283,6 +329,20 @@ function SchedulesPage() {
     }
     setSyncingSheets(true);
     try {
+      // First prefer the specific operational spreadsheet linked to this period.
+      // Legacy schedule-sync still serves the old fixed-ID Google Sheets.
+      const operational = await latestOperationalSource(city, sector, month);
+      if (operational) {
+        const result = await syncOperationalSheet(operational.id);
+        setOperationalRefreshKey((x) => x + 1);
+        await loadSummaries();
+        toast.success(
+          result.changes
+            ? result.changes + " alteração(ões) recebida(s) do Google Sheets editável."
+            : "Escala editável já está atualizada. Nenhuma mudança nova.",
+        );
+        return;
+      }
       const result = await syncScheduleFromSheets(city, sector, month);
       await loadSummaries();
       setCity(result.city);
@@ -380,256 +440,377 @@ function SchedulesPage() {
     }
   }
 
+  const inspectedPerson =
+    scopeAccess.allowed && schedule && schedule.id === selectedSummaryId
+      ? schedule.payload.people.find((p) => p.name === inspectName)
+      : undefined;
+  const periodControls = (
+    <>
+      <Button
+        size="sm"
+        variant={!dutyScope ? "default" : "ghost"}
+        aria-pressed={!dutyScope}
+        disabled={!month}
+        onClick={() => setDutyScope(null)}
+      >
+        <CalendarDays className="size-3.5" />
+        Mês completo
+      </Button>
+      <Button
+        size="sm"
+        variant={dutyScope === "day" ? "default" : "ghost"}
+        aria-pressed={dutyScope === "day"}
+        disabled={!month}
+        onClick={() => setDutyScope(dutyScope === "day" ? null : "day")}
+      >
+        <UserCheck className="size-3.5" />
+        Atividade no dia
+      </Button>
+      <Button
+        size="sm"
+        variant={dutyScope === "month" ? "default" : "ghost"}
+        aria-pressed={dutyScope === "month"}
+        disabled={!month}
+        onClick={() => setDutyScope(dutyScope === "month" ? null : "month")}
+      >
+        Atividade no mês
+      </Button>
+      {dutyScope === "day" && (
+        <Input
+          aria-label="Data do plantão / atividade"
+          type="date"
+          value={dutyDate}
+          min={monthDates[0]}
+          max={monthDates.at(-1)}
+          onChange={(e) => setDutyDateChoice(e.target.value)}
+          className="h-8 w-auto text-xs"
+        />
+      )}
+    </>
+  );
   return (
-    <AppShell>
-      <header className="mb-5 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-primary">
-            Controle operacional
-          </p>
-          <h1 className="mt-1 text-2xl font-black">Escalas</h1>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {canManageSchedules
-              ? "Consulte, sincronize ou importe a programação por cidade, frente e mês."
-              : "Consulte a programação por cidade, frente e mês."}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {canUseSuggestions && (
-            <Button variant="outline" onClick={() => setSuggestionsOpen(true)}>
-              <Lightbulb className="size-4" /> Sugestões
-            </Button>
-          )}
-          {canManageSchedules && (
-            <>
-              <Button
-                onClick={() => void updateFromSheets()}
-                disabled={syncingSheets || loading || !city || !sector || !month}
-              >
-                {syncingSheets ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="size-4" />
+    <AppShell fullWidth>
+      <div className="schedule-layout">
+        <header className="schedule-page-header">
+          <div className="schedule-page-brand">
+            <span className="schedule-brand-icon">
+              <CalendarDays className="size-5" />
+            </span>
+            <div>
+              <h1>Escala da equipe</h1>
+              <p>
+                {cityLabel(city)} · {sectorLabel(sector)}
+                {month && (
+                  <>
+                    {" "}
+                    · <span className="capitalize">{monthLabel(month)}</span>
+                  </>
                 )}
-                {syncingSheets ? "Atualizando..." : "Atualizar via API"}
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => void exportExcelReport()}
-                disabled={syncingSheets || exportingReport || !schedule}
-                title="Gera o resumo mensal de todos os colaboradores desta escala"
-              >
-                {exportingReport ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <FileSpreadsheet className="size-4" />
-                )}
-                {exportingReport ? "Gerando..." : "Relatório Excel"}
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => setImportOpen(true)}
-                disabled={syncingSheets || exportingReport}
-              >
-                <Upload className="size-4" /> Importar Excel
-              </Button>
-            </>
-          )}
-        </div>
-      </header>
-
-      <section className="mb-5 grid gap-4 rounded-2xl border border-border bg-card p-5 shadow-card md:grid-cols-3">
-        <FilterSelect
-          label="Cidade"
-          value={city}
-          placeholder="Selecione a cidade"
-          options={SCHEDULE_CITY_OPTIONS}
-          onChange={chooseCity}
-        />
-        <FilterSelect
-          label="Frente"
-          value={sector}
-          placeholder="Selecione a frente"
-          options={frontOptions}
-          onChange={chooseSector}
-        />
-        <div className="grid gap-1.5">
-          <Label htmlFor="schedule-month">Mês</Label>
-          <Input
-            id="schedule-month"
-            type="month"
-            value={month.slice(0, 7)}
-            onChange={(event) => setMonth(event.target.value ? `${event.target.value}-01` : "")}
-          />
-        </div>
-        <div className="flex flex-wrap items-end gap-3 border-t border-border pt-4 md:col-span-3">
-          <Button
-            type="button"
-            variant={dutyScope === "day" ? "default" : "outline"}
-            aria-pressed={dutyScope === "day"}
-            onClick={() => setDutyScope((current) => (current === "day" ? null : "day"))}
-            disabled={!month || loading || loadingSchedule}
-          >
-            <UserCheck className="size-4" /> Somente de plantão
-          </Button>
-          <Button
-            type="button"
-            variant={dutyScope === "month" ? "default" : "outline"}
-            aria-pressed={dutyScope === "month"}
-            onClick={() => setDutyScope((current) => (current === "month" ? null : "month"))}
-            disabled={!month || loading || loadingSchedule}
-          >
-            <CalendarDays className="size-4" /> Plantão no mês
-          </Button>
-          {onDutyOnly && (
-            <>
-              {dutyScope === "day" && (
-                <div className="grid gap-1.5">
-                  <Label htmlFor="schedule-duty-date">Data do plantão</Label>
-                  <Input
-                    id="schedule-duty-date"
-                    type="date"
-                    value={dutyDate}
-                    min={monthDates[0]}
-                    max={monthDates.at(-1)}
-                    onChange={(event) => setDutyDateChoice(event.target.value)}
-                    className="w-auto"
-                  />
-                </div>
-              )}
-              {selectedSummary && schedule?.id === selectedSummaryId && !loadingSchedule && (
-                <p role="status" className="pb-2 text-xs font-semibold text-primary">
-                  {eligiblePeople.length} colaborador(es){" "}
-                  {dutyScope === "month"
-                    ? `com plantão em ${monthLabel(month)}.`
-                    : `de plantão em ${dateFromIso(dutyDate).toLocaleDateString("pt-BR")}.`}
-                </p>
-              )}
-              <p className="basis-full text-[11px] text-muted-foreground">
-                {dutyScope === "month"
-                  ? "Mostra quem tem pelo menos um dia de trabalho/turno no mês selecionado, dentro da cidade e frente escolhidas."
-                  : "Mostra quem tem trabalho/turno na data escolhida, dentro da cidade, frente e mês selecionados. Folgas, férias, faltas, atestados e afastamentos ficam ocultos."}{" "}
-                As seleções ocultas são mantidas ao desligar o filtro.
               </p>
-            </>
-          )}
-        </div>
-      </section>
-
-      {loading ? (
-        <LoadingCard label="Carregando escalas..." />
-      ) : summaries.length === 0 ? (
-        canManageSchedules ? (
-          <EmptySchedule onImport={() => setImportOpen(true)} />
-        ) : (
-          <EmptySchedule />
-        )
-      ) : !selectedSummary ? (
-        <section className="rounded-2xl border border-dashed border-border bg-card p-12 text-center">
-          <CalendarDays className="mx-auto size-8 text-muted-foreground/50" />
-          <h2 className="mt-3 text-sm font-bold">Nenhuma escala para este filtro</h2>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {canManageSchedules
-              ? "Atualize via API, importe o Excel desta cidade e frente ou escolha outra combinação."
-              : "Escolha outra combinação de cidade, frente e mês."}
-          </p>
-        </section>
-      ) : loadingSchedule || !schedule ? (
-        <LoadingCard label="Abrindo a escala..." />
-      ) : (
-        <div className="grid gap-5">
-          <section className="rounded-2xl bg-gradient-to-r from-navy to-[#8f2937] p-6 text-white shadow-hero">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <span className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-white/60">
-                  {cityLabel(schedule.city)} · {sectorLabel(schedule.sector)}
-                </span>
-                <h2 className="mt-2 text-2xl font-black capitalize">
-                  Escala de {monthLabel(schedule.schedule_month)}
-                </h2>
-                <p className="mt-1 text-xs text-white/65">
-                  {schedule.employee_count} colaboradores · {schedule.entry_count} marcações ·{" "}
-                  {schedule.source_file.startsWith("Google Sheets") ? "Google Sheets" : "Excel"} ·
-                  aba “{schedule.source_sheet}”
-                </p>
-                <p className="mt-1 text-[10px] text-white/55">
-                  Atualizado em {new Date(schedule.imported_at).toLocaleString("pt-BR")}
-                </p>
-              </div>
-              {canManageSchedules && (
+            </div>
+          </div>
+          <div className="schedule-page-actions">
+            {canManageSchedules && (
+              <>
                 <Button
-                  variant="outline"
-                  className="border-white/30 bg-white/10 text-white hover:bg-white/20 hover:text-white"
-                  onClick={() => void removeCurrentSchedule()}
+                  size="sm"
+                  onClick={() => void updateFromSheets()}
+                  disabled={syncingSheets || loading || !city || !sector || !month}
                 >
-                  <Trash2 className="size-4" /> Excluir escala
+                  {syncingSheets ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <RefreshCw className="size-3.5" />
+                  )}
+                  <span>{syncingSheets ? "Atualizando..." : "Atualizar via API"}</span>
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setGeneratorOpen(true)}
+                  disabled={loading || syncingSheets || !city || !sector || !month}
+                >
+                  <Sparkles className="size-3.5" />
+                  <span>Gerar prévia 5x2</span>
+                </Button>
+              </>
+            )}
+            {scopeAccess.allowed &&
+              schedule &&
+              schedule.id === selectedSummaryId &&
+              !loadingSchedule && (
+                <SchedulePdfButton
+                  people={schedule.payload.people}
+                  month={schedule.schedule_month}
+                  city={cityLabel(city)}
+                  sector={sectorLabel(sector)}
+                  notes={dateNotes}
+                  filterDescription="Escala completa da equipe"
+                />
+              )}
+            {(isAdmin || canUseSuggestions || canManageSchedules) && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" variant="outline" aria-label="Mais ações da escala">
+                    <MoreHorizontal className="size-4" />
+                    <span>Ações</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-56">
+                  {canManageSchedules && (
+                    <>
+                      {schedule?.source_file.startsWith("Google Sheets") && (
+                        <DropdownMenuItem
+                          disabled={syncingSheets || loadingSchedule}
+                          onSelect={() => setOfficialEditOpen(true)}
+                        >
+                          <Pencil className="size-4" />
+                          Editar escala oficial
+                        </DropdownMenuItem>
+                      )}
+                      <DropdownMenuItem
+                        disabled={!city || !sector || !month}
+                        onSelect={() => setOperationalOpen(true)}
+                      >
+                        <History className="size-4" />
+                        Escala editável e histórico
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        disabled={exportingReport || !schedule}
+                        onSelect={() => void exportExcelReport()}
+                      >
+                        <FileSpreadsheet className="size-4" />
+                        {exportingReport ? "Gerando relatório..." : "Relatório Excel"}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        disabled={syncingSheets || exportingReport}
+                        onSelect={() => setImportOpen(true)}
+                      >
+                        <Upload className="size-4" />
+                        Importar Excel
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                  {canUseSuggestions && (
+                    <DropdownMenuItem onSelect={() => setSuggestionsOpen(true)}>
+                      <Lightbulb className="size-4" />
+                      Sugestões
+                    </DropdownMenuItem>
+                  )}
+                  {isAdmin && (
+                    <DropdownMenuItem onSelect={() => setAccessDialogOpen(true)}>
+                      <UserCheck className="size-4" />
+                      Autorizações Controle
+                    </DropdownMenuItem>
+                  )}
+                  {canManageSchedules &&
+                    schedule &&
+                    schedule.source_file !== "Google Sheets - Escala operacional oficial" && (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          className="text-destructive"
+                          onSelect={() => void removeCurrentSchedule()}
+                        >
+                          <Trash2 className="size-4" />
+                          Excluir escala importada
+                        </DropdownMenuItem>
+                      </>
+                    )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
+        </header>
+        <section className="schedule-scope-filters" aria-label="Cidade, frente e competência">
+          <FilterSelect
+            label="Cidade"
+            value={city}
+            placeholder="Selecione a cidade"
+            options={SCHEDULE_CITY_OPTIONS}
+            onChange={chooseCity}
+          />
+          <FilterSelect
+            label="Frente"
+            value={sector}
+            placeholder="Selecione a frente"
+            options={frontOptions}
+            onChange={chooseSector}
+          />
+          <div className="grid min-w-0 gap-1">
+            <Label htmlFor="schedule-month">Mês da escala / geração</Label>
+            <Input
+              id="schedule-month"
+              type="month"
+              value={month.slice(0, 7)}
+              onChange={(e) => setMonth(e.target.value ? e.target.value + "-01" : "")}
+            />
+          </div>
+        </section>
+        {scopeAccess.allowed &&
+          city &&
+          sector &&
+          month &&
+          (isAdmin ||
+            sector !== "controle-operacional" ||
+            selectedSummary?.source_file === "Google Sheets - Escala operacional oficial") && (
+            <div className="schedule-source-wrapper">
+              <ScheduleOperationalPreview
+                city={city}
+                sector={sector}
+                month={month}
+                refreshKey={operationalRefreshKey}
+                official={
+                  selectedSummary?.source_file === "Google Sheets - Escala operacional oficial"
+                }
+                canOpenSheet={isAdmin}
+              />
+            </div>
+          )}
+        <div className="schedule-page-content">
+          {!scopeAccess.allowed ? (
+            <ScheduleControlAccessGate
+              key={city}
+              city={city}
+              cityLabel={cityLabel(city)}
+              loading={scopeAccess.loading}
+              error={scopeAccess.error}
+              request={scopeAccess.request}
+              onRefresh={() => void scopeAccess.refetch()}
+            />
+          ) : loading ? (
+            <LoadingCard label="Carregando escalas..." />
+          ) : summaries.length === 0 ? (
+            <EmptySchedule
+              {...(canManageSchedules ? { onImport: () => setImportOpen(true) } : {})}
+            />
+          ) : !selectedSummary ? (
+            <section className="schedule-empty">
+              <CalendarDays className="size-8" />
+              <h2>Nenhuma escala oficial publicada neste filtro</h2>
+              <p>
+                {canManageSchedules
+                  ? generatorSourceSummary
+                    ? `Ainda não existe escala publicada para ${monthLabel(month)}. Use Gerar prévia 5x2 com base em ${monthLabel(previousMonth)}.`
+                    : `Importe ou sincronize ${monthLabel(previousMonth)} para gerar a nova escala.`
+                  : "Escolha outra cidade, frente ou mês."}
+              </p>
+              {canManageSchedules && (
+                <Button variant="outline" onClick={() => setGeneratorOpen(true)}>
+                  <Sparkles className="size-4" />
+                  Gerar prévia 5x2
                 </Button>
               )}
-            </div>
-          </section>
-
-          <section
-            className={cn(
-              "grid min-w-0 gap-4 rounded-2xl border border-border bg-card p-5 shadow-card",
-              !multiplePeople && "lg:grid-cols-[300px_minmax(0,1fr)]",
-            )}
-          >
-            <SchedulePeoplePicker
-              people={people}
+            </section>
+          ) : loadingSchedule || !schedule ? (
+            <LoadingCard label="Abrindo a escala..." />
+          ) : (
+            <ScheduleTeamWorkspace
+              key={schedule.id}
+              schedule={schedule}
+              city={cityLabel(city)}
+              sector={sectorLabel(sector)}
+              people={eligiblePeople}
               selectedNames={visibleSelectedNames}
+              onSelectionChange={choosePeople}
               search={personSearch}
               onSearchChange={setPersonSearch}
-              onSelectionChange={choosePeople}
-              emptyMessage={
-                onDutyOnly && eligiblePeople.length === 0
-                  ? dutyScope === "month"
-                    ? "Nenhum colaborador com plantão neste mês para a cidade e frente selecionadas."
-                    : "Nenhum colaborador de plantão nesta data para a cidade e frente selecionadas."
-                  : undefined
-              }
+              notes={dateNotes}
+              isAdmin={isAdmin}
+              onOpenNote={openDateNote}
+              onShowPerson={(name, date) => {
+                setInspectName(name);
+                setInspectDate(date || "");
+              }}
+              filterDescription={dutyFilterDescription}
+              periodControls={periodControls}
             />
-
-            {multiplePeople ? (
-              <ScheduleComparisonTable
-                people={selectedPeople}
-                month={schedule.schedule_month}
-                city={cityLabel(schedule.city)}
-                sector={sectorLabel(schedule.sector)}
-                notes={dateNotes}
-                filterDescription={dutyFilterDescription}
-                isAdmin={isAdmin}
-                onOpenNote={openDateNote}
-                onShowPerson={(name) => {
-                  choosePeople([name]);
-                  setPersonSearch("");
-                }}
-              />
-            ) : person ? (
-              <PersonSchedule
-                person={person}
-                month={schedule.schedule_month}
-                sector={schedule.sector}
-                city={schedule.city}
-                filterDescription={dutyFilterDescription}
-                notes={dateNotes}
-                isAdmin={isAdmin}
-                onOpenNote={openDateNote}
-              />
-            ) : (
-              <div className="grid min-h-[360px] place-items-center text-center text-xs text-muted-foreground">
-                {onDutyOnly
-                  ? eligiblePeople.length
-                    ? "Selecione os colaboradores de plantão para consultar ou comparar as escalas."
-                    : dutyScope === "month"
-                      ? "Nenhum colaborador com plantão neste mês. Escolha outro mês ou desligue o filtro."
-                      : "Nenhum colaborador de plantão nesta data. Escolha outro dia ou desligue o filtro."
-                  : "Selecione uma ou mais pessoas para consultar a escala."}
-              </div>
-            )}
-          </section>
+          )}
         </div>
-      )}
+      </div>
+      <Dialog
+        open={!!inspectedPerson}
+        onOpenChange={(open) => {
+          if (!open) setInspectName("");
+        }}
+      >
+        <DialogContent
+          overlayClassName="bg-black/60 backdrop-blur-sm"
+          className="schedule-person-dialog max-h-[90vh] max-w-2xl overflow-y-auto"
+        >
+          <DialogHeader className="sr-only">
+            <DialogTitle>{inspectedPerson?.name || "Escala individual"}</DialogTitle>
+            <DialogDescription>
+              Resumo e calendário do colaborador no mês selecionado.
+            </DialogDescription>
+          </DialogHeader>
+          {inspectedPerson && schedule && (
+            <SchedulePersonDetails
+              person={inspectedPerson}
+              month={schedule.schedule_month}
+              sector={schedule.sector}
+              city={schedule.city}
+              filterDescription={dutyFilterDescription}
+              notes={dateNotes}
+              isAdmin={isAdmin}
+              onOpenNote={(date) => {
+                setInspectName("");
+                openDateNote(date);
+              }}
+              focusDate={inspectDate}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
+      {isAdmin && (
+        <ScheduleControlAccessDialog
+          open={accessDialogOpen}
+          onOpenChange={setAccessDialogOpen}
+          userId={profile?.id ?? ""}
+        />
+      )}
+      {canManageSchedules && scopeAccess.allowed && (
+        <ScheduleOfficialEditDialog
+          open={officialEditOpen}
+          onOpenChange={setOfficialEditOpen}
+          schedule={schedule}
+          onSaved={async () => {
+            await loadSummaries();
+            setOperationalRefreshKey((x) => x + 1);
+          }}
+        />
+      )}
+      {canManageSchedules && (
+        <ScheduleGeneratorDialog
+          open={generatorOpen}
+          onOpenChange={setGeneratorOpen}
+          sourceSummary={generatorSourceSummary}
+          city={city}
+          sector={sector}
+          targetMonth={month}
+          userId={profile?.id ?? ""}
+          isAdmin={isAdmin}
+          onPublished={async () => {
+            await loadSummaries();
+            setOperationalRefreshKey((x) => x + 1);
+          }}
+        />
+      )}
+      {canManageSchedules && (
+        <ScheduleOperationalDialog
+          open={operationalOpen}
+          onOpenChange={setOperationalOpen}
+          city={city}
+          sector={sector}
+          month={month}
+          canOpenSheet={isAdmin}
+          onSynced={async () => {
+            await loadSummaries();
+            setOperationalRefreshKey((x) => x + 1);
+          }}
+        />
+      )}
       {canManageSchedules && (
         <ImportScheduleDialog
           open={importOpen}
@@ -683,7 +864,7 @@ function FilterSelect({
   onChange: (value: string) => void;
 }) {
   return (
-    <div className="grid gap-1.5">
+    <div className="grid min-w-0 gap-1.5">
       <Label>{label}</Label>
       <Select value={value} onValueChange={onChange}>
         <SelectTrigger>
@@ -728,187 +909,6 @@ function EmptySchedule({ onImport }: { onImport?: () => void }) {
         </Button>
       )}
     </section>
-  );
-}
-
-function PersonSchedule({
-  person,
-  month,
-  sector,
-  city,
-  filterDescription,
-  notes,
-  isAdmin,
-  onOpenNote,
-}: {
-  person: SchedulePerson;
-  month: string;
-  sector: string;
-  city: string;
-  filterDescription: string;
-  notes: ScheduleDateNote[];
-  isAdmin: boolean;
-  onOpenNote: (date: string) => void;
-}) {
-  const firstDay = dateFromIso(month);
-  const year = firstDay.getFullYear();
-  const monthIndex = firstDay.getMonth();
-  const leadingDays = new Date(year, monthIndex, 1).getDay();
-  const dates = scheduleMonthDates(month);
-  const entries = dates
-    .map((date) => ({ date, code: person.assignments[date] ?? "" }))
-    .filter((entry) => entry.code);
-  const activityDays = entries.filter((entry) => scheduleCodeKind(entry.code) === "work");
-  const m2ExcludedDays = activityDays.filter((entry) => isLunchExcludedM2(sector, entry.code));
-  const workDays = activityDays.filter((entry) => !isLunchExcludedM2(sector, entry.code));
-  const offDays = entries.filter((entry) => scheduleCodeKind(entry.code) === "off");
-  const absenceDays = entries.filter((entry) => scheduleCodeKind(entry.code) === "absence");
-  const certificateDays = entries.filter((entry) => scheduleCodeKind(entry.code) === "certificate");
-  const nextWork = activityDays.find((entry) => entry.date >= todayKey());
-
-  return (
-    <div className="min-w-0">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h3 className="text-lg font-black">{person.name}</h3>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {[person.login, person.jobTitle || "Função não informada"].filter(Boolean).join(" · ")}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {nextWork && (
-            <span className="rounded-full bg-primary/10 px-3 py-1 text-[10px] font-bold text-primary">
-              Próximo turno: {dateFromIso(nextWork.date).toLocaleDateString("pt-BR")} ·{" "}
-              {nextWork.code}
-            </span>
-          )}
-          <SchedulePdfButton
-            people={[person]}
-            month={month}
-            city={cityLabel(city)}
-            sector={sectorLabel(sector)}
-            notes={notes}
-            filterDescription={filterDescription}
-          />
-        </div>
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 gap-3 xl:grid-cols-7">
-        <MiniKpi label="Dias com marcação" value={entries.length} />
-        <MiniKpi label="Dias de trabalho" value={workDays.length} />
-        <MiniKpi label="M.2 até 12h" value={m2ExcludedDays.length} />
-        <MiniKpi label="Folgas" value={offDays.length} />
-        <MiniKpi label="Faltas" value={absenceDays.length} />
-        <MiniKpi label="Atestados" value={certificateDays.length} />
-        <MiniKpi label="Função" value={person.jobTitle || "—"} compact />
-      </div>
-
-      <div className="mt-5 overflow-hidden rounded-xl border border-border">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-primary/5 px-3 py-2 text-[10px] text-foreground">
-          <span className="flex items-center gap-1.5 font-bold">
-            <StickyNote className="size-3.5" />
-            {notes.length > 0
-              ? `${notes.length} observação(ões) da gestão neste mês`
-              : "Nenhuma observação da gestão neste mês"}
-          </span>
-          {isAdmin && <span>Clique em uma data para adicionar ou editar.</span>}
-        </div>
-        <div className="grid grid-cols-7 border-b border-border bg-secondary/60 text-center text-[9px] font-extrabold uppercase tracking-wide text-muted-foreground">
-          {["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"].map((day) => (
-            <span key={day} className="p-2">
-              {day}
-            </span>
-          ))}
-        </div>
-        <div className="grid grid-cols-7 bg-border/50 gap-px">
-          {Array.from({ length: leadingDays }, (_, index) => (
-            <span key={`blank-${index}`} className="min-h-20 bg-card" />
-          ))}
-          {dates.map((date) => {
-            const code = person.assignments[date] ?? "";
-            const kind = code ? scheduleCodeKind(code) : null;
-            const note = notes.find((item) => item.note_date === date);
-            const canOpen = isAdmin || Boolean(note);
-            return (
-              <button
-                key={date}
-                type="button"
-                disabled={!canOpen}
-                onClick={() => onOpenNote(date)}
-                className={cn(
-                  "min-h-24 bg-card p-2 text-left transition-colors",
-                  canOpen &&
-                    "cursor-pointer hover:bg-secondary/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary",
-                )}
-                aria-label={`${Number(date.slice(-2))} de ${monthLabel(month)}${note ? ", com observação" : ""}`}
-              >
-                <span className="flex items-center justify-between gap-1 text-[10px] font-bold text-muted-foreground">
-                  {Number(date.slice(-2))}
-                  {note && <StickyNote className="size-3.5 text-primary" aria-hidden="true" />}
-                </span>
-                {code && kind && (
-                  <span
-                    className={cn(
-                      "mt-2 block rounded-lg border px-2 py-1.5 text-center text-[9px] font-black",
-                      SCHEDULE_KIND_STYLE[kind],
-                    )}
-                  >
-                    {code}
-                  </span>
-                )}
-                {note && (
-                  <span className="mt-1 block truncate rounded bg-primary/10 px-1.5 py-1 text-[8px] font-bold text-primary">
-                    Observação
-                  </span>
-                )}
-                {isAdmin && !note && (
-                  <span className="mt-1 block text-[8px] font-semibold text-muted-foreground/70">
-                    + observar
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="mt-4 flex flex-wrap gap-3 text-[10px] text-muted-foreground">
-        <Legend color="bg-primary" label="Trabalho / turno" />
-        <Legend color="bg-slate-700 dark:bg-slate-200" label="Folga" />
-        <Legend color="bg-warning" label="Férias" />
-        <Legend color="bg-navy" label="Licença / afastamento" />
-        <Legend color="bg-red-600" label="FALTA · Falta no dia" />
-        <Legend color="bg-teal-600" label="AT · Atestado" />
-      </div>
-    </div>
-  );
-}
-
-function MiniKpi({
-  label,
-  value,
-  compact = false,
-}: {
-  label: string;
-  value: string | number;
-  compact?: boolean;
-}) {
-  return (
-    <div className="rounded-xl border border-border bg-secondary/30 p-3">
-      <span className="text-[9px] font-bold uppercase tracking-wide text-muted-foreground">
-        {label}
-      </span>
-      <b className={cn("mt-1 block", compact ? "truncate text-xs" : "text-xl")}>{value}</b>
-    </div>
-  );
-}
-
-function Legend({ color, label }: { color: string; label: string }) {
-  return (
-    <span className="flex items-center gap-1.5">
-      <i className={cn("size-2 rounded-full", color)} />
-      {label}
-    </span>
   );
 }
 

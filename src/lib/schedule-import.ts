@@ -43,9 +43,24 @@ function isoDate(year: number, month: number, day: number): string | null {
   return date.toISOString().slice(0, 10);
 }
 
-function excelDate(value: unknown): string | null {
+function monthAnchor(sheetName: string, fileName: string): { year: number; month: number } | null {
+  const raw = sheetName.trim();
+  const direct = raw.match(/^(0?[1-9]|1[0-2])[-/]([12]\d{3})$/);
+  if (direct) return { month: Number(direct[1]), year: Number(direct[2]) };
+  const full = (sheetName + " " + fileName).normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const named = full.match(/(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)[ _-]*([12]\d{3})/);
+  if (!named) return null;
+  const months = ["janeiro","fevereiro","marco","abril","maio","junho",
+    "julho","agosto","setembro","outubro","novembro","dezembro"];
+  return { month: months.indexOf(named[1]!) + 1, year: Number(named[2]) };
+}
+
+function excelDate(
+  value: unknown, anchor?: { year: number; month: number } | null,
+): string | null {
   if (value && typeof value === "object" && "result" in value) {
-    return excelDate(value.result);
+    return excelDate(value.result, anchor);
   }
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     return isoDate(value.getUTCFullYear(), value.getUTCMonth() + 1, value.getUTCDate());
@@ -53,10 +68,27 @@ function excelDate(value: unknown): string | null {
 
   if (typeof value === "number" && value > 20_000 && value < 100_000) {
     const decoded = new Date(Date.UTC(1899, 11, 30) + Math.round(value) * 86_400_000);
-    return isoDate(decoded.getUTCFullYear(), decoded.getUTCMonth() + 1, decoded.getUTCDate());
+    const year = decoded.getUTCFullYear();
+    const month = decoded.getUTCMonth() + 1;
+    // Algumas planilhas de dezembro registram 01–03/01 com serial do próprio ano.
+    // A aba 12-2026 e os dias da semana indicam que são janeiro de 2027.
+    if (anchor && year === anchor.year && anchor.month >= 10 && month <= 3) {
+      return isoDate(year + 1, month, decoded.getUTCDate());
+    }
+    return isoDate(year, month, decoded.getUTCDate());
   }
 
   const raw = text(value);
+  // Cabeçalhos compactos (01/12) precisam de âncora, como a aba 12-2026.
+  const compact = raw.match(/^(\d{1,2})[/-](\d{1,2})$/);
+  if (compact && anchor) {
+    const month = Number(compact[2]);
+    const year = month < anchor.month && anchor.month - month >= 6
+      ? anchor.year + 1
+      : month > anchor.month && month - anchor.month >= 6
+        ? anchor.year - 1 : anchor.year;
+    return isoDate(year, month, Number(compact[1]));
+  }
   let match = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2}|\d{4})$/);
   if (match) {
     const yearValue = Number(match[3]);
@@ -83,7 +115,8 @@ function mainMonth(dates: string[]): string {
   );
 }
 
-function parseMatrix(rows: unknown[][], sheetName: string): ParsedScheduleSheet | null {
+function parseMatrix(rows: unknown[][], sheetName: string, fileName = ""): ParsedScheduleSheet | null {
+  const anchor = monthAnchor(sheetName, fileName);
   if (rows.length < 3) return null;
 
   let headerRow = -1;
@@ -110,7 +143,7 @@ function parseMatrix(rows: unknown[][], sheetName: string): ParsedScheduleSheet 
     const row = rows[rowIndex] ?? [];
     const candidates = row.flatMap((cell, column) => {
       if (column <= Math.max(nameColumn, loginColumn, roleColumn)) return [];
-      const date = excelDate(cell);
+      const date = excelDate(cell, anchor);
       return date ? [{ column, date }] : [];
     });
     if (candidates.length > dateColumns.length) {
@@ -132,6 +165,19 @@ function parseMatrix(rows: unknown[][], sheetName: string): ParsedScheduleSheet 
   const codes = new Set<string>();
   const seenNames = new Set<string>();
   const warnings: string[] = [];
+  if (anchor && anchor.month >= 10 && rows[dateRow]) {
+    const staleJanuary = dateColumns.some(({column, date}) => {
+      const original = rows[dateRow]?.[column];
+      if (typeof original !== "number") return false;
+      const raw = new Date(Date.UTC(1899, 11, 30) + Math.round(original) * 86_400_000);
+      return raw.getUTCFullYear() === anchor.year &&
+        raw.getUTCMonth() + 1 <= 3 &&
+        date.startsWith(String(anchor.year + 1));
+    });
+    if (staleJanuary) {
+      warnings.push("As datas numéricas de janeiro estavam gravadas com o ano anterior no Excel; a virada para janeiro do próximo ano foi interpretada conforme a competência da aba.");
+    }
+  }
   let entryCount = 0;
 
   for (let rowIndex = Math.max(headerRow, dateRow) + 1; rowIndex < rows.length; rowIndex += 1) {
@@ -201,7 +247,7 @@ export async function parseScheduleWorkbook(file: File): Promise<ParsedScheduleS
       }
       rows.push(row);
     }
-    const result = parseMatrix(rows, sheet.name);
+    const result = parseMatrix(rows, sheet.name, file.name);
     return result ? [result] : [];
   });
 
