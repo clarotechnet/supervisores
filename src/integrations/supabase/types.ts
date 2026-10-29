@@ -686,6 +686,35 @@ export type Database = {
           },
         ];
       };
+      schedule_operational_sheets: QualityTable<{
+        id: string;
+        draft_id: string;
+        city: string;
+        sector: string;
+        schedule_month: string;
+        spreadsheet_id: string;
+        sheet_tab: string;
+        spreadsheet_url: string;
+        planned_payload: Json;
+        current_payload: Json;
+        created_by: string;
+        synced_by: string | null;
+        last_synced_at: string | null;
+        created_at: string;
+        updated_at: string;
+      }>;
+      schedule_operational_changes: QualityTable<{
+        id: string;
+        sheet_id: string;
+        actor_id: string;
+        employee_key: string;
+        employee_name: string;
+        duty_date: string;
+        planned_code: string;
+        previous_code: string;
+        current_code: string;
+        created_at: string;
+      }>;
       schedule_generation_policies: QualityTable<
         {
           id: string;
@@ -722,6 +751,8 @@ export type Database = {
           created_by: string;
           reviewed_by: string | null;
           reviewed_at: string | null;
+          archived_at: string | null;
+          archived_by: string | null;
           created_at: string;
           updated_at: string;
         },
@@ -737,6 +768,8 @@ export type Database = {
           warnings: Json;
           status?: "draft" | "approved" | "rejected";
           created_by: string;
+          archived_at?: string | null;
+          archived_by?: string | null;
         }
       >;
       schedule_generation_events: QualityTable<

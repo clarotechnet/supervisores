@@ -1,4 +1,5 @@
 import type { UserRole } from "@/lib/types";
+import { canManageScheduleScope } from "../../supabase/functions/_shared/schedule-scope-access";
 
 export function landingPathForRole(role: UserRole): "/admin" | "/escalas" | "/painel" {
   if (role === "admin") return "/admin";
@@ -22,6 +23,6 @@ export function userRoleLabel(role: UserRole): string {
   return "Supervisor";
 }
 
-export function canManageSchedulesForRole(role: UserRole): boolean {
-  return role === "admin" || role === "supervisor";
+export function canManageSchedulesForRole(role: UserRole, sector = ""): boolean {
+  return canManageScheduleScope(role, sector);
 }

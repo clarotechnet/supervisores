@@ -37,7 +37,12 @@ export function SchedulePeoplePicker({
         !multiple && "lg:border-b-0 lg:border-r lg:pb-0 lg:pr-4",
       )}
     >
-      <div className={cn("grid gap-3", multiple && "lg:grid-cols-[1fr_320px] lg:items-center")}>
+      <div
+        className={cn(
+          "grid gap-3",
+          multiple && "lg:grid-cols-[minmax(0,1fr)_320px] lg:items-center",
+        )}
+      >
         <div>
           <h3 className="flex items-center gap-2 text-sm font-bold">
             <Users className="size-4 text-primary" /> Colaboradores

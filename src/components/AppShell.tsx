@@ -124,7 +124,7 @@ export function AppShell({
   return (
     <div
       className={cn(
-        "min-h-screen w-full bg-background lg:grid lg:transition-[grid-template-columns] lg:duration-200",
+        "min-h-screen w-full min-w-0 max-w-full overflow-x-clip bg-background lg:grid lg:transition-[grid-template-columns] lg:duration-200",
         presentation
           ? "lg:grid-cols-1"
           : collapsed
@@ -252,7 +252,7 @@ export function AppShell({
       )}
 
       {/* Workspace */}
-      <div className="min-w-0">
+      <div className="min-w-0 max-w-full">
         <header
           style={presentation ? { display: "none" } : undefined}
           className="sticky top-0 z-30 flex h-[70px] items-center justify-between gap-4 border-b border-border bg-card/95 px-4 backdrop-blur md:px-8"
@@ -305,7 +305,9 @@ export function AppShell({
         </header>
         <main
           className={
-            fullWidth ? "w-full min-w-0" : "mx-auto w-full max-w-[1440px] px-4 pb-14 pt-6 md:px-8"
+            fullWidth
+              ? "w-full min-w-0"
+              : "mx-auto w-full min-w-0 max-w-[1440px] px-4 pb-14 pt-6 md:px-8"
           }
         >
           {children}

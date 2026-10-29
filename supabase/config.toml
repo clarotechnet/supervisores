@@ -16,3 +16,16 @@ verify_jwt = true
 
 [functions.schedule-sync]
 verify_jwt = false
+
+[functions.schedule-operational]
+verify_jwt = false # JWT verified explicitly via auth.getUser in the function
+
+[functions.schedule-ai]
+verify_jwt = false # JWT verified explicitly via auth.getUser in the function
+
+[functions.schedule-access]
+verify_jwt = false # JWT and active profile verified by auth.getUser in the handler
+
+
+[functions.schedule-edit]
+verify_jwt = false # JWT and active scoped management verified by handler
