@@ -1,4 +1,8 @@
-import { SchedulePersonDetails } from "@/components/SchedulePersonDetails";
+import { ScheduleMonthDeleteDialog } from "@/components/ScheduleMonthDeleteDialog";
+import {
+  SchedulePersonDialog,
+  type SchedulePersonDialogHandle,
+} from "@/components/SchedulePersonDialog";
 import "@/components/schedule-layout.css";
 import { ScheduleTeamWorkspace } from "@/components/ScheduleTeamWorkspace";
 import {
@@ -140,8 +144,13 @@ function SchedulesPage() {
   const [month, setMonth] = useState("");
   const [selectedPersonNames, setSelectedPersonNames] = useState<string[]>([]);
   const [personSearch, setPersonSearch] = useState("");
-  const [inspectName, setInspectName] = useState("");
-  const [inspectDate, setInspectDate] = useState("");
+  const personDialog = useRef<SchedulePersonDialogHandle>(null);
+  const showPerson = useCallback(
+    (name: string, date: string | undefined, queue: SchedulePerson[]) => {
+      personDialog.current?.open(name, date, queue);
+    },
+    [],
+  );
   const loadedScheduleId = useRef<string | null>(null);
   const [dutyScope, setDutyScope] = useState<"day" | "month" | null>(null);
   const onDutyOnly = dutyScope !== null;
@@ -151,6 +160,7 @@ function SchedulesPage() {
   const [generatorOpen, setGeneratorOpen] = useState(false);
   const [operationalOpen, setOperationalOpen] = useState(false);
   const [officialEditOpen, setOfficialEditOpen] = useState(false);
+  const [deleteMonthOpen, setDeleteMonthOpen] = useState(false);
   const [dateNotes, setDateNotes] = useState<ScheduleDateNote[]>([]);
   const [noteDate, setNoteDate] = useState<string | null>(null);
   const [noteOpen, setNoteOpen] = useState(false);
@@ -170,10 +180,10 @@ function SchedulesPage() {
     setGeneratorOpen(false);
     setOperationalOpen(false);
     setOfficialEditOpen(false);
+    setDeleteMonthOpen(false);
     setImportOpen(false);
     setSelectedPersonNames([]);
     setDateNotes([]);
-    setInspectName("");
   }, [scopeAccess.allowed]);
 
   const loadSummaries = useCallback(async () => {
@@ -252,7 +262,6 @@ function SchedulesPage() {
             ? data?.payload.people.map((person) => person.name) || []
             : current.filter((name) => data?.payload.people.some((person) => person.name === name)),
         );
-        if (changed) setInspectName("");
       })
       .catch(() => toast.error("Não foi possível abrir esta escala."))
       .finally(() => {
@@ -440,10 +449,6 @@ function SchedulesPage() {
     }
   }
 
-  const inspectedPerson =
-    scopeAccess.allowed && schedule && schedule.id === selectedSummaryId
-      ? schedule.payload.people.find((p) => p.name === inspectName)
-      : undefined;
   const periodControls = (
     <>
       <Button
@@ -603,6 +608,18 @@ function SchedulesPage() {
                       Autorizações Controle
                     </DropdownMenuItem>
                   )}
+                  {isAdmin &&
+                    schedule?.source_file === "Google Sheets - Escala operacional oficial" && (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          className="text-destructive"
+                          onSelect={() => setDeleteMonthOpen(true)}
+                        >
+                          <Trash2 className="size-4" /> Excluir escala e aba no Sheets
+                        </DropdownMenuItem>
+                      </>
+                    )}
                   {canManageSchedules &&
                     schedule &&
                     schedule.source_file !== "Google Sheets - Escala operacional oficial" && (
@@ -718,51 +735,37 @@ function SchedulesPage() {
               notes={dateNotes}
               isAdmin={isAdmin}
               onOpenNote={openDateNote}
-              onShowPerson={(name, date) => {
-                setInspectName(name);
-                setInspectDate(date || "");
-              }}
+              onShowPerson={showPerson}
               filterDescription={dutyFilterDescription}
               periodControls={periodControls}
             />
           )}
         </div>
       </div>
-      <Dialog
-        open={!!inspectedPerson}
-        onOpenChange={(open) => {
-          if (!open) setInspectName("");
-        }}
-      >
-        <DialogContent
-          overlayClassName="bg-black/60 backdrop-blur-sm"
-          className="schedule-person-dialog max-h-[90vh] max-w-2xl overflow-y-auto"
-        >
-          <DialogHeader className="sr-only">
-            <DialogTitle>{inspectedPerson?.name || "Escala individual"}</DialogTitle>
-            <DialogDescription>
-              Resumo e calendário do colaborador no mês selecionado.
-            </DialogDescription>
-          </DialogHeader>
-          {inspectedPerson && schedule && (
-            <SchedulePersonDetails
-              person={inspectedPerson}
-              month={schedule.schedule_month}
-              sector={schedule.sector}
-              city={schedule.city}
-              filterDescription={dutyFilterDescription}
-              notes={dateNotes}
-              isAdmin={isAdmin}
-              onOpenNote={(date) => {
-                setInspectName("");
-                openDateNote(date);
-              }}
-              focusDate={inspectDate}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
+      {scopeAccess.allowed && schedule && schedule.id === selectedSummaryId && (
+        <SchedulePersonDialog
+          key={schedule.id + schedule.updated_at}
+          ref={personDialog}
+          schedule={schedule}
+          notes={dateNotes}
+          isAdmin={isAdmin}
+          filterDescription={dutyFilterDescription}
+          onOpenNote={openDateNote}
+        />
+      )}
 
+      {isAdmin && (
+        <ScheduleMonthDeleteDialog
+          open={deleteMonthOpen}
+          onOpenChange={setDeleteMonthOpen}
+          schedule={schedule}
+          onDeleted={async () => {
+            setSchedule(null);
+            setOperationalRefreshKey((value) => value + 1);
+            await loadSummaries();
+          }}
+        />
+      )}
       {isAdmin && (
         <ScheduleControlAccessDialog
           open={accessDialogOpen}

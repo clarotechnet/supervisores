@@ -232,8 +232,8 @@ for (const [kind, id, name] of [
       "active=false;document.body.classList.remove('slides-frame-active');unlock();closeDetails();if(!snapshot)return;",
       "active=false;document.body.classList.remove('slides-frame-active');unlock();closeDetails();if(!snapshot)return;\n   tcSelectedUnits.clear();(snapshot.units||[]).forEach(unit=>tcSelectedUnits.add(unit));",
     );
-    // Project-specific exception: VT has a 175-point target; the default renderer
-    // still uses the reviewed 127-point rule. All formulas consume tcRule().
+    // Per-panel targets: QQ e Certificação uses 150; VT keeps 175.
+    // Match the unchanged original HTML's 127-point rule, then use the config.
     const originalRule =
       "function tcRule(){return {rev:.0701,tec:.95,prod:127,strict:false,label:'Regra vigente em todas as operações: revisita < 7,01%; TEC1 ≥ 95%; produtividade ≥ 127 pontos/dia'};}";
     if (!code.includes(originalRule))

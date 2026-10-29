@@ -135,9 +135,10 @@ describe("Controle RN: referência de dezembro e plantões semanais", () => {
           : i < 10
             ? "CONTROLADOR (ADESÃO) - NTL"
             : "CONTROLADOR (DESC NTL)";
-      // Folgas de sexta-feira extraídas do mês anterior para uma pessoa.
-      for (const day of ["2026-11-06", "2026-11-13", "2026-11-20", "2026-11-27"]) {
-        p.assignments[day] = "Folga";
+      // Base 5x2 com folgas fixas alternadas e pessoal elegível no feriado de sexta.
+      const fixed = i % 2 === 0 ? 5 : 3;
+      for (const day of s.payload.dates) {
+        if (new Date(day + "T12:00:00Z").getUTCDay() === fixed) p.assignments[day] = "Folga";
       }
     });
     const preview = generateSchedulePreview(s, "2026-12");
@@ -153,7 +154,8 @@ describe("Controle RN: referência de dezembro e plantões semanais", () => {
       (p) => p.assignments["2026-12-06"] === "PLANTÃO",
     )) {
       expect(p.assignments["2026-12-07"]).toBe("Folga");
-      expect(p.assignments["2026-12-11"]).toBe("Folga");
+      const index = s.payload.people.findIndex((base) => base.login === p.login);
+      expect(p.assignments[index % 2 === 0 ? "2026-12-11" : "2026-12-09"]).toBe("Folga");
       const week = [
         "2026-12-06",
         "2026-12-07",
@@ -211,7 +213,10 @@ describe("Controle RN: referência de dezembro e plantões semanais", () => {
 
 describe("geração prévia sem usar IA para decidir restrições", () => {
   it("aloca exatamente 1 por plantão em Recife Instalação e preserva duas folgas", () => {
-    const preview = generateSchedulePreview(source("recife", "instalacao", names(12)), "2026-12");
+    const base = source("recife", "instalacao", names(12));
+    // Uma semana 5x2 normal foi marcada na escala anterior.
+    for (const p of base.payload.people) p.assignments["2026-11-11"] = "Folga";
+    const preview = generateSchedulePreview(base, "2026-12");
     const events = preview.eventCoverage.filter((x) => x.planned === 1);
     expect(events.map((x) => x.date)).toEqual([
       "2026-12-06",

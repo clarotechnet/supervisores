@@ -106,7 +106,11 @@ const input =
   "\n" +
   fs.readFileSync("tests/schedule-control-access.sql", "utf8") +
   "\n" +
-  fs.readFileSync("tests/schedule-official-edit.sql", "utf8");
+  fs.readFileSync("tests/schedule-official-edit.sql", "utf8") +
+  "\n" +
+  fs.readFileSync("supabase/migrations/20261029132008_schedule_month_deletion.sql", "utf8") +
+  "\n" +
+  fs.readFileSync("tests/schedule-month-deletion.sql", "utf8");
 // Windows may close a large stdin pipe early; let psql read a UTF-8 file.
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "schedule-access-test-"));
 let result;

@@ -1,6 +1,6 @@
-// Per-renderer configuration: never mutate the shared/default TC rule.
+// Per-renderer targets: QQ e Certificação uses 150; Visita técnica keeps 175.
 export function referenceCertificationRule(technicalVisit = false) {
-  const prod = technicalVisit ? 175 : 127;
+  const prod = technicalVisit ? 175 : 150;
   return {
     rev: 0.0701,
     tec: 0.95,

@@ -91,7 +91,7 @@ export function ScheduleTeamWorkspace({
   notes: ScheduleDateNote[];
   isAdmin: boolean;
   onOpenNote: (date: string) => void;
-  onShowPerson: (name: string, date?: string) => void;
+  onShowPerson: (name: string, date: string | undefined, queue: SchedulePerson[]) => void;
   filterDescription: string;
   periodControls: React.ReactNode;
 }) {
@@ -156,7 +156,7 @@ export function ScheduleTeamWorkspace({
   }
   function showPerson(name: string, date?: string) {
     setDayOpen(false);
-    onShowPerson(name, date);
+    onShowPerson(name, date, visible);
   }
   async function imageExport() {
     setExporting(true);

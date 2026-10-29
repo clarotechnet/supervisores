@@ -13,6 +13,7 @@ export const mock = {
   rpcCalls: [] as Array<{ name: string; args: Record<string, unknown> }>,
   queryCalls: [] as Array<{ table: string; filters: Record<string, unknown>; range?: number[] }>,
   rpcError: null as null | { code: string; message: string },
+  metadataAuditReady: false,
   queryError: null as null | { code: string; message: string },
 };
 const userId = "00000000-0000-0000-0000-000000000001";
@@ -73,10 +74,15 @@ export function createClient(..._args: unknown[]): any {
       };
       return builder;
     },
-    rpc(name: string, args: Record<string, unknown>) {
+    rpc(name: string, args: Record<string, unknown> = {}) {
       mock.rpcCalls.push({ name, args });
       return Promise.resolve({
-        data: name === "schedule_operational_publish" ? "official-id" : null,
+        data:
+          name === "schedule_operational_publish"
+            ? "official-id"
+            : name === "schedule_operational_metadata_audit_ready"
+              ? mock.metadataAuditReady
+              : null,
         error: mock.rpcError,
       });
     },

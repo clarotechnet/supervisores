@@ -682,7 +682,29 @@
   color: var(--primary);
 }
 .schedule-person-dialog {
-  padding: 25px;
+  display: flex;
+  flex-direction: column;
+  max-height: 90dvh;
+  overflow: hidden;
+  padding: 0;
+  gap: 0;
+}
+.schedule-person-navigation {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 48px 12px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+}
+.schedule-person-dialog-body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 22px 25px;
 }
 .schedule-person-kpis {
   display: grid;
@@ -870,8 +892,8 @@
   .schedule-person-kpis span {
     font-size: 7px;
   }
-  .schedule-person-dialog {
-    padding: 22px 15px;
+  .schedule-person-dialog-body {
+    padding: 18px 15px;
   }
   .schedule-person-modal-calendar button {
     padding: 5px;

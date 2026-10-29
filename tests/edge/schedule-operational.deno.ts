@@ -34,7 +34,7 @@ const payload: Payload = {
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw Error(message);
 }
-async function run(action: unknown = "publish") {
+async function run(action: unknown = "publish", changeRows?: (rows: string[][]) => void) {
   const googleCalls: Array<{ url: string; method: string }> = [];
   const originalFetch = globalThis.fetch;
   const names = [
@@ -54,6 +54,7 @@ async function run(action: unknown = "publish") {
       ? controlMonthValues(payload, "2026-12-01")
       : officialMonthValues(payload, "2026-12-01");
     rows[2]![control ? 2 : 3] = "FALTA";
+    changeRows?.(rows);
     if (address === "https://oauth2.googleapis.com/token")
       return Promise.resolve(Response.json({ access_token: "mock-google-token" }));
     assert(
@@ -218,4 +219,94 @@ Deno.test("supervisor can still synchronize an unrestricted operational front", 
     result.response.status === 200 && mock.rpcCalls[0]?.name === "schedule_operational_apply_sync",
     "other front behavior changed",
   );
+});
+
+Deno.test("invalid B2 is a useful structure conflict rather than a provider 502", async () => {
+  reset();
+  const { response, body } = await run("sync", (rows) => {
+    rows[1]![1] = "0";
+  });
+  assert(
+    response.status === 409 && body.code === "SHEET_STRUCTURE_CHANGED" && body.error.includes("B2"),
+    "header conflict misclassified",
+  );
+  assert(mock.rpcCalls.length === 0, "invalid header reached database writes");
+});
+Deno.test(
+  "equivalent FTA FTZ correction is synchronized only with transactional audit installed",
+  async () => {
+    reset();
+    mock.metadataAuditReady = true;
+    const alias = {
+      ...payload,
+      people: payload.people.map((p) => ({ ...p, jobTitle: "CONTROLADOR (DESC FTA)" })),
+    };
+    mock.sheet["planned_payload"] = alias;
+    mock.sheet["current_payload"] = alias;
+    const { response } = await run("sync", (rows) => {
+      rows[2]![1] = "CONTROLADOR (DESC FTZ)";
+    });
+    assert(response.status === 200, "equivalent correction rejected");
+    assert(
+      mock.rpcCalls.map((c) => c.name).join(",") ===
+        "schedule_operational_metadata_audit_ready,schedule_operational_apply_sync",
+      "audit readiness not checked",
+    );
+    const next = mock.rpcCalls[1]!.args["p_payload"] as Payload;
+    assert(
+      next.people[0]!.jobTitle === "CONTROLADOR (DESC FTZ)",
+      "correction not sent to atomic sync",
+    );
+  },
+);
+Deno.test(
+  "missing function audit migration blocks metadata changes without applying cells",
+  async () => {
+    reset();
+    mock.metadataAuditReady = false;
+    const alias = {
+      ...payload,
+      people: payload.people.map((p) => ({ ...p, jobTitle: "CONTROLADOR (DESC FTA)" })),
+    };
+    mock.sheet["planned_payload"] = alias;
+    mock.sheet["current_payload"] = alias;
+    const { response } = await run("sync", (rows) => {
+      rows[2]![1] = "CONTROLADOR (DESC FTZ)";
+    });
+    assert(
+      response.status === 409 && mock.rpcCalls.length === 1,
+      "unaudited metadata synchronized",
+    );
+  },
+);
+Deno.test(
+  "supervisor cannot delete any official month or consult Google for deletion",
+  async () => {
+    reset();
+    mock.role = "supervisor";
+    const { response, googleCalls } = await run("delete");
+    assert(
+      response.status === 403 && googleCalls.length === 0 && mock.rpcCalls.length === 0,
+      "supervisor reached deletion",
+    );
+  },
+);
+Deno.test(
+  "deletion requires official id and typed confirmation before contacting Google",
+  async () => {
+    reset();
+    const { response, googleCalls } = await run("delete");
+    assert(
+      response.status === 400 && googleCalls.length === 0,
+      "malformed deletion reached Google",
+    );
+  },
+);
+Deno.test("pending or completed deletion blocks later synchronization before Google", async () => {
+  for (const field of ["deletion_requested_at", "deleted_at"]) {
+    reset();
+    mock.sheet[field] = "2026-10-29T12:00:00Z";
+    const { response, googleCalls } = await run("sync");
+    assert(response.status === 409 && googleCalls.length === 0, "retired sheet synchronized");
+  }
 });

@@ -11,7 +11,7 @@ import type { SchedulePerson, ScheduleUpload } from "../src/lib/types";
 
 const dates = Array.from({ length: 31 }, (_, i) => "2026-12-" + String(i + 1).padStart(2, "0"));
 const weekday = (day: string) => new Date(day + "T12:00:00Z").getUTCDay();
-const vtTargets = { 2: 4, 3: 4, 4: 4, 5: 5 };
+const vtTargets = { 1: 3, 2: 3, 3: 3, 4: 3, 5: 3, 6: 2 };
 function source(front: string): ScheduleUpload {
   const people = rnDecemberReference(front)!;
   return {
@@ -45,8 +45,8 @@ function person(name: string, fixed: number): SchedulePerson {
     ),
   };
 }
-describe("folgas fixas de terça a sexta no RN", () => {
-  it("VT distribui 17 pessoas em 4/4/4/5, sem trocar os plantonistas da referência", () => {
+describe("folgas fixas de segunda a sábado no RN", () => {
+  it("VT distribui 17 pessoas em 3/3/3/3/3/2, sem trocar os plantonistas da referência", () => {
     const preview = generateInitialRnDecemberPreview(source("vt"));
     expect(fixedRestSummary(preview.payload.people, "2026-12", vtTargets)).toMatchObject({
       active: 17,
@@ -86,16 +86,19 @@ describe("folgas fixas de terça a sexta no RN", () => {
       }
     });
   });
-  it("Adesão conserva 4 AT, 74 pessoas no rodízio e a proibição de plantões", () => {
+  it("Adesão usa os 57 elegíveis, mantém 4 AT e distribui os demais ativos separadamente", () => {
     const preview = generateInitialRnDecemberPreview(source("adesao-servico"));
-    const targets = preview.rule.fixedOffDistribution!;
+    const targets = preview.rule;
     const summary = fixedRestSummary(preview.payload.people, "2026-12", targets);
     expect(preview.payload.people).toHaveLength(78);
-    expect(summary).toMatchObject({ active: 74, protectedCount: 4, expected: 73 });
+    expect(summary).toMatchObject({ active: 57, otherActive: 17, protectedCount: 4, expected: 57 });
     expect(
       preview.payload.people.filter((p) => dates.every((d) => p.assignments[d] === "AT")),
     ).toHaveLength(4);
-    expect(preview.blockingIssues.some((s) => s.includes("metas somam 73, mas há 74"))).toBe(true);
+    expect(summary.targets).toEqual({ 1: 9, 2: 9, 3: 9, 4: 8, 5: 8, 6: 14 });
+    expect(summary.issues).toEqual([]);
+    expect(preview.eventCoverage.map((e) => e.assigned)).toEqual([3, 3, 3, 5, 10]);
+    expect(preview.blockingIssues).toEqual([]);
     const excluded = preview.payload.people.filter((p) => isExcludedFromDuty(p.name, preview.rule));
     expect(excluded).toHaveLength(6);
     for (const p of excluded)
@@ -114,7 +117,7 @@ describe("folgas fixas de terça a sexta no RN", () => {
     const restored = editControlPreviewCode(changed, 0, "2026-12-08", "Folga");
     expect(restored.blockingIssues.filter((s) => s.startsWith("Distribuição"))).toEqual([]);
   });
-  it("não transplanta essas metas para outras cidades ou frentes", () => {
+  it("não transplanta a regra percentual para outras cidades ou frentes", () => {
     for (const [city, front] of [
       ["fortaleza", "manutencao"],
       ["recife", "desconexao"],

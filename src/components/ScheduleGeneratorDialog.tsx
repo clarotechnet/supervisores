@@ -2,8 +2,14 @@ import { ScheduleOfficialEditDialog } from "@/components/ScheduleOfficialEditDia
 import { SchedulePreviewAssistant } from "@/components/SchedulePreviewAssistant";
 import { ScheduleAssistantDialog } from "@/components/ScheduleAssistantDialog";
 import { isInitialRnDecember } from "@/lib/schedule-rn-december-reference";
-import { fixedRestSummary } from "@/lib/schedule-fixed-rest";
-import { useEffect, useState } from "react";
+import { fixedRestSummary, hasFixedRestDistribution } from "@/lib/schedule-fixed-rest";
+import { useEffect, useState, useRef } from "react";
+import {
+  loadScheduleGenerationSource,
+  type ScheduleGenerationSource,
+} from "@/services/schedule-generation-source";
+import { buildAssistedGeneration, applyGenerationChoice } from "@/lib/schedule-assisted-generation";
+import { requestScheduleGenerationChoice } from "@/services/schedule-ai";
 import {
   CalendarClock,
   FileSpreadsheet,
@@ -29,18 +35,11 @@ import type { ScheduleUpload, ScheduleUploadSummary } from "@/lib/types";
 import { fetchScheduleUpload } from "@/services/schedules";
 import {
   createOperationalSheet,
-  latestOperationalSource,
   listOperationalSheets,
   publishOperationalSheet,
   type OperationalSheet,
 } from "@/services/schedule-operational";
-import {
-  generateSchedulePreview,
-  generateInitialControlDecemberPreview,
-  generateInitialRnDecemberPreview,
-  isInitialControlDecember,
-  type ScheduleGeneratedPreview,
-} from "@/lib/schedule-generator";
+import { isInitialControlDecember, type ScheduleGeneratedPreview } from "@/lib/schedule-generator";
 import { getScheduleGenerationRule } from "@/lib/schedule-generator-rules";
 import { downloadScheduleReport } from "@/lib/schedule-report";
 import { scheduleCodeKind } from "@/lib/schedule-import";
@@ -91,10 +90,11 @@ export function ScheduleGeneratorDialog({
   onPublished,
 }: ScheduleGeneratorDialogProps) {
   const month = targetMonth.slice(0, 7);
-  const [source, setSource] = useState<(ScheduleUpload & { operationalSourceId?: string }) | null>(
-    null,
-  );
+  const [source, setSource] = useState<ScheduleGenerationSource | null>(null);
   const [loadingSource, setLoadingSource] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const generationRun = useRef(0);
+  const generationAbort = useRef<AbortController | null>(null);
   const [sourceError, setSourceError] = useState("");
   const [preview, setPreview] = useState<ScheduleGeneratedPreview | null>(null);
   const [baseline, setBaseline] = useState<ScheduleGeneratedPreview | null>(null);
@@ -127,13 +127,10 @@ export function ScheduleGeneratorDialog({
   const firstControl5x2 = isInitialControlDecember(city, sector, month);
   const firstRn5x2 = isInitialRnDecember(city, sector, month);
   const initial5x2 = firstControl5x2 || firstRn5x2;
-  const fixedRest = preview?.rule.fixedOffDistribution
-    ? fixedRestSummary(
-        preview.payload.people,
-        preview.targetMonth,
-        preview.rule.fixedOffDistribution,
-      )
-    : null;
+  const fixedRest =
+    preview && hasFixedRestDistribution(preview.rule)
+      ? fixedRestSummary(preview.payload.people, preview.targetMonth, preview.rule)
+      : null;
   const additionalReferenceDates = preview
     ? [...new Set(preview.outsideAssignments.flatMap((person) => Object.keys(person)))]
         .filter(
@@ -161,6 +158,16 @@ export function ScheduleGeneratorDialog({
   }, [open, targetMonth, sourceSummaryId, city, sector]);
 
   useEffect(() => {
+    generationRun.current += 1;
+    generationAbort.current?.abort();
+    setGenerating(false);
+    return () => {
+      generationRun.current += 1;
+      generationAbort.current?.abort();
+    };
+  }, [open, city, sector, month]);
+
+  useEffect(() => {
     let active = true;
     setSource(null);
     setSourceError("");
@@ -170,36 +177,7 @@ export function ScheduleGeneratorDialog({
     }
     setLoadingSource(true);
     const base = previousMonth(month);
-    void (async () => {
-      // A escala operacional sincronizada tem prioridade sobre a importação
-      // mensal original, preservando AT/faltas e 01–03/01 já planejados.
-      let live = null;
-      try {
-        live = await latestOperationalSource(city, sector, base);
-      } catch {
-        /* Migração operacional pendente: usa importação antiga. */
-      }
-      if (live) {
-        const payload = live.current_payload as unknown as ScheduleUpload["payload"];
-        return {
-          id: live.id,
-          operationalSourceId: live.id,
-          city,
-          sector,
-          schedule_month: base + "-01",
-          source_file: "Escala operacional sincronizada",
-          source_sheet: "ATUALIZADA",
-          imported_by: live.created_by,
-          imported_at: live.last_synced_at || live.created_at,
-          updated_at: live.updated_at,
-          employee_count: payload.people.length,
-          entry_count: payload.dates.length * payload.people.length,
-          payload,
-        } satisfies ScheduleUpload & { operationalSourceId: string };
-      }
-      if (sourceSummaryId) return await fetchScheduleUpload(sourceSummaryId);
-      return null;
-    })()
+    void loadScheduleGenerationSource(city, sector, base)
       .then((row) => {
         if (!active) return;
         if (!row)
@@ -407,22 +385,49 @@ export function ScheduleGeneratorDialog({
     }
   }
 
-  function generate() {
-    if (!source || !month) return;
+  async function generate() {
+    if (!source || !month || generating) return;
     if (
       preview &&
       !window.confirm(
-        "Recarregar a referência e descartar as alterações não salvas desta prévia? " +
-          "Os rascunhos já salvos continuam preservados.",
+        "Regerar a prévia e descartar suas alterações não salvas? Os rascunhos salvos permanecem no histórico.",
       )
     )
       return;
+    const run = ++generationRun.current;
+    const abort = new AbortController();
+    generationAbort.current?.abort();
+    generationAbort.current = abort;
+    setGenerating(true);
+    setPreview(null);
+    setBaseline(null);
+    setEditingCell(null);
+    setEditingPerson(null);
+    setSavedRevision(null);
     try {
-      const result = firstControl5x2
-        ? generateInitialControlDecemberPreview(source)
-        : firstRn5x2
-          ? generateInitialRnDecemberPreview(source)
-          : generateSchedulePreview(source, month);
+      const fresh = await loadScheduleGenerationSource(city, sector, previousMonth(month));
+      if (run !== generationRun.current) return;
+      if (!fresh) throw Error("Sincronize a escala anterior por Atualizar via API antes de gerar.");
+      setSource(fresh);
+      const options = buildAssistedGeneration(fresh, month);
+      let result = applyGenerationChoice(options, fresh);
+      if (options.input.options.length > 1) {
+        try {
+          const choice = await requestScheduleGenerationChoice(options.input, abort.signal);
+          if (run !== generationRun.current) return;
+          result = applyGenerationChoice(options, fresh, choice);
+        } catch {
+          if (abort.signal.aborted || run !== generationRun.current) return;
+          result = {
+            ...result,
+            warnings: [
+              ...result.warnings,
+              "IA indisponível: a prévia foi montada pelas regras, preservando as folgas e o histórico.",
+            ],
+          };
+        }
+      }
+      if (run !== generationRun.current) return;
       setPreview(result);
       setBaseline(result);
       setEditingCell(null);
@@ -431,13 +436,19 @@ export function ScheduleGeneratorDialog({
       setWeekIndex(0);
       setPreviewView("week");
       setSavedRevision(null);
-      if (result.blockingIssues.length) {
-        toast.warning("Prévia criada com pendências obrigatórias.");
-      } else {
-        toast.success("Prévia calculada. Confira antes de publicar.");
-      }
+      if (result.blockingIssues.length)
+        toast.warning("Prévia montada com pendências para sua revisão.");
+      else
+        toast.success(
+          result.generationDecision?.mode === "ai"
+            ? "Prévia montada com seleção de plantões pela IA. Confira antes de publicar."
+            : "Prévia montada pelas regras. Confira antes de publicar.",
+        );
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Falha ao gerar prévia.");
+      if (run === generationRun.current)
+        toast.error(error instanceof Error ? error.message : "Falha ao gerar prévia.");
+    } finally {
+      if (run === generationRun.current) setGenerating(false);
     }
   }
   async function saveDraft() {
@@ -490,6 +501,9 @@ export function ScheduleGeneratorDialog({
     }
   }
   async function openDraft(draft: GenerationDraft) {
+    generationRun.current += 1;
+    generationAbort.current?.abort();
+    setGenerating(false);
     if (draft.status === "approved") {
       try {
         const snapshot = draft.policy_snapshot as Record<string, unknown> | null;
@@ -645,9 +659,20 @@ export function ScheduleGeneratorDialog({
                   <Label htmlFor="schedule-generate-month">Mês de destino</Label>
                   <Input id="schedule-generate-month" type="month" value={month} readOnly />
                 </div>
-                <Button onClick={generate} disabled={!month || !source}>
-                  <CalendarClock className="size-4" />
-                  {initial5x2 ? "Carregar modelo inicial 5x2" : "Gerar prévia"}
+                <Button
+                  onClick={generate}
+                  disabled={!month || !source || loadingSource || generating}
+                >
+                  {generating ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <CalendarClock className="size-4" />
+                  )}
+                  {generating
+                    ? "Montando prévia..."
+                    : initial5x2
+                      ? "Carregar modelo inicial 5x2"
+                      : "Gerar escala com IA"}
                 </Button>
                 <Button type="button" variant="outline" onClick={() => setSavedAssistantOpen(true)}>
                   <Sparkles className="size-4" /> Analisar escala salva
@@ -738,23 +763,54 @@ export function ScheduleGeneratorDialog({
                     : "Para torná-la oficial, vincule a aba e clique em Aprovar e publicar."}
                 </p>
               )}
+              {generating && (
+                <p className="text-sm text-muted-foreground" role="status">
+                  Lendo a escala sincronizada, preservando as folgas e selecionando os
+                  plantonistas...
+                </p>
+              )}
+              {preview?.generationDecision && (
+                <section
+                  className="rounded-lg border p-3 text-sm"
+                  aria-label="Resultado da geração"
+                >
+                  <strong>
+                    {preview.generationDecision.mode === "ai"
+                      ? "Plantões selecionados com IA"
+                      : "Escala montada pelas regras"}
+                  </strong>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {preview.generationDecision.summary}
+                  </p>
+                  {preview.fixedRestPolicy === "preserve-history" && (
+                    <p className="mt-1 text-xs">
+                      Folgas fixas preservadas da escala anterior. Confira as pendências antes de
+                      salvar e publicar.
+                    </p>
+                  )}
+                </section>
+              )}
               {preview && fixedRest && (
                 <section className="rounded-lg border p-3">
                   <h3 className="text-sm font-bold">Distribuição das folgas fixas</h3>
                   <p className="my-2 text-xs text-muted-foreground">
-                    {fixedRest.active} pessoas no rodízio · {fixedRest.protectedCount} afastadas no
-                    mês. Proibição de plantão permanece separada da folga fixa.
+                    {fixedRest.active} pessoas na distribuição · {fixedRest.protectedCount}{" "}
+                    afastadas no mês.
+                    {fixedRest.otherActive > 0 &&
+                      ` ${fixedRest.otherActive} demais ativos distribuídos em grupo separado.`}
                   </p>
                   <div className="flex flex-wrap gap-3">
                     {[
+                      [1, "Segunda"],
                       [2, "Terça"],
                       [3, "Quarta"],
                       [4, "Quinta"],
                       [5, "Sexta"],
+                      [6, "Sábado"],
                     ].map(([day, label]) => (
                       <span className="rounded-md border px-3 py-1 text-xs" key={day}>
                         {label}: <strong>{fixedRest.counts[Number(day)] || 0}</strong> / meta{" "}
-                        {preview.rule.fixedOffDistribution?.[Number(day)]}
+                        {fixedRest.targets[Number(day)]}
                       </span>
                     ))}
                   </div>

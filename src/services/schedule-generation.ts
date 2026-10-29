@@ -100,7 +100,12 @@ export async function saveGeneratedDraft({
       sourceMonth: preview.sourceMonth,
       sourceOperationalId: source.operationalSourceId ?? null,
       referenceSeedId: preview.referenceSeedId ?? null,
-      engine: preview.referenceSeedId ? "reference-initial-5x2-v1" : "deterministic-5x2-v1",
+      fixedRestPolicy: preview.fixedRestPolicy ?? null,
+      fixedRestEvidence: preview.fixedRestEvidence ?? [],
+      generationDecision: preview.generationDecision ?? null,
+      sourceUpdatedAt: source.updated_at,
+      sourceSheet: source.source_sheet,
+      engine: preview.referenceSeedId ? "reference-initial-5x2-v1" : "history-assisted-5x2-v2",
       published: false,
     };
     const warnings = [
@@ -140,6 +145,9 @@ export async function saveGeneratedDraft({
         employee_count: preview.payload.people.length,
         event_count: preview.eventCoverage.length,
         pending_count: preview.blockingIssues.length,
+        generation_decision: preview.generationDecision ?? null,
+        fixed_rest_evidence: preview.fixedRestEvidence ?? [],
+        source_updated_at: source.updated_at,
       },
     });
     return { draft: data, auditLogged: !eventError };
@@ -185,6 +193,24 @@ export function restoreGenerationPreview(
       : [],
     sourceMonth: String(snap["sourceMonth"] ?? draft.source_month ?? "").slice(0, 7),
     targetMonth: draft.schedule_month.slice(0, 7),
+    ...(snap["fixedRestPolicy"] === "preserve-history" ||
+    snap["fixedRestPolicy"] === "initial-distribution"
+      ? { fixedRestPolicy: snap["fixedRestPolicy"] }
+      : {}),
+    ...(Array.isArray(snap["fixedRestEvidence"])
+      ? {
+          fixedRestEvidence: snap["fixedRestEvidence"] as unknown as NonNullable<
+            ScheduleGeneratedPreview["fixedRestEvidence"]
+          >,
+        }
+      : {}),
+    ...(snap["generationDecision"] && typeof snap["generationDecision"] === "object"
+      ? {
+          generationDecision: snap["generationDecision"] as unknown as NonNullable<
+            ScheduleGeneratedPreview["generationDecision"]
+          >,
+        }
+      : {}),
     ...(typeof snap["referenceSeedId"] === "string"
       ? { referenceSeedId: snap["referenceSeedId"] }
       : {}),

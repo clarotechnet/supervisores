@@ -123,6 +123,10 @@ Deno.serve(async (request) => {
         .eq("sheet_tab", schedule.source_sheet)
         .maybeSingle();
       if (sheetError || !sheet) throw Error("Aba oficial vinculada não encontrada.");
+      if (sheet.deleted_at || sheet.deletion_requested_at)
+        return json(409, {
+          error: "Esta escala está excluída ou em exclusão. Conclua a exclusão antes de editar.",
+        });
       linked = sheet;
       const expected = usesControlMaster(schedule.city, schedule.sector)
         ? CONTROL_EXPECTED_MASTER_ID
