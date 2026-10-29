@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bot, Loader2, RefreshCw, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "./ui/button";
@@ -20,12 +20,17 @@ interface Props {
 const short = (d: string) => d.slice(8, 10) + "/" + d.slice(5, 7);
 export function SchedulePreviewAssistant({ preview, baseline, active, onChange }: Props) {
   const [automatic, setAutomatic] = useState(true);
-  const [refresh, setRefresh] = useState(0);
+  const requestRun = useRef(0);
+  const requestAbort = useRef<AbortController | null>(null);
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [filter, setFilter] = useState("all");
   const [remote, setRemote] = useState<{ input: string; data: ScheduleAiResult } | null>(null);
-  const [request, setRequest] = useState<{ input: string; running: boolean; error: string } | null>(
-    null,
-  );
+  const [request, setRequest] = useState<{
+    input: string;
+    running: boolean;
+    waiting?: boolean;
+    error: string;
+  } | null>(null);
   const review = useMemo(() => {
     try {
       const input = previewAnalysisInput(preview, baseline);
@@ -40,34 +45,63 @@ export function SchedulePreviewAssistant({ preview, baseline, active, onChange }
   }, [preview, baseline]);
   const fingerprint = useMemo(() => JSON.stringify(review.input), [review.input]);
   const pendingIssues = review.analysis?.issues.length || 0;
-  useEffect(() => {
-    if (!active || !automatic || !review.input || pendingIssues === 0) return;
-    let current = true;
+  const cancelReview = useCallback(() => {
+    requestRun.current += 1;
+    if (debounceTimer.current !== null) {
+      clearTimeout(debounceTimer.current);
+      debounceTimer.current = null;
+    }
+    requestAbort.current?.abort();
+    requestAbort.current = null;
+  }, []);
+  const runReview = useCallback(() => {
+    if (!active || !review.input) return;
+    cancelReview();
+    const run = requestRun.current;
     const abort = new AbortController();
-    setRequest({ input: fingerprint, running: true, error: "" });
-    const timer = setTimeout(() => {
-      void requestScheduleAnalysis({ preview: review.input! }, abort.signal)
-        .then((data) => {
-          if (current) {
-            setRemote({ input: fingerprint, data });
-            setRequest({ input: fingerprint, running: false, error: "" });
-          }
-        })
-        .catch((error: unknown) => {
-          if (current && !abort.signal.aborted)
-            setRequest({
-              input: fingerprint,
-              running: false,
-              error: error instanceof Error ? error.message : "IA indisponível nesta análise.",
-            });
-        });
-    }, 2000);
-    return () => {
-      current = false;
-      clearTimeout(timer);
+    requestAbort.current = abort;
+    setRemote(null);
+    setRequest({ input: fingerprint, running: true, waiting: false, error: "" });
+    const deadline = setTimeout(() => {
+      if (run !== requestRun.current) return;
+      requestRun.current += 1;
       abort.abort();
-    };
-  }, [active, automatic, review.input, fingerprint, pendingIssues, refresh]);
+      setRequest({
+        input: fingerprint,
+        running: false,
+        error: "A análise demorou mais de 25 segundos. Clique em Reanalisar para tentar novamente.",
+      });
+    }, 25000);
+    abort.signal.addEventListener("abort", () => clearTimeout(deadline), { once: true });
+    void requestScheduleAnalysis({ preview: review.input }, abort.signal)
+      .then((data) => {
+        if (run !== requestRun.current || abort.signal.aborted) return;
+        setRemote({ input: fingerprint, data });
+        setRequest({ input: fingerprint, running: false, error: "" });
+      })
+      .catch(() => {
+        if (run !== requestRun.current || abort.signal.aborted) return;
+        setRequest({
+          input: fingerprint,
+          running: false,
+          error: "Não foi possível concluir a análise. Clique em Reanalisar para tentar novamente.",
+        });
+      })
+      .finally(() => {
+        clearTimeout(deadline);
+        if (requestAbort.current === abort) requestAbort.current = null;
+      });
+  }, [active, review.input, fingerprint, cancelReview]);
+  useEffect(() => {
+    cancelReview();
+    setRequest(null);
+    setRemote(null);
+    if (active && automatic && review.input && pendingIssues > 0) {
+      setRequest({ input: fingerprint, running: true, waiting: true, error: "" });
+      debounceTimer.current = setTimeout(runReview, 2000);
+    }
+    return cancelReview;
+  }, [active, automatic, review.input, fingerprint, pendingIssues, runReview, cancelReview]);
   const result = remote?.input === fingerprint ? remote.data : null;
   const state = request?.input === fingerprint ? request : null;
   const explanations = new Map(result?.explanations.map((item) => [item.issueId, item]) || []);
@@ -94,16 +128,20 @@ export function SchedulePreviewAssistant({ preview, baseline, active, onChange }
         </h3>
         <Button
           type="button"
-          variant="ghost"
-          size="icon"
-          title="Reanalisar prévia"
-          disabled={!review.input || pendingIssues === 0 || (automatic && state?.running)}
-          onClick={() => {
-            setAutomatic(true);
-            setRefresh((n) => n + 1);
-          }}
+          variant="outline"
+          size="sm"
+          className="h-8 shrink-0 gap-1 px-2 text-xs"
+          aria-label="Reanalisar prévia"
+          title={state?.running ? "Reiniciar análise agora" : "Reanalisar prévia agora"}
+          disabled={!active || !review.input}
+          onClick={runReview}
         >
-          <RefreshCw className="size-4" />
+          {state?.running && !state.waiting ? (
+            <Loader2 className="size-3 animate-spin" />
+          ) : (
+            <RefreshCw className="size-3" />
+          )}
+          Reanalisar
         </Button>
       </div>
       <p className="text-xs text-muted-foreground">
@@ -120,19 +158,22 @@ export function SchedulePreviewAssistant({ preview, baseline, active, onChange }
       </label>
       <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
         {review.error ||
-          (automatic && state?.running
-            ? "Regras atualizadas · consultando IA após as edições..."
+          state?.error ||
+          (state?.running
+            ? state.waiting
+              ? "Regras atualizadas · aguardando pausa nas edições..."
+              : "Reanalisando a prévia atual..."
             : pendingIssues
               ? "Regras atualizadas · " + pendingIssues + " ponto(s) para revisar."
               : "Regras atualizadas · nenhum conflito básico encontrado.")}
       </p>
-      {automatic && state?.running && <Loader2 className="size-4 animate-spin text-primary" />}
+      {state?.running && !state.waiting && <Loader2 className="size-4 animate-spin text-primary" />}
       {state?.error && (
         <p className="text-xs text-muted-foreground">
           IA indisponível nesta revisão. As regras e sugestões abaixo continuam disponíveis.
         </p>
       )}
-      {result && automatic && (
+      {result && (
         <section className="space-y-1 rounded-lg border bg-card p-2">
           <strong className="flex items-center gap-1 text-xs">
             <Sparkles className="size-3" />
@@ -167,7 +208,7 @@ export function SchedulePreviewAssistant({ preview, baseline, active, onChange }
       </select>
       <div className="space-y-2">
         {issues.slice(0, 30).map((issue) => {
-          const explanation = automatic ? explanations.get(issue.id) : null;
+          const explanation = explanations.get(issue.id);
           const ordered = explanation?.candidateKeys.length
             ? [
                 ...explanation.candidateKeys.flatMap((key) =>
@@ -230,8 +271,9 @@ export function SchedulePreviewAssistant({ preview, baseline, active, onChange }
         )}
       </div>
       <p className="text-xs text-muted-foreground">
-        A IA recebe indicadores e IDs anônimos após uma pausa de 2 segundos. Férias e AT marcados
-        são preservados. Aprovação e publicação continuam manuais.
+        A análise automática aguarda uma pausa de 2 segundos. Reanalisar consulta a prévia
+        imediatamente, mesmo com a análise automática desligada. Não sincroniza o Sheets nem altera
+        a escala. Aprovação e publicação continuam manuais.
       </p>
     </aside>
   );

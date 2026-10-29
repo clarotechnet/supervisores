@@ -5,15 +5,20 @@
 import type { ScheduleGeneratedPreview } from "./schedule-generator";
 import { scheduleCodeKind } from "./schedule-import";
 import { applyVacationContinuationPolicy } from "./schedule-preview-policy";
-import { fixedRestSummary } from "./schedule-fixed-rest";
+import { fixedRestSummary, hasFixedRestDistribution } from "./schedule-fixed-rest";
 import { CONTROL_DECEMBER_REFERENCE_ID } from "./schedule-control-december-reference";
-import { isExcludedFromDuty, normalizeScheduleEmployeeName } from "./schedule-generator-rules";
+import {
+  isExcludedFromDuty,
+  normalizeScheduleEmployeeName,
+  scheduleRuleForMonth,
+} from "./schedule-generator-rules";
 
 export type EditablePersonField = "name" | "login" | "jobTitle";
 const normalize = normalizeScheduleEmployeeName;
 const isEvent = (date: string) =>
   new Date(date + "T12:00:00Z").getUTCDay() === 0 || date.slice(5) === "12-25";
-const work = (code: string | undefined) => !!code && scheduleCodeKind(code) === "work";
+const work = (code: string | undefined) =>
+  !!code && normalize(code) !== "SEM INFORMACAO" && scheduleCodeKind(code) === "work";
 const plantao = (code: string | undefined) => normalize(code || "") === "PLANTAO";
 const supervisor = (title: string) => normalize(title).includes("SUPERVISOR COP");
 const adesao = (title: string) => {
@@ -260,7 +265,8 @@ export function revalidateSchedulePreview(
   preview = applyVacationContinuationPolicy(preview);
   if (preview.referenceSeedId?.startsWith(CONTROL_DECEMBER_REFERENCE_ID.slice(0, -2)))
     return revalidateInitialControlPreview(preview);
-  const rule = preview.rule;
+  const rule = scheduleRuleForMonth(preview.rule, preview.targetMonth);
+  preview = { ...preview, rule };
   const weekday = (date: string) => new Date(date + "T12:00:00Z").getUTCDay();
   const holidays = new Set([
     "01-01",
@@ -311,7 +317,7 @@ export function revalidateSchedulePreview(
     if (assigned.filter((p) => adesao(p.jobTitle)).length < (rule.minimumAdesaoControllerDuty || 0))
       issues.push(date + ": falta cobertura de controlador de Adesão.");
     for (const p of assigned)
-      if (isExcludedFromDuty(p.name, rule))
+      if (isExcludedFromDuty(p.name, rule) || (rule.dutyRequiresLogin && !p.login?.trim()))
         issues.push(date + ": pessoa excluída de plantão: " + p.name);
   }
   const names = new Set<string>(),
@@ -383,11 +389,15 @@ export function revalidateSchedulePreview(
       }
     }
   });
-  if (rule.fixedOffDistribution)
-    issues.push(
-      ...fixedRestSummary(preview.payload.people, preview.targetMonth, rule.fixedOffDistribution)
-        .issues,
-    );
+  if (hasFixedRestDistribution(rule)) {
+    const distribution = fixedRestSummary(preview.payload.people, preview.targetMonth, rule).issues;
+    if (preview.fixedRestPolicy === "preserve-history") {
+      if (distribution.length)
+        warnings.push(
+          "Folgas fixas individuais mantidas do mês anterior. A distribuição por dia difere da meta; uma redistribuição depende de decisão explícita da gestão.",
+        );
+    } else issues.push(...distribution);
+  }
   return {
     ...preview,
     eventCoverage: coverage,

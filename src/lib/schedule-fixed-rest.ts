@@ -1,9 +1,14 @@
 import type { SchedulePerson } from "./types";
 import type { ScheduleGeneratedPreview } from "./schedule-generator";
 import { scheduleCodeKind } from "./schedule-import.ts";
+import { isExcludedFromDuty } from "./schedule-generator-rules";
+import type { ScheduleGenerationRule } from "./schedule-generator-rules";
 
-type RestRule = {
-  fixedOffDistribution?: Readonly<Record<number, number>>;
+type RestConfiguration = Pick<
+  ScheduleGenerationRule,
+  "fixedOffDistribution" | "fixedOffStrategy" | "fixedOffSaturdayShare" | "fixedOffWeekdays"
+> & { excludedFromDuty?: readonly string[] };
+type RestRule = RestConfiguration & {
   defaultShift: string;
   saturdayShift: string;
   additionalHolidays?: readonly string[];
@@ -45,39 +50,94 @@ function fixedDay(person: SchedulePerson, dates: string[]) {
   counts.sort((a, b) => b.count - a.count || a.day - b.day);
   return counts[0]?.count ? counts[0].day : null;
 }
+export function hasFixedRestDistribution(rule: RestConfiguration) {
+  return !!(rule.fixedOffDistribution || rule.fixedOffStrategy);
+}
+function equalTargets(total: number, days: readonly number[]): Record<number, number> {
+  return Object.fromEntries(
+    days.map((day, i) => [
+      day,
+      Math.floor(total / days.length) + (i < total % days.length ? 1 : 0),
+    ]),
+  );
+}
+function distributionGroups(people: SchedulePerson[], month: string, rule: RestConfiguration) {
+  const dates = datesOf(month);
+  const active = people
+    .map((p, index) => ({ index, person: p, old: fixedDay(p, dates) }))
+    .filter((p) => !protectedMonth(p.person, dates));
+  const days = rule.fixedOffWeekdays?.length ? rule.fixedOffWeekdays : [1, 2, 3, 4, 5, 6];
+  if (rule.fixedOffStrategy === "login-duty-eligible") {
+    const primary = active.filter(
+      (p) =>
+        p.person.login?.trim() &&
+        !isExcludedFromDuty(p.person.name, {
+          excludedFromDuty: rule.excludedFromDuty || [],
+        } as ScheduleGenerationRule),
+    );
+    const others = active.filter((p) => !primary.includes(p));
+    const saturday = Math.round(primary.length * (rule.fixedOffSaturdayShare ?? 0.25));
+    const targets: Record<number, number> = {
+      ...equalTargets(primary.length - saturday, [1, 2, 3, 4, 5]),
+      6: saturday,
+    };
+    return [
+      { people: primary, targets },
+      { people: others, targets: equalTargets(others.length, days) },
+    ];
+  }
+  return [
+    { people: active, targets: rule.fixedOffDistribution || equalTargets(active.length, days) },
+  ];
+}
 export function fixedRestSummary(
   people: SchedulePerson[],
   month: string,
-  targets: Readonly<Record<number, number>>,
+  configuration: RestConfiguration | Readonly<Record<number, number>>,
 ) {
-  const dates = datesOf(month);
-  const active = people.filter((p) => !protectedMonth(p, dates));
-  const counts: Record<number, number> = {};
-  for (const p of active) {
-    const day = fixedDay(p, dates);
-    if (day !== null) counts[day] = (counts[day] || 0) + 1;
-  }
-  const expected = Object.values(targets).reduce((a, b) => a + b, 0);
+  const rule: RestConfiguration = Object.keys(configuration).some((k) => !/^\d+$/.test(k))
+    ? (configuration as RestConfiguration)
+    : { fixedOffDistribution: configuration as Readonly<Record<number, number>> };
+  const groups = distributionGroups(people, month, rule);
+  const first = groups[0]!;
+  const count = (group: typeof first) => {
+    const counts: Record<number, number> = {};
+    for (const p of group.people) {
+      const day = fixedDay(p.person, datesOf(month));
+      if (day !== null) counts[day] = (counts[day] || 0) + 1;
+    }
+    return counts;
+  };
+  const counts = count(first);
+  const expected = Object.values(first.targets).reduce((a, b) => a + b, 0);
+  const protectedCount = people.filter((p) => protectedMonth(p, datesOf(month))).length;
   const issues: string[] = [];
-  if (active.length !== expected)
+  if (first.people.length !== expected)
     issues.push(
       "Distribuição de folgas fixas: as metas somam " +
         expected +
         ", mas há " +
-        active.length +
+        first.people.length +
         " pessoas no rodízio (" +
-        (people.length - active.length) +
+        protectedCount +
         " afastadas no mês). Revise a diferença sem retirar colaboradores nem liberar plantões proibidos.",
     );
-  if (Object.entries(targets).some(([d, n]) => (counts[Number(d)] || 0) !== n))
-    issues.push(
-      "Distribuição de folgas fixas: quantidades por dia ainda divergem das metas; confira a revisão.",
-    );
+  for (const group of groups) {
+    const actual = count(group);
+    if (Object.entries(group.targets).some(([d, n]) => (actual[Number(d)] || 0) !== n)) {
+      issues.push(
+        "Distribuição de folgas fixas: quantidades por dia ainda divergem das metas; confira a revisão.",
+      );
+      break;
+    }
+  }
   return {
     counts,
+    targets: first.targets,
     expected,
-    active: active.length,
-    protectedCount: people.length - active.length,
+    active: first.people.length,
+    otherActive: groups[1]?.people.length || 0,
+    protectedCount,
     issues,
   };
 }
@@ -93,26 +153,26 @@ export function balanceFixedRests(
     last = dates.at(-1)!;
   const result = people.map((p) => ({ ...p, assignments: { ...p.assignments } }));
   const outside = people.map((_, i) => ({ ...originalOutside[i] }));
-  const targets = rule.fixedOffDistribution;
-  if (!targets) return { people: result, outsideAssignments: outside };
-  const eligible = people
-    .map((p, i) => ({ index: i, old: fixedDay(p, dates) }))
-    .filter((p) => !protectedMonth(people[p.index]!, dates));
+  if (!hasFixedRestDistribution(rule)) return { people: result, outsideAssignments: outside };
   const assigned = new Map<number, number>();
-  const targetDays = Object.keys(targets)
-    .map(Number)
-    .sort((a, b) => a - b);
-  for (const day of targetDays)
-    eligible
-      .filter((p) => p.old === day)
-      .slice(0, targets[day] || 0)
-      .forEach((p) => assigned.set(p.index, day));
-  for (const day of targetDays) {
-    const need = (targets[day] || 0) - [...assigned.values()].filter((d) => d === day).length;
-    eligible
-      .filter((p) => !assigned.has(p.index))
-      .slice(0, need)
-      .forEach((p) => assigned.set(p.index, day));
+  for (const group of distributionGroups(people, month, rule)) {
+    const targetDays = Object.keys(group.targets)
+      .map(Number)
+      .sort((a, b) => a - b);
+    for (const day of targetDays)
+      group.people
+        .filter((p) => p.old === day)
+        .slice(0, group.targets[day] || 0)
+        .forEach((p) => assigned.set(p.index, day));
+    for (const day of targetDays) {
+      const need =
+        (group.targets[day] || 0) -
+        group.people.filter((p) => assigned.get(p.index) === day).length;
+      group.people
+        .filter((p) => !assigned.has(p.index))
+        .slice(0, need)
+        .forEach((p) => assigned.set(p.index, day));
+    }
   }
   const holiday = (d: string) =>
     holidays.has(d.slice(5)) || !!rule.additionalHolidays?.includes(d.slice(5));
@@ -171,7 +231,7 @@ export function applyFixedRestDistribution(
   preview: ScheduleGeneratedPreview,
   sourcePeople: SchedulePerson[] = [],
 ): ScheduleGeneratedPreview {
-  if (!preview.rule.fixedOffDistribution) return preview;
+  if (!hasFixedRestDistribution(preview.rule)) return preview;
   const identity = (value: string) =>
     value
       .normalize("NFD")

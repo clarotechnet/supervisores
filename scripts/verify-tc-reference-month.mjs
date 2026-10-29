@@ -146,7 +146,7 @@ try {
     assert.equal(await root.locator("#kEval").innerText(), "2");
     assert.ok(
       (await root.locator('#tcHead [data-sort="prod"]').textContent()).includes(
-        technicalVisit ? "175" : "127",
+        technicalVisit ? "175" : "150",
       ),
     );
     const octoberMetrics = (await state()).result;
@@ -244,6 +244,43 @@ try {
     assert.deepEqual((await state()).rows, snapshotRows);
     assert.deepEqual((await state()).result, octoberMetrics);
     await referenceMonth("2026-10");
+    // Real renderer boundary checks: QQ's new 150 target must never change VT's 175.
+    const target = technicalVisit ? 175 : 150;
+    await page.evaluate(
+      (rows) => {
+        window.engine.loadProjectData({ rows });
+        window.engine.setUnifiedMonths(["2026-10"]);
+      },
+      ["149.9", "150", "174.9", "175"].map((points, index) =>
+        row(`BOUNDARY-${index}`, 10, "2026-10-20", "30/10/2026", points, `Z${index + 1}`),
+      ),
+    );
+    await root.locator("#tcProjectionPlanner").evaluate((element) => {
+      element.open = true;
+      element.dispatchEvent(new Event("toggle"));
+    });
+    await root.locator("#tcProjectionReset").click();
+    for (const [index, points] of [149.9, 150, 174.9, 175].entries()) {
+      assert.equal(
+        await root
+          .locator(`#tbody tr:has([data-tc-current-login="Z${index + 1}"]) .tc-fixed-status`)
+          .getAttribute("data-current-state"),
+        points >= target ? "certified" : "offender",
+      );
+    }
+    assert.equal(await root.locator("#kCert").innerText(), technicalVisit ? "1" : "3");
+    assert.equal(await root.locator("#kEval").innerText(), "4");
+    for (const selector of ["#ruleNotice", "#prodMeta", '#fRule option[value="fixed"]'])
+      assert.ok((await root.locator(selector).textContent()).includes(`≥ ${target} pontos/dia`));
+    await root.locator("#tcProjectionPlanner").evaluate((element) => {
+      element.open = false;
+      element.dispatchEvent(new Event("toggle"));
+    });
+    await root.locator('[data-tc-projection-login="Z1"][data-tc-projection-metric="prod"]').click();
+    const projection = await root.locator("#modalBody").innerText();
+    assert.ok(projection.includes(`Meta ≥ ${target} pontos/dia`));
+    assert.ok(projection.includes(technicalVisit ? "200,1 pts" : "150,1 pts"));
+    await root.locator("#modalClose").click();
     await page.close();
   }
   assert.deepEqual(errors, []);
@@ -257,7 +294,8 @@ try {
       multiMonthAndAll: true,
       monthlyPlanning: true,
       sameAggregationsAndRules: true,
-      qq127AndVT175: true,
+      qq150AndVT175: true,
+      inclusiveProductivityBoundariesAndProjection: true,
       presentationAndSlides: true,
       productionWrites: 0,
       screenshots,

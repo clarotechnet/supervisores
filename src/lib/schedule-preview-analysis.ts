@@ -19,6 +19,14 @@ export function previewAnalysisInput(
     current: build(preview),
     rule: {
       ...preview.rule,
+      excludedFromDuty: [
+        ...new Set([
+          ...preview.rule.excludedFromDuty,
+          ...(preview.rule.dutyRequiresLogin
+            ? preview.payload.people.filter((p) => !p.login?.trim()).map((p) => p.name)
+            : []),
+        ]),
+      ],
       additionalHolidays: [...(preview.rule.additionalHolidays || [])],
       analysisMonth: preview.targetMonth,
       ...(preview.rule.city === "natal" &&

@@ -1,3 +1,4 @@
+import { deleteOperationalMonth, ScheduleDeletionError } from "../_shared/schedule-month-delete.ts";
 import {
   sourceSpreadsheet,
   officialMonthTitle,
@@ -125,7 +126,13 @@ Deno.serve(async (req) => {
       error: "Somente administradores ou supervisores ativos podem gerenciar planilhas.",
     });
 
-  let params: { action?: string; draftId?: string; sheetId?: string };
+  let params: {
+    action?: string;
+    draftId?: string;
+    sheetId?: string;
+    scheduleId?: string;
+    confirmation?: string;
+  };
   try {
     params = await req.json();
   } catch {
@@ -133,14 +140,27 @@ Deno.serve(async (req) => {
   }
   if (!params || typeof params !== "object") return json(400, { error: "Requisição inválida." });
   const action = params.action;
-  if (action !== "create" && action !== "sync" && action !== "publish")
+  if (action !== "create" && action !== "sync" && action !== "publish" && action !== "delete")
     return json(400, { error: "Ação desconhecida." });
-  if (action === "publish" && profile.role !== "admin")
-    return json(403, { error: "Apenas administrador pode aprovar/publicar uma escala oficial." });
+  if ((action === "publish" || action === "delete") && profile.role !== "admin")
+    return json(403, {
+      error: "Apenas administrador pode aprovar/publicar ou excluir uma escala oficial.",
+    });
   if (action === "create" && !validUuid(params.draftId))
     return json(400, { error: "Rascunho inválido." });
-  if ((action === "sync" || action === "publish") && !validUuid(params.sheetId))
+  if (
+    (action === "sync" || action === "publish" || action === "delete") &&
+    !validUuid(params.sheetId)
+  )
     return json(400, { error: "Planilha operacional inválida." });
+
+  if (
+    action === "delete" &&
+    (!validUuid(params.scheduleId) ||
+      typeof params.confirmation !== "string" ||
+      params.confirmation.length > 30)
+  )
+    return json(400, { error: "Escala ou confirmação de exclusão inválida." });
 
   try {
     if (action === "create") {
@@ -157,12 +177,16 @@ Deno.serve(async (req) => {
         return json(409, { error: "Rascunho rejeitado não pode virar escala operacional." });
       const { data: existing, error: existingError } = await admin
         .from("schedule_operational_sheets")
-        .select("id,spreadsheet_url,sheet_tab")
+        .select("id,spreadsheet_url,sheet_tab,deleted_at,deletion_requested_at")
         .eq("draft_id", draft.id)
         .maybeSingle();
       if (existingError)
         return json(503, {
           error: "Estrutura de escalas indisponível. Confira as migrations antes de criar uma aba.",
+        });
+      if (existing?.deleted_at || existing?.deletion_requested_at)
+        return json(409, {
+          error: "Esta versão está excluída ou em exclusão. Gere e salve outra versão.",
         });
       if (existing) {
         if (existing.sheet_tab === "ATUALIZADA")
@@ -440,6 +464,30 @@ Deno.serve(async (req) => {
     requireScheduleManagement(profile.role, sheet.sector);
 
     const controlMaster = usesControlMaster(sheet.city, sheet.sector);
+    if (action === "delete") {
+      const token = await googleToken();
+      const deleted = await deleteOperationalMonth({
+        sheet,
+        actorId: user.id,
+        scheduleId: params.scheduleId,
+        confirmation: params.confirmation,
+        expectedSpreadsheet: controlMaster
+          ? CONTROL_EXPECTED_MASTER_ID
+          : sourceSpreadsheet(sheet.city, sheet.sector),
+        expectedTab: controlMaster
+          ? controlMonthTabName(sheet.schedule_month)
+          : officialMonthTitle(sheet.sector, sheet.schedule_month),
+        rpc: async (name, args) => await admin.rpc(name, args),
+        google: (url, method, body) => googleJson(url, token, method, body),
+      });
+      return json(200, { ok: true, ...deleted, sheetId: sheet.id });
+    }
+    if (sheet.deleted_at || sheet.deletion_requested_at)
+      return json(409, {
+        error:
+          "Esta aba foi excluída ou sua exclusão está em andamento. Gere outra versão após concluir a exclusão.",
+      });
+
     if (
       action === "publish" &&
       (controlMaster
@@ -458,26 +506,46 @@ Deno.serve(async (req) => {
         "?valueRenderOption=UNFORMATTED_VALUE",
       token,
     )) as { values?: unknown[][] };
-    const result =
-      sharedTab && !controlMaster
-        ? parseOfficialMonthTab(
-            arrays(response.values),
-            sheet.planned_payload as Payload,
-            sheet.current_payload as Payload,
-            sheet.schedule_month,
-          )
-        : sharedTab
-          ? parseControlMonthTab(
+    let result;
+    try {
+      result =
+        sharedTab && !controlMaster
+          ? parseOfficialMonthTab(
               arrays(response.values),
               sheet.planned_payload as Payload,
               sheet.current_payload as Payload,
               sheet.schedule_month,
             )
-          : parseUpdatedSheet(
-              arrays(response.values),
-              sheet.planned_payload as Payload,
-              sheet.current_payload as Payload,
-            );
+          : sharedTab
+            ? parseControlMonthTab(
+                arrays(response.values),
+                sheet.planned_payload as Payload,
+                sheet.current_payload as Payload,
+                sheet.schedule_month,
+              )
+            : parseUpdatedSheet(
+                arrays(response.values),
+                sheet.planned_payload as Payload,
+                sheet.current_payload as Payload,
+              );
+    } catch (error) {
+      return json(409, {
+        code: "SHEET_STRUCTURE_CHANGED",
+        error: error instanceof Error ? error.message : "Confira o cabeçalho e a estrutura da aba.",
+      });
+    }
+    if (
+      "functionChanges" in result &&
+      Array.isArray(result.functionChanges) &&
+      result.functionChanges.length
+    ) {
+      const ready = await admin.rpc("schedule_operational_metadata_audit_ready");
+      if (ready.error || ready.data !== true)
+        return json(409, {
+          error:
+            "Há correções de função no Sheets. Aplique a migration de exclusão/histórico antes de sincronizar para preservar a auditoria.",
+        });
+    }
     if (action === "publish") {
       // Explicit admin action: one RPC applies the Google snapshot, audits
       // its changes and approves/publishes atomically with optimistic locking.
@@ -522,6 +590,7 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     if (error instanceof ScheduleScopeForbidden) return json(403, { error: error.message });
+    if (error instanceof ScheduleDeletionError) return json(error.status, { error: error.message });
     const message = error instanceof Error ? error.message : "Falha ao processar planilha.";
     return json(502, { error: message.slice(0, 1200) });
   }

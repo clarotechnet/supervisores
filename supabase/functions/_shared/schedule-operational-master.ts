@@ -65,7 +65,15 @@ export function parseControlMonthTab(
   planned: Payload,
   previous: Payload,
   month: string,
-): { payload: Payload; changes: OperationalChange[] } {
+): {
+  payload: Payload;
+  changes: OperationalChange[];
+  functionChanges: Array<{
+    employee_name: string;
+    previous_function: string;
+    current_function: string;
+  }>;
+} {
   const expected = controlMonthValues(planned, month);
   if (
     rows.length < expected.length ||
@@ -79,23 +87,43 @@ export function parseControlMonthTab(
     if (rows[0]?.[j + 2] !== expected[0]![j + 2] || rows[1]?.[j + 2] !== expected[1]![j + 2])
       throw Error("Cabeçalho da data " + displayDateHeader(day) + " alterado.");
   }
-  if (rows[1]?.[0] !== "Nome" || rows[1]?.[1] !== "Função")
-    throw Error("Cabeçalho Nome/Função alterado.");
+  const headerText = (value: unknown) =>
+    String(value ?? "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim()
+      .toUpperCase();
+  if (headerText(rows[1]?.[0]) !== "NOME")
+    throw Error(
+      "Cabeçalho A2 inválido. Restaure o texto Nome; edite os dias nas linhas dos colaboradores.",
+    );
+  if (headerText(rows[1]?.[1]) !== "FUNCAO")
+    throw Error(
+      "Cabeçalho B2 inválido. Restaure o texto Função; edite os dias nas linhas dos colaboradores.",
+    );
   // Reconstitui a entrada do parser consolidado: LOGIN continua interno,
   // não é gravado nem precisa ser editado no Google Sheets.
   const oldHeader = ["COLABORADOR", "LOGIN", "FUNÇÃO", ...planned.dates];
   const legacyRows = planned.people.map((person, index) => {
     const row = rows[index + 2] ?? [];
-    if (row[0] !== person.name || row[1] !== person.jobTitle)
+    if (row[0] !== person.name)
       throw Error("Identificação alterada na linha " + (index + 3) + ": " + person.name);
-    return [
-      person.name,
-      person.login || "",
-      person.jobTitle,
-      ...planned.dates.map((_, i) => row[i + 2]),
-    ];
+    return [person.name, person.login || "", row[1], ...planned.dates.map((_, i) => row[i + 2])];
   });
-  return parseUpdatedSheet([oldHeader, ...legacyRows], planned, previous);
+  const result = parseUpdatedSheet([oldHeader, ...legacyRows], planned, previous, true);
+  const functionChanges = result.payload.people.flatMap((person) => {
+    const before = previous.people.find((p) => p.name === person.name);
+    return before && before.jobTitle !== person.jobTitle
+      ? [
+          {
+            employee_name: person.name,
+            previous_function: before.jobTitle,
+            current_function: person.jobTitle,
+          },
+        ]
+      : [];
+  });
+  return { ...result, functionChanges };
 }
 /** Formatação visual somente da nova ABA, nunca do arquivo inteiro. */
 export function controlMonthFormatting(
@@ -194,6 +222,22 @@ export function controlMonthFormatting(
       },
     },
   ];
+  requests.push({
+    addProtectedRange: {
+      protectedRange: {
+        range: {
+          sheetId,
+          startRowIndex: 0,
+          endRowIndex: 2,
+          startColumnIndex: 0,
+          endColumnIndex: days + 2,
+        },
+        warningOnly: true,
+        description:
+          "Cabeçalho da sincronização. Edite as folgas e os turnos nas linhas dos colaboradores.",
+      },
+    },
+  });
   // Verde em A/B significa sem plantão AUTOMÁTICO. Essa marcação
   // corresponde à política editável salva no rascunho, não à cor
   // original (que pode variar entre competências).

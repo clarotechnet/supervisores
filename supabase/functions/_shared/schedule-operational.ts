@@ -101,6 +101,7 @@ export function parseUpdatedSheet(
   rows: unknown[][],
   planned: Payload,
   previous: Payload,
+  functionAliases = false,
 ): { payload: Payload; changes: OperationalChange[] } {
   if (rows.length !== planned.people.length + 1)
     throw Error("Linhas de colaboradores alteradas no Sheets.");
@@ -117,7 +118,21 @@ export function parseUpdatedSheet(
   const changes: OperationalChange[] = [];
   const people = planned.people.map((p, i) => {
     const row = rows[i + 1] || [];
-    if (row[0] !== p.name || (row[1] || "") !== (p.login || "") || (row[2] || "") !== p.jobTitle)
+    const actualFunction = typeof row[2] === "string" ? row[2].trim() : "";
+    const compatibleFunction =
+      functionAliases &&
+      typeof row[2] === "string" &&
+      normal(actualFunction)
+        .replace(/\s+/g, " ")
+        .replace(/\bFTA\b/g, "FTZ") ===
+        normal(p.jobTitle)
+          .replace(/\s+/g, " ")
+          .replace(/\bFTA\b/g, "FTZ");
+    if (
+      row[0] !== p.name ||
+      (row[1] || "") !== (p.login || "") ||
+      ((row[2] || "") !== p.jobTitle && !compatibleFunction)
+    )
       throw Error("Identificação alterada: " + p.name + ". Edite só os dias.");
     const previousPerson = previous.people.find((x) => employeeKey(x) === employeeKey(p));
     if (!previousPerson) throw Error("Colaborador não encontrado: " + p.name);
@@ -141,7 +156,7 @@ export function parseUpdatedSheet(
           current_code: value,
         });
     });
-    return { ...p, assignments };
+    return { ...p, jobTitle: functionAliases ? actualFunction : p.jobTitle, assignments };
   });
   return {
     payload: {

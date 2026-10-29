@@ -45,3 +45,25 @@ export async function requestScheduleAnalysis(
     throw Error("Resposta inválida da análise de escalas.");
   return data as ScheduleAiResult;
 }
+
+/** Escolhe uma proposta completa, sem salvar rascunho ou alterar dados oficiais. */
+export async function requestScheduleGenerationChoice(
+  generation: import("../../supabase/functions/_shared/schedule-ai-generation").GenerationChoiceInput,
+  signal?: AbortSignal,
+): Promise<import("../../supabase/functions/_shared/schedule-ai-generation").GenerationChoice> {
+  const { data, error } = await supabase.functions.invoke("schedule-ai", {
+    body: { generation },
+    ...(signal ? { signal } : {}),
+  });
+  if (error) throw error;
+  if (
+    !data?.ok ||
+    data.source !== "generation" ||
+    !["ai", "rules"].includes(data.mode) ||
+    typeof data.selectedOption !== "string" ||
+    typeof data.summary !== "string" ||
+    data.writeActions !== 0
+  )
+    throw Error("Resposta inválida da geração assistida.");
+  return data;
+}

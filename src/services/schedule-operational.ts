@@ -15,7 +15,7 @@ export async function listOperationalSheets(city: string, sector: string, month:
     .order("created_at", { ascending: false })
     .limit(30);
   if (error) throw error;
-  return data || [];
+  return (data || []).filter((row) => !row.deleted_at);
 }
 export async function latestOperationalSource(city: string, sector: string, month: string) {
   // Após a publicação, uma versão em revisão criada depois não pode
@@ -31,7 +31,7 @@ export async function latestOperationalSource(city: string, sector: string, mont
   if (official?.source_file === "Google Sheets - Escala operacional oficial") {
     const { data: draft, error: draftError } = await supabase
       .from("schedule_generation_drafts")
-      .select("id")
+      .select("id,policy_snapshot")
       .eq("city", city)
       .eq("sector", sector)
       .eq("schedule_month", month.slice(0, 7) + "-01")
@@ -53,7 +53,10 @@ export async function latestOperationalSource(city: string, sector: string, mont
       .maybeSingle();
     if (sheetError) throw sheetError;
     if (!approved) throw Error("A aba da escala oficial não está vinculada no Supabase.");
-    return approved;
+    if (approved.deleted_at || approved.deletion_requested_at)
+      throw Error("A escala-base está em exclusão ou já foi excluída.");
+    const snapshot = draft.policy_snapshot as { rule?: Record<string, unknown> } | null;
+    return { ...approved, generationRule: snapshot?.rule || null };
   }
   // Uma revisão não aprovada nunca se torna a fonte por ser a mais recente.
   return null;
@@ -70,8 +73,8 @@ export async function fetchOperationalChanges(sheetId: string): Promise<Operatio
 }
 
 async function invoke(
-  action: "create" | "sync" | "publish",
-  props: { draftId?: string; sheetId?: string },
+  action: "create" | "sync" | "publish" | "delete",
+  props: { draftId?: string; sheetId?: string; scheduleId?: string; confirmation?: string },
 ) {
   const { data, error } = await supabase.functions.invoke("schedule-operational", {
     body: { action, ...props },
@@ -94,6 +97,7 @@ async function invoke(
     ok: boolean;
     existing?: boolean;
     published?: boolean;
+    deleted?: boolean;
     officialId?: string;
     sheetId: string;
     url?: string;
@@ -107,6 +111,8 @@ async function invoke(
 }
 export const createOperationalSheet = (draftId: string) => invoke("create", { draftId });
 export const syncOperationalSheet = (sheetId: string) => invoke("sync", { sheetId });
+export const deleteOperationalSheet = (sheetId: string, scheduleId: string, confirmation: string) =>
+  invoke("delete", { sheetId, scheduleId, confirmation });
 /** Sincroniza a aba Google ao aprovar e publica a mesma versão como oficial. */
 export const publishOperationalSheet = (sheetId: string) => invoke("publish", { sheetId });
 

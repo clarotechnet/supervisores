@@ -160,6 +160,43 @@ describe("persistência segura de rascunhos de escala", () => {
   });
 });
 
+it("salva e restaura a memória e a decisão IA somente em nova versão", async () => {
+  const p = {
+    ...preview,
+    fixedRestPolicy: "preserve-history" as const,
+    fixedRestEvidence: [
+      {
+        personKey: "Z123",
+        day: 3,
+        week: ["2026-11-08", "2026-11-11"],
+        method: "normal-week" as const,
+      },
+    ],
+    generationDecision: {
+      mode: "ai" as const,
+      selectedOption: "option-1",
+      summary: "Rodízio equilibrado",
+      sourceId: source.id,
+      sourceUpdatedAt: source.updated_at,
+    },
+  };
+  const result = await saveGeneratedDraft({ source, preview: p, userId: "user-id" });
+  const reopened = restoreGenerationPreview(result.draft, p.rule);
+  expect(reopened.fixedRestPolicy).toBe("preserve-history");
+  expect(reopened.fixedRestEvidence).toEqual(p.fixedRestEvidence);
+  expect(reopened.generationDecision).toEqual(p.generationDecision);
+  expect(state.inserts[0]!.value.policy_snapshot).toMatchObject({
+    sourceUpdatedAt: source.updated_at,
+    sourceSheet: source.source_sheet,
+    generationDecision: p.generationDecision,
+  });
+  expect(state.inserts[1]!.value.changes).toMatchObject({
+    generation_decision: p.generationDecision,
+    fixed_rest_evidence: p.fixedRestEvidence,
+  });
+  expect(state.tables).not.toContain("schedule_uploads");
+});
+
 function vacationDraft(): GenerationDraft {
   return {
     id: "legacy-draft",

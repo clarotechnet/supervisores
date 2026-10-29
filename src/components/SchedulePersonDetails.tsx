@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { SchedulePdfButton } from "@/components/SchedulePdfButton";
 import type { SchedulePerson, ScheduleDateNote } from "@/lib/types";
 import { SCHEDULE_CITY_OPTIONS, SCHEDULE_SECTOR_OPTIONS } from "@/lib/types";
@@ -36,6 +37,10 @@ export function SchedulePersonDetails({
   onOpenNote: (date: string) => void;
   focusDate?: string;
 }) {
+  const stats = useMemo(() => schedulePersonStats(person, month), [person, month]);
+  const notesByDate = useMemo(() => new Map(notes.map((note) => [note.note_date, note])), [notes]);
+  const monthText = monthLabel(month);
+  const today = todayKey();
   const firstDay = dateFromIso(month);
   const year = firstDay.getFullYear();
   const monthIndex = firstDay.getMonth();
@@ -50,7 +55,7 @@ export function SchedulePersonDetails({
   const offDays = entries.filter((entry) => scheduleCodeKind(entry.code) === "off");
   const absenceDays = entries.filter((entry) => scheduleCodeKind(entry.code) === "absence");
   const certificateDays = entries.filter((entry) => scheduleCodeKind(entry.code) === "certificate");
-  const nextWork = activityDays.find((entry) => entry.date >= todayKey());
+  const nextWork = activityDays.find((entry) => entry.date >= today);
 
   return (
     <div className="min-w-0">
@@ -80,10 +85,10 @@ export function SchedulePersonDetails({
       </div>
 
       <div className="schedule-person-kpis">
-        <MiniKpi label="Plantões marcados" value={schedulePersonStats(person, month).duty} />
+        <MiniKpi label="Plantões marcados" value={stats.duty} />
         <MiniKpi label="Dias em atividade" value={activityDays.length} />
         <MiniKpi label="Folgas" value={offDays.length} />
-        <MiniKpi label="Dias de férias" value={schedulePersonStats(person, month).vacation} />
+        <MiniKpi label="Dias de férias" value={stats.vacation} />
       </div>
       {focusDate && person.assignments[focusDate] && (
         <div
@@ -117,8 +122,8 @@ export function SchedulePersonDetails({
       <div className="mt-4">
         <h4 className="text-xs font-bold">Plantões marcados no mês</h4>
         <div className="mt-2 flex flex-wrap gap-2">
-          {schedulePersonStats(person, month).dutyDates.length ? (
-            schedulePersonStats(person, month).dutyDates.map((date) => (
+          {stats.dutyDates.length ? (
+            stats.dutyDates.map((date) => (
               <span
                 key={date}
                 className="rounded-md bg-primary/10 px-2 py-1 text-[10px] font-bold text-primary"
@@ -159,7 +164,7 @@ export function SchedulePersonDetails({
           {dates.map((date) => {
             const code = person.assignments[date] ?? "";
             const kind = code ? scheduleCodeKind(code) : null;
-            const note = notes.find((item) => item.note_date === date);
+            const note = notesByDate.get(date);
             const canOpen = isAdmin || Boolean(note);
             return (
               <button
@@ -173,7 +178,7 @@ export function SchedulePersonDetails({
                   canOpen &&
                     "cursor-pointer hover:bg-secondary/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary",
                 )}
-                aria-label={`${Number(date.slice(-2))} de ${monthLabel(month)}${note ? ", com observação" : ""}`}
+                aria-label={`${Number(date.slice(-2))} de ${monthText}${note ? ", com observação" : ""}`}
               >
                 <span className="flex items-center justify-between gap-1 text-[10px] font-bold text-muted-foreground">
                   {Number(date.slice(-2))}

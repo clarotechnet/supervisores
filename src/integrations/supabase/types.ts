@@ -702,6 +702,9 @@ export type Database = {
         last_synced_at: string | null;
         created_at: string;
         updated_at: string;
+        deletion_requested_at?: string | null;
+        deleted_at?: string | null;
+        deleted_by?: string | null;
       }>;
       schedule_operational_changes: QualityTable<{
         id: string;

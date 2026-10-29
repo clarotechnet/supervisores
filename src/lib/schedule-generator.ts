@@ -2,7 +2,11 @@ import { rnDecemberReference, isInitialRnDecember } from "./schedule-rn-december
 import { revalidateSchedulePreview } from "./schedule-preview-editor";
 import type { SchedulePayload, SchedulePerson, ScheduleUpload } from "./types";
 import { scheduleCodeKind } from "./schedule-import";
-import { applyFixedRestDistribution } from "./schedule-fixed-rest";
+import {
+  learnFixedRest,
+  learnMissingCoverage,
+  type FixedRestEvidence,
+} from "./schedule-history-memory";
 import { scheduleMonthDates } from "./schedule-view";
 import {
   CONTROL_DECEMBER_REFERENCE_ID,
@@ -10,6 +14,7 @@ import {
 } from "./schedule-control-december-reference";
 import {
   getScheduleGenerationRule,
+  scheduleRuleForMonth,
   isExcludedFromDuty,
   normalizeScheduleEmployeeName,
   type ScheduleGenerationRule,
@@ -24,6 +29,15 @@ export interface ScheduleGeneratedPreview {
   sourceMonth: string;
   targetMonth: string;
   referenceSeedId?: string;
+  fixedRestPolicy?: "preserve-history" | "initial-distribution";
+  fixedRestEvidence?: FixedRestEvidence[];
+  generationDecision?: {
+    mode: "ai" | "rules";
+    selectedOption: string;
+    summary: string;
+    sourceId: string;
+    sourceUpdatedAt: string;
+  };
   calendarWeeks: string[][];
   // Dias fora da competência: mês anterior é histórico imutável; próximo mês é provisório.
   outsideAssignments: Record<string, string>[];
@@ -62,7 +76,10 @@ export function scheduleCalendarWeeks(month: string): string[][] {
 }
 const nameKey = (person: SchedulePerson) =>
   normalizeScheduleEmployeeName(person.login || person.name);
-const isWork = (code: string | undefined) => !!code && scheduleCodeKind(code) === "work";
+const isWork = (code: string | undefined) =>
+  !!code &&
+  normalizeScheduleEmployeeName(code) !== "SEM INFORMACAO" &&
+  scheduleCodeKind(code) === "work";
 // Férias e afastamentos não são folgas de descanso semanal.
 const isOff = (code: string | undefined) => !!code && scheduleCodeKind(code) === "off";
 
@@ -72,24 +89,11 @@ function historicalFixedDay(
   position: number,
   rule: ScheduleGenerationRule,
 ): { day: number; confident: boolean } {
+  const evidence = learnFixedRest(person, month, rule);
   const allowed = rule.fixedOffWeekdays?.length ? rule.fixedOffWeekdays : [1, 2, 3, 4, 5, 6];
-  const sourceDays = scheduleMonthDates(month);
-  const nextFirst = moveDate(sourceDays.at(-1)!, 1);
-  const referenceDays = [
-    ...sourceDays,
-    ...Array.from({ length: 7 }, (_, index) => moveDate(nextFirst, index)),
-  ];
-  const counts = allowed.map((day) => ({
-    day,
-    n: referenceDays.filter((date) => weekday(date) === day && isOff(person.assignments[date]))
-      .length,
-  }));
-  counts.sort((a, b) => b.n - a.n || a.day - b.day);
-  // Uma semana marcada já basta; férias nos demais dias não anulam a folga conhecida.
-  const confident = (counts[0]?.n ?? 0) >= 1;
   return {
-    day: confident ? counts[0]!.day : allowed[position % allowed.length]!,
-    confident,
+    day: evidence.day ?? allowed[position % allowed.length]!,
+    confident: evidence.day !== null,
   };
 }
 
@@ -305,13 +309,34 @@ export function generateInitialControlDecemberPreview(
 export function generateSchedulePreview(
   source: ScheduleUpload,
   targetMonth: string,
+  options: {
+    tieBreakSeed?: number;
+    previousRule?: Partial<ScheduleGenerationRule> | undefined;
+  } = {},
 ): ScheduleGeneratedPreview {
-  const rule = getScheduleGenerationRule(source.city, source.sector);
-  if (!rule) throw new Error("Não há regra cadastrada para esta cidade e frente.");
+  const catalogRule = getScheduleGenerationRule(source.city, source.sector);
+  if (!catalogRule) throw new Error("Não há regra cadastrada para esta cidade e frente.");
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(targetMonth.slice(0, 7))) {
     throw new Error("Informe uma competência válida no formato AAAA-MM.");
   }
   const target = targetMonth.slice(0, 7);
+  const inherited = {
+    ...catalogRule,
+    excludedFromDuty: options.previousRule?.excludedFromDuty ?? catalogRule.excludedFromDuty,
+    personShiftOverrides: {
+      ...catalogRule.personShiftOverrides,
+      ...options.previousRule?.personShiftOverrides,
+    },
+  };
+  if (inherited.sundayDutyCount === null && Number.isInteger(options.previousRule?.sundayDutyCount))
+    inherited.sundayDutyCount = options.previousRule!.sundayDutyCount!;
+  if (
+    inherited.holidayDutyCount === null &&
+    Number.isInteger(options.previousRule?.holidayDutyCount)
+  )
+    inherited.holidayDutyCount = options.previousRule!.holidayDutyCount!;
+  const learnedCoverage = learnMissingCoverage(source, inherited);
+  const rule = scheduleRuleForMonth(learnedCoverage.rule, target);
   const src = source.schedule_month.slice(0, 7);
   if (src !== getPreviousMonth(target)) {
     throw new Error("A base da geração deve ser exatamente o mês anterior.");
@@ -319,8 +344,9 @@ export function generateSchedulePreview(
   const dates = scheduleMonthDates(target);
   const sourceDates = scheduleMonthDates(src);
   const calendarWeeks = scheduleCalendarWeeks(target);
-  const warnings: string[] = [];
+  const warnings: string[] = [...learnedCoverage.learned];
   const blockingIssues: string[] = [];
+  const fixedRestEvidence: FixedRestEvidence[] = [];
 
   if (rule.requiresRoleBasedCoverage) {
     blockingIssues.push("Controle RN: informar cobertura por cidade/função antes da publicação.");
@@ -388,9 +414,11 @@ export function generateSchedulePreview(
     }
     const shiftOverride = rule.personShiftOverrides?.[normalizeScheduleEmployeeName(person.name)];
     const shift = shiftOverride || rule.defaultShift;
+    const evidence = learnFixedRest(person, src, rule);
+    fixedRestEvidence.push(evidence);
     const inferred = historicalFixedDay(person, src, index, rule);
     const fixed = inferred.day;
-    if (!inferred.confident && rule.fixedOffWeekdays) {
+    if (!inferred.confident && !protectedStatus) {
       blockingIssues.push(
         person.name +
           ": folga fixa não identificada no mês anterior; confirmar dia antes de aprovar.",
@@ -445,6 +473,10 @@ export function generateSchedulePreview(
     }),
   );
 
+  const orderedKeys = people.map(nameKey).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  const order = new Map(orderedKeys.map((key, index) => [key, index]));
+  const tieRank = (p: SchedulePerson) =>
+    ((order.get(nameKey(p)) || 0) + (options.tieBreakSeed || 0) * 7) % Math.max(people.length, 1);
   const eventCoverage: ScheduleGeneratedPreview["eventCoverage"] = [];
   for (let idx = 0; idx < targetEvents.length; idx += 1) {
     const date = targetEvents[idx]!;
@@ -488,6 +520,9 @@ export function generateSchedulePreview(
     const candidates = people.filter(
       (p) =>
         !p.protectedStatus &&
+        // Feriado não autoriza transferir silenciosamente a folga fixa.
+        (weekday(date) === 0 || weekday(date) !== p.fixed) &&
+        (!rule.dutyRequiresLogin || !!p.login?.trim()) &&
         !p.inheritedDays.has(date) &&
         !isExcludedFromDuty(p.name, rule) &&
         !p.assignments[date]?.startsWith("Férias") &&
@@ -500,6 +535,7 @@ export function generateSchedulePreview(
       (a, b) =>
         a.dutyCount - b.dutyCount ||
         a.lastEventIndex - b.lastEventIndex ||
+        tieRank(a) - tieRank(b) ||
         nameKey(a).localeCompare(nameKey(b), "pt-BR"),
     );
     const assignRequired = (
@@ -694,6 +730,8 @@ export function generateSchedulePreview(
   );
   const result: ScheduleGeneratedPreview = {
     rule,
+    fixedRestPolicy: "preserve-history",
+    fixedRestEvidence,
     sourceMonth: src,
     targetMonth: target,
     eventCoverage,
@@ -707,9 +745,7 @@ export function generateSchedulePreview(
       codes: [...new Set(outPeople.flatMap((p) => Object.values(p.assignments)))].sort(),
     },
   };
-  return rule.fixedOffDistribution
-    ? revalidateSchedulePreview(applyFixedRestDistribution(result, source.payload.people))
-    : result;
+  return revalidateSchedulePreview(result);
 }
 
 /** Dezembro RN inicia no modelo fornecido, sem recalcular a proposta a partir do 6x1. */
@@ -745,7 +781,9 @@ export function generateInitialRnDecemberPreview(source: ScheduleUpload): Schedu
   });
   return revalidateSchedulePreview({
     ...generated,
-    referenceSeedId: "rn-2026-12-5x2-v1",
+    referenceSeedId: "rn-2026-12-5x2-v2",
+    fixedRestPolicy: "initial-distribution",
+    fixedRestEvidence: [],
     blockingIssues: [],
     warnings: [
       "Modelo inicial de dezembro/2026 fornecido pela gestão. Revise antes de aprovar.",

@@ -19,6 +19,10 @@ export type ScheduleGenerationRule = {
   // 0 = domingo, 1 = segunda, ... 6 = sábado.
   fixedOffWeekdays?: readonly number[];
   fixedOffDistribution?: Readonly<Record<number, number>>;
+  fixedOffStrategy?: "balanced" | "login-duty-eligible";
+  fixedOffSaturdayShare?: number;
+  dutyRequiresLogin?: boolean;
+  lastSundayDutyCount?: number;
   dutyCode?: "M. 1" | "T. 1" | "PLANTÃO";
   minimumSupervisorDuty?: number;
   minimumAdesaoControllerDuty?: number;
@@ -43,22 +47,27 @@ export const scheduleGenerationRules: readonly ScheduleGenerationRule[] = [
     city: "natal",
     sector: "adesao-servico",
     label: "Natal · Adesão/Serviço",
-    fixedOffWeekdays: [2, 3, 4, 5],
-    fixedOffDistribution: { 2: 18, 3: 18, 4: 18, 5: 19 },
-    sundayDutyCount: 5,
+    fixedOffWeekdays: [1, 2, 3, 4, 5, 6],
+    fixedOffStrategy: "login-duty-eligible",
+    fixedOffSaturdayShare: 0.25,
+    dutyRequiresLogin: true,
+    lastSundayDutyCount: 10,
+    sundayDutyCount: 3,
     holidayDutyCount: 5,
     saturdayShift: "M. 1",
     defaultShift: "M. 1",
     minimumIntermediateDuties: 0,
-    dateDutyOverrides: { "2026-12-27": 20 },
     excludedFromDuty: excludedAdesaoNatal,
     additionalHolidays: ["11-21"],
-    notes: "A cobertura especial de 27/12/2026 não se repete automaticamente em outros meses.",
+    notes:
+      "Adesão: 25% dos técnicos com login, disponíveis e elegíveis a plantão têm folga fixa no sábado; os demais se dividem entre segunda e sexta. Domingo: 3; último domingo: 10; feriado: 5.",
   },
   {
     city: "natal",
     sector: "mdu",
     label: "Natal · MDU",
+    fixedOffWeekdays: [1, 2, 3, 4, 5, 6],
+    fixedOffStrategy: "balanced",
     sundayDutyCount: 0,
     holidayDutyCount: 1,
     holidayWeekdaysOnly: true,
@@ -72,8 +81,8 @@ export const scheduleGenerationRules: readonly ScheduleGenerationRule[] = [
     city: "natal",
     sector: "vt",
     label: "Natal · VT",
-    fixedOffWeekdays: [2, 3, 4, 5],
-    fixedOffDistribution: { 2: 4, 3: 4, 4: 4, 5: 5 },
+    fixedOffWeekdays: [1, 2, 3, 4, 5, 6],
+    fixedOffStrategy: "balanced",
     sundayDutyCount: 5,
     holidayDutyCount: 5,
     saturdayShift: "M. 1",
@@ -86,6 +95,8 @@ export const scheduleGenerationRules: readonly ScheduleGenerationRule[] = [
     city: "natal",
     sector: "construcao",
     label: "Natal · Construção",
+    fixedOffWeekdays: [1, 2, 3, 4, 5, 6],
+    fixedOffStrategy: "balanced",
     sundayDutyCount: 0,
     holidayDutyCount: 0,
     saturdayShift: "M. 2",
@@ -97,6 +108,8 @@ export const scheduleGenerationRules: readonly ScheduleGenerationRule[] = [
     city: "natal",
     sector: "desconexao",
     label: "Natal · Desconexão",
+    fixedOffWeekdays: [1, 2, 3, 4, 5, 6],
+    fixedOffStrategy: "balanced",
     sundayDutyCount: 0,
     holidayDutyCount: 0,
     saturdayShift: "M. 2",
@@ -108,6 +121,8 @@ export const scheduleGenerationRules: readonly ScheduleGenerationRule[] = [
     city: "mossoro",
     sector: "mossoro",
     label: "Mossoró · Operacional",
+    fixedOffWeekdays: [1, 2, 3, 4, 5, 6],
+    fixedOffStrategy: "balanced",
     sundayDutyCount: 1,
     holidayDutyCount: 1,
     saturdayShift: "M. 1",
@@ -218,4 +233,19 @@ export function getScheduleGenerationRule(
 export function isExcludedFromDuty(name: string, policy: ScheduleGenerationRule): boolean {
   const normalized = normalizeScheduleEmployeeName(name);
   return policy.excludedFromDuty.some((s) => normalizeScheduleEmployeeName(s) === normalized);
+}
+/** Quota do último domingo resolvida para a competência, inclusive na análise IA. */
+export function scheduleRuleForMonth(
+  rule: ScheduleGenerationRule,
+  month: string,
+): ScheduleGenerationRule {
+  if (rule.lastSundayDutyCount === undefined) return rule;
+  const [year, m] = month.slice(0, 7).split("-").map(Number);
+  const last = new Date(Date.UTC(year!, m!, 0, 12));
+  last.setUTCDate(last.getUTCDate() - last.getUTCDay());
+  const date = last.toISOString().slice(0, 10);
+  return {
+    ...rule,
+    dateDutyOverrides: { ...rule.dateDutyOverrides, [date]: rule.lastSundayDutyCount },
+  };
 }

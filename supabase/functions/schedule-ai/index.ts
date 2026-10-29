@@ -1,3 +1,8 @@
+import {
+  chooseGenerationOption,
+  validateGenerationChoice,
+  InvalidGenerationInput,
+} from "../_shared/schedule-ai-generation.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.111.0";
 import {
   requireScheduleManagement,
@@ -211,7 +216,7 @@ Deno.serve(async (req) => {
     .maybeSingle();
   if (profile?.status !== "active" || !["admin", "supervisor"].includes(profile.role))
     return json(403, { error: "Apenas gestores e supervisores ativos." });
-  let args: { sheetId?: string; draftId?: string; preview?: unknown };
+  let args: { sheetId?: string; draftId?: string; preview?: unknown; generation?: unknown };
   try {
     args = await req.json();
   } catch {
@@ -220,13 +225,28 @@ Deno.serve(async (req) => {
   if (
     !args ||
     typeof args !== "object" ||
-    [args.sheetId !== undefined, args.draftId !== undefined, args.preview !== undefined].filter(
-      Boolean,
-    ).length !== 1 ||
-    (args.preview === undefined && !uuid(args.sheetId) && !uuid(args.draftId))
+    [
+      args.sheetId !== undefined,
+      args.draftId !== undefined,
+      args.preview !== undefined,
+      args.generation !== undefined,
+    ].filter(Boolean).length !== 1 ||
+    (args.preview === undefined &&
+      args.generation === undefined &&
+      !uuid(args.sheetId) &&
+      !uuid(args.draftId))
   )
     return json(400, { error: "Selecione uma única escala ou prévia para revisar." });
   try {
+    if (args.generation !== undefined) {
+      const input = validateGenerationChoice(args.generation);
+      requireScheduleManagement(profile.role, input.sector);
+      const result = await chooseGenerationOption(input, {
+        key: Deno.env.get("GROQ_API_KEY"),
+        model: Deno.env.get("GROQ_MODEL") || "openai/gpt-oss-20b",
+      });
+      return json(200, result);
+    }
     let planned: Payload,
       current: Payload,
       rule: NonNullable<Parameters<typeof analyzeSchedule>[2]> = {};
@@ -299,6 +319,7 @@ Deno.serve(async (req) => {
       writeActions: 0,
     });
   } catch (err) {
+    if (err instanceof InvalidGenerationInput) return json(400, { error: err.message });
     if (err instanceof InvalidPreviewInput) return json(400, { error: err.message });
     if (err instanceof ScheduleScopeForbidden) return json(403, { error: err.message });
     return json(502, {
