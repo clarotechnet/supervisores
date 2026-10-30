@@ -351,9 +351,12 @@ function SchedulesPage() {
         setOperationalRefreshKey((x) => x + 1);
         await loadSummaries();
         toast.success(
-          result.changes
-            ? result.changes + " alteração(ões) recebida(s) do Google Sheets editável."
-            : "Escala editável já está atualizada. Nenhuma mudança nova.",
+          result.addedPeople
+            ? result.addedPeople +
+                " novo(s) colaborador(es) incluído(s). Escala atualizada pelo Google Sheets."
+            : result.changes
+              ? result.changes + " alteração(ões) recebida(s) do Google Sheets editável."
+              : "Escala editável já está atualizada. Nenhuma mudança nova.",
         );
         return;
       }

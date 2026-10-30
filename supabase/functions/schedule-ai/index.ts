@@ -10,6 +10,7 @@ import {
 } from "../_shared/schedule-scope-access.ts";
 import { operationalFromDraft, type Payload } from "../_shared/schedule-operational.ts";
 import { analyzeSchedule, type ScheduleAnalysis } from "../_shared/schedule-ai-analysis.ts";
+import { inheritedDatesByName } from "../_shared/schedule-inherited.ts";
 import {
   validatePreviewAnalysisInput,
   InvalidPreviewInput,
@@ -273,13 +274,15 @@ Deno.serve(async (req) => {
       requireScheduleManagement(profile.role, scope.sector);
       planned = sheet.planned_payload as Payload;
       current = sheet.current_payload as Payload;
-      const { data: draft } = await admin
+      const { data: draft, error: draftError } = await admin
         .from("schedule_generation_drafts")
         .select("policy_snapshot")
         .eq("id", sheet.draft_id)
         .maybeSingle();
       const snap = (draft?.policy_snapshot || {}) as { rule?: Record<string, unknown> };
-      rule = (snap.rule || {}) as typeof rule;
+      if (draftError || !draft)
+        throw Error("Não foi possível conferir a continuidade da revisão vinculada.");
+      rule = { ...snap.rule, lockedDatesByName: inheritedDatesByName(snap) } as typeof rule;
     } else {
       const { data: draft, error: lookupError } = await admin
         .from("schedule_generation_drafts")
@@ -301,7 +304,7 @@ Deno.serve(async (req) => {
         snap.outsideAssignments || [],
       );
       current = planned;
-      rule = (snap.rule || {}) as typeof rule;
+      rule = { ...snap.rule, lockedDatesByName: inheritedDatesByName(snap) } as typeof rule;
     }
     const decInitial = scope;
     if (

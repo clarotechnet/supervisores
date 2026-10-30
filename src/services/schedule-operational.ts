@@ -18,7 +18,12 @@ export async function listOperationalSheets(city: string, sector: string, month:
   if (error) throw error;
   return (data || []).filter((row) => !row.deleted_at);
 }
-export async function latestOperationalSource(city: string, sector: string, month: string) {
+export async function latestOperationalSource(
+  city: string,
+  sector: string,
+  month: string,
+  options: { allowDeletionPending?: boolean } = {},
+) {
   // Após a publicação, uma versão em revisão criada depois não pode
   // substituir silenciosamente a escala oficial do mês.
   const { data: official, error } = await supabase
@@ -54,7 +59,7 @@ export async function latestOperationalSource(city: string, sector: string, mont
       .maybeSingle();
     if (sheetError) throw sheetError;
     if (!approved) throw Error("A aba da escala oficial não está vinculada no Supabase.");
-    if (approved.deleted_at || approved.deletion_requested_at)
+    if (approved.deleted_at || (approved.deletion_requested_at && !options.allowDeletionPending))
       throw Error("A escala-base está em exclusão ou já foi excluída.");
     const snapshot = draft.policy_snapshot as { rule?: Record<string, unknown> } | null;
     return { ...approved, generationRule: snapshot?.rule || null };
@@ -74,8 +79,15 @@ export async function fetchOperationalChanges(sheetId: string): Promise<Operatio
 }
 
 async function invoke(
-  action: "create" | "sync" | "publish" | "delete",
-  props: { draftId?: string; sheetId?: string; scheduleId?: string; confirmation?: string },
+  action: "create" | "sync" | "publish" | "delete" | "inspect_delete" | "read",
+  props: {
+    draftId?: string;
+    sheetId?: string;
+    scheduleId?: string;
+    confirmation?: string;
+    confirmedGridId?: number;
+    expectedUpdatedAt?: string;
+  },
 ) {
   const { data, error } = await supabase.functions.invoke("schedule-operational", {
     body: { action, ...props },
@@ -104,16 +116,46 @@ async function invoke(
     url?: string;
     tab?: string;
     changes?: number;
+    addedPeople?: number;
     auditedLogged?: boolean;
     auditLogged?: boolean;
     syncedAt?: string;
     warning?: string;
+    payload?: SchedulePayload;
+    readAt?: string;
+    gridId?: number;
+    confirmation?: string;
+    expectedUpdatedAt?: string;
+    linkChanged?: boolean;
   };
 }
 export const createOperationalSheet = (draftId: string) => invoke("create", { draftId });
 export const syncOperationalSheet = (sheetId: string) => invoke("sync", { sheetId });
-export const deleteOperationalSheet = (sheetId: string, scheduleId: string, confirmation: string) =>
-  invoke("delete", { sheetId, scheduleId, confirmation });
+export async function readOperationalSheet(sheetId: string) {
+  const result = await invoke("read", { sheetId });
+  if (!result.payload?.people?.length || !result.payload.dates?.length)
+    throw Error(
+      "O servidor não confirmou a leitura atual da escala anterior. Nenhuma base antiga será usada.",
+    );
+  return result.payload;
+}
+export const inspectOperationalSheetDeletion = (sheetId: string) =>
+  invoke("inspect_delete", { sheetId });
+export const deleteOperationalSheet = (
+  sheetId: string,
+  scheduleId: string,
+  confirmation: string,
+  target?: { gridId?: number; expectedUpdatedAt?: string },
+) =>
+  invoke("delete", {
+    sheetId,
+    scheduleId,
+    confirmation,
+    ...(target?.gridId !== undefined ? { confirmedGridId: target.gridId } : {}),
+    ...(target?.expectedUpdatedAt !== undefined
+      ? { expectedUpdatedAt: target.expectedUpdatedAt }
+      : {}),
+  });
 /** A revisão escolhida é vinculada e publicada atomicamente, sem copiar a aba. */
 export const publishOperationalSheet = (sheetId: string, draftId?: string) =>
   invoke("publish", { sheetId, ...(draftId ? { draftId } : {}) });

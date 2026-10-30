@@ -45,6 +45,7 @@ import { isInitialControlDecember, type ScheduleGeneratedPreview } from "@/lib/s
 import { getScheduleGenerationRule } from "@/lib/schedule-generator-rules";
 import { downloadScheduleReport } from "@/lib/schedule-report";
 import { scheduleCodeKind } from "@/lib/schedule-import";
+import { isInheritedScheduleDate } from "@/lib/schedule-continuity";
 import {
   addControlPreviewPerson,
   editControlPreviewCode,
@@ -1025,7 +1026,8 @@ export function ScheduleGeneratorDialog({
                           <div>
                             <h3 className="text-sm font-bold">Prévia editável 5x2</h3>
                             <p className="text-xs text-muted-foreground">
-                              Dias anteriores são históricos; dias do mês seguinte são provisórios.
+                              Marcações herdadas da escala anterior são bloqueadas. Os demais dias
+                              do mês seguinte completam as semanas até sábado.
                             </p>
                           </div>
                           <div className="flex flex-wrap gap-2">
@@ -1118,7 +1120,8 @@ export function ScheduleGeneratorDialog({
                                         key={day}
                                         className={`p-2 text-center ${day.slice(0, 7) !== month ? "bg-muted/50 text-muted-foreground" : ""}`}
                                       >
-                                        {day >= month + "-01" ? (
+                                        {day >= month + "-01" &&
+                                        !isInheritedScheduleDate(preview, person, day) ? (
                                           <button
                                             type="button"
                                             onClick={() => beginCell(index, day, code || "")}

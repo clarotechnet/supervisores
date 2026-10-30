@@ -93,6 +93,18 @@ export function validatePreviewAnalysisInput(value: unknown): PreviewAnalysisInp
     return invalid();
   const rawRule = record(row["rule"]);
   const rule: AnalysisRule = { analysisMonth: row["month"] };
+  if (rawRule["lockedDatesByName"] !== undefined) {
+    const entries = Object.entries(record(rawRule["lockedDatesByName"]));
+    if (
+      entries.length > 500 ||
+      entries.some(
+        ([name, dates]) =>
+          !safeText(name, 120) || !Array.isArray(dates) || dates.length > 45 || !dates.every(date),
+      )
+    )
+      return invalid();
+    rule.lockedDatesByName = Object.fromEntries(entries) as Record<string, string[]>;
+  }
   for (const key of [
     "sundayDutyCount",
     "holidayDutyCount",

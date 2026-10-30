@@ -1,7 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import type { ScheduleUpload } from "@/lib/types";
 import type { ScheduleGenerationRule } from "@/lib/schedule-generator-rules";
-import { latestOperationalSource } from "./schedule-operational";
+import { latestOperationalSource, readOperationalSheet } from "./schedule-operational";
 export type ScheduleGenerationSource = ScheduleUpload & {
   operationalSourceId?: string;
   inheritedRule?: Partial<ScheduleGenerationRule>;
@@ -14,7 +14,8 @@ export async function loadScheduleGenerationSource(
 ): Promise<ScheduleGenerationSource | null> {
   const live = await latestOperationalSource(city, sector, month);
   if (live) {
-    const payload = live.current_payload as unknown as ScheduleUpload["payload"];
+    // Read Google now. current_payload is only the last persisted sync, not freshness evidence.
+    const payload = await readOperationalSheet(live.id);
     return {
       id: live.id,
       operationalSourceId: live.id,

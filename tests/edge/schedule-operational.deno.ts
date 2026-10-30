@@ -91,6 +91,7 @@ function reset() {
   mock.authenticated = true;
   mock.rpcCalls = [];
   mock.rpcError = null;
+  mock.rosterSyncReady = false;
   mock.rowsByTable = {};
   mock.mutationCalls = [];
   mock.sheet = {
@@ -129,6 +130,32 @@ Deno.test("admin explicitly publishes via one atomic RPC, Google is read-only", 
     "wrong Google tab",
   );
 });
+Deno.test(
+  "generation reads fresh Control extension through January 4 without sync, approval, audit or Google writes",
+  async () => {
+    reset();
+    const { response, body, googleCalls } = await run("read", (rows) => {
+      for (const [i, dow] of ["SEX", "SAB", "DOM", "SEG"].entries()) {
+        rows[0]!.push(dow);
+        rows[1]!.push(`0${i + 1}/01`);
+        rows[2]!.push(i === 3 ? "Folga" : "T. 1");
+      }
+    });
+    assert(response.status === 200 && body.writeActions === 0, "read failed");
+    assert(body.payload.dates.at(-1) === "2027-01-04", "extension omitted");
+    assert(
+      body.payload.people[0].assignments["2027-01-04"] === "Folga",
+      "fresh assignment missing",
+    );
+    assert(mock.rpcCalls.length === 0 && mock.mutationCalls.length === 0, "source read mutated DB");
+    assert(
+      googleCalls.every(
+        (c) => c.method === "GET" || c.url === "https://oauth2.googleapis.com/token",
+      ),
+      "source read modified Google",
+    );
+  },
+);
 Deno.test("supervisor cannot approve or read Google during publication", async () => {
   reset();
   mock.role = "supervisor";
@@ -162,6 +189,67 @@ Deno.test("ordinary API synchronization never calls publication", async () => {
     "wrong sync RPC",
   );
 });
+Deno.test(
+  "Control sync ignores formula totals, isolated criteria and extra indicator columns",
+  async () => {
+    reset();
+    const { response, body, googleCalls } = await run("sync", (rows) => {
+      rows[1]!.push("PLATÕES", "quantidades");
+      rows[2]!.push("Sim", 1);
+      rows.push(["", "", ...dates.map(() => 1)], [], ["T. 1"], ["PLANTÃO"]);
+    });
+    assert(response.status === 200 && body.changes === 1, "summary blocked sync");
+    assert(mock.rpcCalls.length === 1, "unexpected RPCs");
+    const next = mock.rpcCalls[0]!.args["p_payload"] as Payload;
+    assert(
+      next.people.length === 1 && next.dates.length === 31,
+      "summary imported as employee/date",
+    );
+    assert(next.people[0]!.assignments["2026-12-01"] === "FALTA", "actual edit lost");
+    assert(!next.codes.includes("Sim"), "formula result became schedule code");
+    assert(
+      googleCalls.every((call) => call.method === "GET" || call.url.includes("oauth2")),
+      "formula overwritten",
+    );
+  },
+);
+Deno.test(
+  "Control additions require audited SQL, then sync only on explicit API update",
+  async () => {
+    for (const ready of [false, true]) {
+      reset();
+      mock.rosterSyncReady = ready;
+      const { response, body, googleCalls } = await run("sync", (rows) => {
+        rows.push(["", "", 1], ["PLANTÃO"], ["NEW EMPLOYEE", "CONTROLADOR"]);
+      });
+      assert(response.status === (ready ? 200 : 409), "wrong migration gate");
+      assert(
+        mock.rpcCalls[0]!.name === "schedule_operational_roster_sync_ready",
+        "missing audit readiness",
+      );
+      if (ready) {
+        assert(body.addedPeople === 1 && body.changes === 2, "blank-days addition not reported");
+        const call = mock.rpcCalls[1]!;
+        assert(call.name === "schedule_operational_apply_sync", "inclusion not atomic");
+        assert((call.args["p_payload"] as Payload).people.length === 2, "new person omitted");
+        assert(mock.rpcCalls.length === 2 && mock.mutationCalls.length === 0, "extra writes");
+      } else {
+        assert(
+          body.code === "ROSTER_SYNC_MIGRATION_REQUIRED" && body.error.includes("20261030191159"),
+          "migration instruction missing",
+        );
+        assert(
+          mock.rpcCalls.length === 1 && mock.mutationCalls.length === 0,
+          "write before migration",
+        );
+      }
+      assert(
+        googleCalls.every((call) => call.method === "GET" || call.url.includes("oauth2")),
+        "Google changed",
+      );
+    }
+  },
+);
 Deno.test("no-op synchronization still validates official linkage", async () => {
   reset();
   const current = structuredClone(payload);

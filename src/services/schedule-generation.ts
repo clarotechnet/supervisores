@@ -99,6 +99,7 @@ export async function saveGeneratedDraft({
       eventCoverage: preview.eventCoverage,
       calendarWeeks: preview.calendarWeeks,
       outsideAssignments: preview.outsideAssignments,
+      inheritedAssignments: preview.inheritedAssignments ?? [],
       sourceMonth: preview.sourceMonth,
       sourceOperationalId: source.operationalSourceId ?? null,
       referenceSeedId: preview.referenceSeedId ?? null,
@@ -192,6 +193,11 @@ export function restoreGenerationPreview(
       : [],
     outsideAssignments: Array.isArray(snap["outsideAssignments"])
       ? (snap["outsideAssignments"] as Record<string, string>[])
+      : [],
+    inheritedAssignments: Array.isArray(snap["inheritedAssignments"])
+      ? (snap["inheritedAssignments"] as unknown as NonNullable<
+          ScheduleGeneratedPreview["inheritedAssignments"]
+        >)
       : [],
     sourceMonth: String(snap["sourceMonth"] ?? draft.source_month ?? "").slice(0, 7),
     targetMonth: draft.schedule_month.slice(0, 7),

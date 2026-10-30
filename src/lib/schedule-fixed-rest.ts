@@ -3,6 +3,7 @@ import type { ScheduleGeneratedPreview } from "./schedule-generator";
 import { scheduleCodeKind } from "./schedule-import.ts";
 import { isExcludedFromDuty } from "./schedule-generator-rules";
 import type { ScheduleGenerationRule } from "./schedule-generator-rules";
+import { inheritedSchedulePerson } from "./schedule-continuity";
 
 type RestConfiguration = Pick<
   ScheduleGenerationRule,
@@ -238,14 +239,10 @@ export function applyFixedRestDistribution(
       .replace(/[\u0300-\u036f]/g, "")
       .trim()
       .toUpperCase();
-  const locked = preview.payload.people.map(
-    (p) =>
-      sourcePeople.find(
-        (s) =>
-          (p.login && s.login && identity(p.login) === identity(s.login)) ||
-          identity(s.name) === identity(p.name),
-      )?.assignments || {},
-  );
+  const locked = preview.payload.people.map((p) => ({
+    ...(sourcePeople.find((s) => identity(s.name) === identity(p.name))?.assignments || {}),
+    ...inheritedSchedulePerson(preview, p)?.assignments,
+  }));
   const balanced = balanceFixedRests(
     preview.payload.people,
     preview.targetMonth,

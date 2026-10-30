@@ -8,6 +8,11 @@ import { applyVacationContinuationPolicy } from "./schedule-preview-policy";
 import { fixedRestSummary, hasFixedRestDistribution } from "./schedule-fixed-rest";
 import { CONTROL_DECEMBER_REFERENCE_ID } from "./schedule-control-december-reference";
 import {
+  inheritedSchedulePerson,
+  isInheritedScheduleDate,
+  scheduleContinuityIssues,
+} from "./schedule-continuity";
+import {
   isExcludedFromDuty,
   normalizeScheduleEmployeeName,
   scheduleRuleForMonth,
@@ -167,6 +172,10 @@ function clone(preview: ScheduleGeneratedPreview): ScheduleGeneratedPreview {
     blockingIssues: [...preview.blockingIssues],
     eventCoverage: [...preview.eventCoverage],
     warnings: [...preview.warnings],
+    inheritedAssignments: (preview.inheritedAssignments || []).map((p) => ({
+      ...p,
+      assignments: { ...p.assignments },
+    })),
   };
 }
 export function editControlPreviewCode(
@@ -180,6 +189,10 @@ export function editControlPreviewCode(
     throw Error("Colaborador inválido.");
   if (!editableDates(preview, index).has(date))
     throw Error("Este dia pertence ao histórico ou não está na referência da prévia.");
+  if (isInheritedScheduleDate(preview, preview.payload.people[index]!, date))
+    throw Error(
+      "Este dia foi herdado da escala anterior. Corrija na origem e gere novamente; ele não pode ser alterado nesta prévia.",
+    );
   const code = raw.trim();
   if (code.length > 80 || /[<>]/.test(code))
     throw Error("Código inválido. Use no máximo 80 caracteres, sem sinais < ou >.");
@@ -201,6 +214,8 @@ export function editControlPreviewPerson(
     throw Error("Identificação inválida: máximo 120 caracteres, sem < ou >.");
   const next = clone(preview);
   const oldName = next.payload.people[index]!.name;
+  const inherited = inheritedSchedulePerson(next, next.payload.people[index]!);
+  if (inherited && (field === "name" || field === "login")) inherited[field] = value.trim();
   next.payload.people[index]![field] = value.trim();
   if (field === "name" && normalize(oldName) !== normalize(value)) {
     next.rule.excludedFromDuty = next.rule.excludedFromDuty.map((name) =>
@@ -249,6 +264,13 @@ export function removeControlPreviewPerson(preview: ScheduleGeneratedPreview, in
     throw Error("Não é possível remover este colaborador.");
   const next = clone(preview);
   const removedName = next.payload.people[index]!.name;
+  if (
+    Object.keys(inheritedSchedulePerson(next, next.payload.people[index]!)?.assignments || {})
+      .length
+  )
+    throw Error(
+      "Este colaborador possui dias herdados da escala anterior e não pode ser removido nesta prévia.",
+    );
   next.rule.excludedFromDuty = next.rule.excludedFromDuty.filter(
     (name) => normalize(name) !== normalize(removedName),
   );
@@ -401,7 +423,7 @@ export function revalidateSchedulePreview(
   return {
     ...preview,
     eventCoverage: coverage,
-    blockingIssues: [...new Set(issues)],
+    blockingIssues: [...new Set([...issues, ...scheduleContinuityIssues(preview)])],
     warnings: [...new Set(warnings)],
     payload: {
       ...preview.payload,

@@ -5,6 +5,7 @@ import type { PreviewAnalysisInput } from "../../supabase/functions/_shared/sche
 import { editControlPreviewCode } from "./schedule-preview-editor";
 import { normalizeScheduleEmployeeName } from "./schedule-generator-rules";
 import { schedulePersonKey } from "./schedule-history-memory";
+import { inheritedSchedulePerson } from "./schedule-continuity";
 
 export function previewAnalysisInput(
   preview: ScheduleGeneratedPreview,
@@ -43,6 +44,12 @@ export function previewAnalysisInput(
       analysisMonth: preview.targetMonth,
       allowRestCompensation: preview.rule.minimumIntermediateDuties === 0,
       fixedOffByName,
+      lockedDatesByName: Object.fromEntries(
+        preview.payload.people.map((person) => [
+          normalizeScheduleEmployeeName(person.name),
+          Object.keys(inheritedSchedulePerson(preview, person)?.assignments || {}),
+        ]),
+      ),
       ...(preview.rule.city === "natal" &&
       preview.rule.sector === "controle-operacional" &&
       preview.targetMonth === "2026-12"

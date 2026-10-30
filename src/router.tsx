@@ -18,7 +18,9 @@ export const getRouter = () => {
     routeTree,
     context: { queryClient },
     scrollRestoration: true,
-    defaultPreload: "intent",
+    // router-core 1.171.15 can dereference an evicted match after an awaited
+    // hover preload (#7759). Load on navigation until the upstream fix is adopted.
+    defaultPreload: false,
     defaultPreloadStaleTime: 60_000,
   });
 

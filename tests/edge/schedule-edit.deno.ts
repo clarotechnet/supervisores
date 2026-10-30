@@ -32,6 +32,9 @@ async function run(
     officialControl?: boolean;
     auditReady?: boolean;
     badControlName?: boolean;
+    inherited?: boolean;
+    summaries?: boolean;
+    newEmployee?: boolean;
   } = {},
 ) {
   mock.role = options.role || "supervisor";
@@ -70,6 +73,13 @@ async function run(
     rows[2]![1] = "CONTROLADOR (ADESÃO) - FTZ - APOIO";
     [rows[2], rows[3]] = [rows[3]!, rows[2]!];
     if (options.badControlName) rows[3]![0] = "UNKNOWN CONTROL USER";
+    if (options.summaries) {
+      rows[1]!.push("PLATÕES", "quantidades");
+      rows[2]!.push("Sim", 1);
+      rows[3]!.push("Não", 0);
+      rows.push([null, null, 1], [], ["T. 1"], ["PLANTÃO"]);
+    }
+    if (options.newEmployee) rows.push(["NEW CONTROL USER", "CONTROLADOR", "T. 1"]);
   }
   mock.sheet = {
     id,
@@ -88,7 +98,14 @@ async function run(
     mock.sheet["source_file"] = "Google Sheets - Escala operacional oficial";
     mock.sheet["source_sheet"] = tab;
     mock.sheet["payload"] = controlPayload;
-    mock.rowsByTable["schedule_generation_drafts"] = { id: "approved-draft" };
+    mock.rowsByTable["schedule_generation_drafts"] = {
+      id: "approved-draft",
+      policy_snapshot: {
+        inheritedAssignments: options.inherited
+          ? [{ name, assignments: { [date]: baseCode } }]
+          : [],
+      },
+    };
     mock.rowsByTable["schedule_operational_sheets"] = {
       id: "operational-fixture",
       draft_id: "approved-draft",
@@ -294,3 +311,50 @@ Deno.test("Controle com pessoa desconhecida bloqueia edição antes de gravar", 
     "invalid structure reached mutations",
   );
 });
+Deno.test("resumos não bloqueiam edição nem são substituídos pelo editor", async () => {
+  const { response, calls } = await run({ officialControl: true, role: "admin", summaries: true });
+  assert(response.status === 200, "summary blocked edit");
+  const writes = calls.filter((call) => call.url.includes("values:batchUpdate"));
+  assert(writes.length === 1, "extra Google writes");
+  const next = mock.rpcCalls.at(-1)!.args["p_payload"] as Payload;
+  assert(next.people.length === 2 && next.dates.length === 1, "summary imported");
+});
+Deno.test("nova pessoa precisa ser sincronizada antes de editar uma célula", async () => {
+  const { response, body, calls } = await run({
+    officialControl: true,
+    role: "admin",
+    newEmployee: true,
+  });
+  assert(
+    response.status === 409 && body.error.includes("Atualize via API"),
+    "new roster edited before sync",
+  );
+  assert(
+    !calls.some((call) => call.url.includes("values:batchUpdate")),
+    "unsynchronized roster changed Google",
+  );
+  assert(
+    mock.mutationCalls.length === 0 && mock.rpcCalls.length === 0,
+    "unsynchronized roster mutated database",
+  );
+});
+Deno.test(
+  "marcação herdada da revisão aprovada não pode ser alterada nem por chamada direta",
+  async () => {
+    const { response, body, calls } = await run({
+      officialControl: true,
+      role: "admin",
+      inherited: true,
+    });
+    assert(response.status === 409 && body.error.includes("herdado"), "inherited edit accepted");
+    assert(body.sheetWritten === false && body.writeAttempted === false, "write status incorrect");
+    assert(
+      !calls.some((c) => c.url.includes("values:batchUpdate")),
+      "inherited Google cell changed",
+    );
+    assert(
+      mock.mutationCalls.length === 0 && mock.rpcCalls.length === 0,
+      "inherited edit mutated DB",
+    );
+  },
+);
