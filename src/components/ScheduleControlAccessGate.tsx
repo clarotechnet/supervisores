@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { LockKeyhole, Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
@@ -22,6 +22,7 @@ export function ScheduleControlAccessGate({
   onRefresh: () => void;
 }) {
   const [note, setNote] = useState("");
+  const noteId = useId();
   const client = useQueryClient();
   const mutation = useMutation({
     mutationFn: () => requestControlAccess(city, note),
@@ -73,9 +74,9 @@ export function ScheduleControlAccessGate({
             </p>
           )}
           <div className="grid gap-1.5">
-            <Label htmlFor="schedule-access-note">Motivo da solicitação (opcional)</Label>
+            <Label htmlFor={noteId}>Motivo da solicitação (opcional)</Label>
             <Textarea
-              id="schedule-access-note"
+              id={noteId}
               maxLength={500}
               value={note}
               onChange={(e) => setNote(e.target.value)}

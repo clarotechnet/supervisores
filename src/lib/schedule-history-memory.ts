@@ -48,8 +48,18 @@ export function learnFixedRest(
   rule: ScheduleGenerationRule,
 ): FixedRestEvidence {
   const source = scheduleMonthDates(month);
+  const firstSource = source[0]!;
+  // A aba semanal também pode conter o domingo anterior ao dia 1.
+  // Só datas realmente preenchidas formarão uma semana normal válida.
+  const leading = Array.from({ length: weekday(firstSource) }, (_, i) =>
+    plus(firstSource, i - weekday(firstSource)),
+  );
   const firstFuture = plus(source.at(-1)!, 1);
-  const relevant = [...source, ...Array.from({ length: 7 }, (_, i) => plus(firstFuture, i))];
+  const relevant = [
+    ...leading,
+    ...source,
+    ...Array.from({ length: 7 }, (_, i) => plus(firstFuture, i)),
+  ];
   const allowed = rule.fixedOffWeekdays || [1, 2, 3, 4, 5, 6];
   const empty: FixedRestEvidence = {
     personKey: schedulePersonKey(person),

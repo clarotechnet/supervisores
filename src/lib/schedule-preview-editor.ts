@@ -285,7 +285,7 @@ export function revalidateSchedulePreview(
   const isDuty = (code: string | undefined) =>
     rule.dutyCode === "PLANTÃO" ? plantao(code) : work(code);
   const dynamic =
-    /: (?:apenas \d+ descanso|\d+ dias de trabalho|mais de 6 dias consecutivos|cobertura de plantão|quantidade de plantonistas|faltam? .*plant|falta cobertura|o mês anterior já definiu|plantão herdado|pessoa excluída|intervalo de rodízio|turno de sábado|turno fixo|semana |dia .*sem código)|^(?:Nome de colaborador repetido|Login repetido|Há colaborador sem nome)/;
+    /: (?:apenas \d+ descanso|\d+ dias de trabalho|mais de 6 dias consecutivos|cobertura de plantão|cobertura insuficiente|quantidade de plantonistas|faltam? .*plant|falta cobertura|o mês anterior já definiu|plantão herdado|pessoa excluída|intervalo de rodízio|turno de sábado|turno fixo|semana |dia .*sem código)|^(?:Nome de colaborador repetido|Login repetido|Há colaborador sem nome)/;
   const issues = preview.blockingIssues.filter(
     (line) => !dynamic.test(line) && !line.startsWith("Distribuição de folgas fixas:"),
   );

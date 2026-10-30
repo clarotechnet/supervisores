@@ -442,7 +442,11 @@ export function findScheduleCell(
   if (headerRow < 1) throw Error("Cabeçalho da escala não identificado.");
   const header = rows[headerRow]!,
     nameColumn = header.findIndex((cell) => normalized(cell) === "NOME"),
-    loginColumn = header.findIndex((cell) => normalized(cell) === "LOGIN");
+    loginColumn = header.findIndex((cell) => normalized(cell) === "LOGIN"),
+    functionColumn = header.findIndex((cell) => normalized(cell) === "FUNCAO"),
+    firstDateColumn = Math.max(nameColumn, loginColumn, functionColumn) + 1;
+  // B1 pode ser a data do mês acima de Função. Só os dias após as
+  // colunas de identificação podem ser alvos da edição.
   const columns = header.flatMap((value, column) => {
     const explicit = parseDateValue(rows[headerRow - 1]?.[column]);
     const label = text(value);
@@ -454,7 +458,7 @@ export function findScheduleCell(
         : Number.isInteger(day) && day >= 1 && day <= 31
           ? period + "-" + String(day).padStart(2, "0")
           : "");
-    return column > nameColumn && iso === date ? [column] : [];
+    return column >= firstDateColumn && iso === date ? [column] : [];
   });
   if (columns.length !== 1) throw Error("Data ausente ou ambígua na aba oficial.");
   const candidates: number[] = [];

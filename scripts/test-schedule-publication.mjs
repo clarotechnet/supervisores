@@ -51,6 +51,8 @@ const migrations = [
   "20261028141000_schedule_draft_archive.sql",
   "20261028160000_schedule_operational_shared_workbook_tabs.sql",
   "20261028170000_publish_operational_schedule.sql",
+  "20261029132008_schedule_month_deletion.sql",
+  "20261030153159_schedule_publish_saved_revision.sql",
 ]
   .map((file) => fs.readFileSync("supabase/migrations/" + file, "utf8"))
   .join("\n");
@@ -60,7 +62,9 @@ const sql =
   "\ngrant all on public.schedule_uploads to service_role;\n" +
   migrations +
   "\n" +
-  fs.readFileSync("tests/schedule-publication.sql", "utf8");
+  fs.readFileSync("tests/schedule-publication.sql", "utf8") +
+  "\n" +
+  fs.readFileSync("tests/schedule-publication-revision.sql", "utf8");
 const result = spawnSync(
   process.env["PSQL_PATH"] || "psql",
   [url, "-X", "-v", "ON_ERROR_STOP=1", "-q"],

@@ -214,3 +214,98 @@ describe("geração a partir da escala sincronizada", () => {
     expect(p.eventCoverage.every((e) => e.planned === 3)).toBe(true);
   });
 });
+
+function decemberBoundaryPerson(fixed: 5 | 6): SchedulePerson {
+  const p: SchedulePerson = {
+    name: "BOUNDARY SUPERVISOR " + fixed,
+    jobTitle: "SUPERVISOR COP",
+    assignments: Object.fromEntries(
+      scheduleMonthDates("2026-12").map((d) => [d, day(d) === 0 ? "Folga" : "T. 1"]),
+    ),
+  };
+  Object.assign(p.assignments, {
+    "2026-11-29": "Folga",
+    "2026-11-30": "T. 1",
+    "2026-12-25": "Folga",
+    "2027-01-01": "Folga",
+    "2027-01-02": fixed === 6 ? "Folga" : "T. 1",
+    "2027-01-03": "Folga",
+    "2027-01-04": "T. 1",
+  });
+  p.assignments[fixed === 5 ? "2026-12-04" : "2026-12-05"] = "Folga";
+  if (fixed === 5)
+    Object.assign(p.assignments, {
+      "2026-12-06": "PLANTÃO",
+      "2026-12-07": "Folga",
+      "2026-12-11": "Folga",
+    });
+  else p.assignments["2026-12-26"] = "Folga";
+  return p;
+}
+describe("semana normal que começa antes do primeiro dia da competência", () => {
+  const control = getScheduleGenerationRule("natal", "controle-operacional")!;
+  it.each([5, 6] as const)(
+    "identifica a folga de dia %s na semana preenchida de 29/11 a 05/12",
+    (fixed) => {
+      const p = decemberBoundaryPerson(fixed);
+      const before = structuredClone(p);
+      expect(learnFixedRest(p, "2026-12", control)).toMatchObject({
+        day: fixed,
+        method: "normal-week",
+        week: [
+          "2026-11-29",
+          "2026-11-30",
+          "2026-12-01",
+          "2026-12-02",
+          "2026-12-03",
+          "2026-12-04",
+          "2026-12-05",
+        ],
+      });
+      expect(p).toEqual(before);
+    },
+  );
+  it.each(["2026-11-29", "2026-11-30"])(
+    "não inventa a parte anterior da semana quando falta %s",
+    (date) => {
+      const p = decemberBoundaryPerson(5);
+      delete p.assignments[date];
+      expect(learnFixedRest(p, "2026-12", control).day).toBeNull();
+    },
+  );
+  it.each(["AT", "Férias", "FALTA", "BH", "Folga compensatória"])(
+    "descarta a primeira semana se um dia dela contém %s",
+    (code) => {
+      const p = decemberBoundaryPerson(5);
+      p.assignments["2026-11-30"] = code;
+      expect(learnFixedRest(p, "2026-12", control).day).toBeNull();
+    },
+  );
+  it("mantém a preferência por uma semana normal mais recente", () => {
+    const p = decemberBoundaryPerson(5);
+    p.assignments["2026-12-15"] = "Folga";
+    expect(learnFixedRest(p, "2026-12", control)).toMatchObject({
+      day: 2,
+      week: expect.arrayContaining(["2026-12-15"]),
+    });
+  });
+  it("leva sexta e sábado à prévia de janeiro preservando os dias já marcados e a base", () => {
+    const s = source("natal", "controle-operacional", "2026-12", 2);
+    s.payload.people = [decemberBoundaryPerson(5), decemberBoundaryPerson(6)];
+    const before = structuredClone(s);
+    const preview = generateSchedulePreview(s, "2027-01");
+    expect(preview.fixedRestEvidence?.map((e) => e.day)).toEqual([5, 6]);
+    expect(preview.blockingIssues.some((x) => x.includes("folga fixa não identificada"))).toBe(
+      false,
+    );
+    for (const [i, fixed] of [5, 6].entries()) {
+      const p = preview.payload.people[i]!;
+      for (const date of preview.payload.dates.filter((d) => day(d) === fixed))
+        expect(p.assignments[date]).toBe("Folga");
+    }
+    // A inferência de folga não autoriza reescrever plantões já definidos na origem.
+    expect(preview.eventCoverage.find((e) => e.date === "2027-01-01")?.assigned).toBe(0);
+    expect(preview.payload.people.every((p) => p.assignments["2027-01-03"] === "Folga")).toBe(true);
+    expect(s).toEqual(before);
+  });
+});

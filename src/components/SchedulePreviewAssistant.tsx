@@ -249,11 +249,37 @@ export function SchedulePreviewAssistant({ preview, baseline, active, onChange }
                     variant="outline"
                     className="h-auto w-full justify-start whitespace-normal py-1.5 text-xs"
                     onClick={() =>
-                      apply({ issueId: issue.id, date: issue.date, candidateKey: candidate.key })
+                      apply({
+                        issueId: issue.id,
+                        date: issue.date,
+                        candidateKey: candidate.key,
+                        ...(candidate.compensation
+                          ? { compensationDate: candidate.compensation.date }
+                          : {}),
+                      })
                     }
                   >
-                    Escalar {candidate.name} em {short(issue.date)}
+                    <span className="block space-y-1 text-left">
+                      <span className="block font-semibold">
+                        Escalar {candidate.name} em {short(issue.date)}
+                      </span>
+                      <span className="block text-muted-foreground">{candidate.role}</span>
+                      {candidate.compensation && (
+                        <span className="block">
+                          Inclui Folga compensatória em {short(candidate.compensation.date)}
+                        </span>
+                      )}
+                      {candidate.reason && (
+                        <span className="block text-muted-foreground">{candidate.reason}</span>
+                      )}
+                    </span>
                   </Button>
+                ))}
+              {!issue.candidates.length &&
+                issue.candidateNotes?.map((note) => (
+                  <p className="text-xs text-muted-foreground" key={note}>
+                    {note}
+                  </p>
                 ))}
               {!issue.restOptions?.length && !issue.candidates.length && (
                 <p className="text-xs">Ajuste manual necessário na prévia.</p>

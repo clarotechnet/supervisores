@@ -37,6 +37,8 @@ import {
   createOperationalSheet,
   listOperationalSheets,
   publishOperationalSheet,
+  publicationSheetForDraft,
+  draftHasPublicationBlockers,
   type OperationalSheet,
 } from "@/services/schedule-operational";
 import { isInitialControlDecember, type ScheduleGeneratedPreview } from "@/lib/schedule-generator";
@@ -109,6 +111,8 @@ export function ScheduleGeneratorDialog({
   const [creatingSheet, setCreatingSheet] = useState(false);
   const [archivingId, setArchivingId] = useState<string | null>(null);
   const [linkedSheets, setLinkedSheets] = useState<OperationalSheet[]>([]);
+  const [loadingSheets, setLoadingSheets] = useState(false);
+  const [sheetLoadError, setSheetLoadError] = useState("");
   const [publishingId, setPublishingId] = useState<string | null>(null);
   const [sheetLink, setSheetLink] = useState("");
   const [editingCell, setEditingCell] = useState<{ index: number; date: string } | null>(null);
@@ -123,6 +127,11 @@ export function ScheduleGeneratorDialog({
   const rule = getScheduleGenerationRule(city, sector);
   const [officialEditOpen, setOfficialEditOpen] = useState(false);
   const [officialSchedule, setOfficialSchedule] = useState<ScheduleUpload | null>(null);
+  const selectedDraft = drafts.find((draft) => draft.revision === savedRevision);
+  const selectedSheet = selectedDraft
+    ? publicationSheetForDraft(selectedDraft, linkedSheets)
+    : null;
+  const publicationBusy = publishingId !== null || creatingSheet || saving || archivingId !== null;
   const sourceSummaryId = sourceSummary?.id;
   const firstControl5x2 = isInitialControlDecember(city, sector, month);
   const firstRn5x2 = isInitialRnDecember(city, sector, month);
@@ -224,20 +233,30 @@ export function ScheduleGeneratorDialog({
       return;
     }
     let active = true;
+    setLinkedSheets([]);
+    setLoadingSheets(true);
+    setSheetLoadError("");
     void listOperationalSheets(city, sector, month)
       .then((rows) => {
         if (active) setLinkedSheets(rows);
       })
       .catch(() => {
-        if (active) setLinkedSheets([]);
+        if (active) setSheetLoadError("Não foi possível consultar o vínculo da aba mensal.");
+      })
+      .finally(() => {
+        if (active) setLoadingSheets(false);
       });
     return () => {
       active = false;
     };
   }, [open, city, sector, month]);
   async function approveOfficial(draft: GenerationDraft) {
-    if (!isAdmin || publishingId || draft.status !== "draft") return;
-    const linked = linkedSheets.find((sheet) => sheet.draft_id === draft.id);
+    if (!isAdmin || publicationBusy || draft.status !== "draft") return;
+    if (draftHasPublicationBlockers(draft)) {
+      toast.error("Esta versão salva ainda tem pendências. Revise e salve uma nova versão.");
+      return;
+    }
+    const linked = publicationSheetForDraft(draft, linkedSheets);
     if (!linked) {
       toast.error("Primeiro crie a aba mensal e vincule esta versão ao Google Sheets.");
       return;
@@ -256,14 +275,16 @@ export function ScheduleGeneratorDialog({
           month +
           "? A aba " +
           linked.sheet_tab +
-          " será sincronizada antes da publicação e passará a alimentar o painel " +
+          (linked.draft_id === draft.id
+            ? " será sincronizada antes da publicação e passará a alimentar o painel "
+            : " já existe e será vinculada a esta versão, preservando a versão anterior e seu histórico. O conteúdo atual do Sheets será validado e passará a alimentar o painel ") +
           "oficial. Alterações posteriores em Atualizar via API serão refletidas na escala oficial.",
       )
     )
       return;
     setPublishingId(draft.id);
     try {
-      const result = await publishOperationalSheet(linked.id);
+      const result = await publishOperationalSheet(linked.id, draft.id);
       if (!result.published) throw Error("O servidor não confirmou a publicação.");
       setDrafts(await listGenerationDrafts(city, sector, month));
       setSavedRevision(draft.revision);
@@ -473,7 +494,13 @@ export function ScheduleGeneratorDialog({
     }
   }
   async function removeSavedDraft(draft: GenerationDraft) {
-    if (!userId) return;
+    if (
+      !userId ||
+      archivingId !== null ||
+      publishingId !== null ||
+      (draft.status !== "draft" && !(isAdmin && draft.status === "rejected"))
+    )
+      return;
     if (
       !window.confirm(
         "Remover a versão " +
@@ -680,6 +707,11 @@ export function ScheduleGeneratorDialog({
               </div>
               <section className="rounded-lg border p-3">
                 <h3 className="text-sm font-bold">Histórico de versões no Supabase</h3>
+                {sheetLoadError && (
+                  <div className="my-2 text-xs text-destructive" role="alert">
+                    {sheetLoadError} Feche e reabra o gerador para tentar novamente.
+                  </div>
+                )}
                 <p className="mb-2 text-xs text-muted-foreground">
                   Versões independentes da escala oficial. Uma sincronização do Sheets não as
                   substitui.
@@ -705,7 +737,9 @@ export function ScheduleGeneratorDialog({
                             ? "OFICIAL"
                             : draft.status === "draft"
                               ? "Rascunho"
-                              : draft.status}{" "}
+                              : draft.status === "rejected"
+                                ? "Rejeitado"
+                                : draft.status}{" "}
                           · {new Date(draft.created_at).toLocaleString("pt-BR")}
                         </div>
                         <div className="flex items-center gap-2">
@@ -714,39 +748,48 @@ export function ScheduleGeneratorDialog({
                               ? "Editar escala oficial"
                               : "Abrir rascunho"}
                           </Button>
-                          {isAdmin &&
-                            draft.status === "draft" &&
-                            linkedSheets.some(
-                              (sheet) =>
-                                sheet.draft_id === draft.id && sheet.sheet_tab !== "ATUALIZADA",
-                            ) && (
-                              <Button
-                                type="button"
-                                size="sm"
-                                disabled={publishingId !== null}
-                                onClick={() => void approveOfficial(draft)}
-                              >
-                                {publishingId === draft.id && (
-                                  <Loader2 className="size-3.5 animate-spin" />
-                                )}
-                                Aprovar e publicar
-                              </Button>
-                            )}
-                          {draft.status === "draft" && (
+                          {isAdmin && draft.status === "draft" && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              disabled={
+                                publicationBusy ||
+                                loadingSheets ||
+                                !publicationSheetForDraft(draft, linkedSheets) ||
+                                draftHasPublicationBlockers(draft)
+                              }
+                              title={
+                                draftHasPublicationBlockers(draft)
+                                  ? "Resolva as pendências e salve uma nova versão."
+                                  : publicationSheetForDraft(draft, linkedSheets)
+                                    ? "Validar o Sheets e publicar esta versão após sua confirmação."
+                                    : "Crie a aba mensal antes de publicar."
+                              }
+                              onClick={() => void approveOfficial(draft)}
+                            >
+                              {publishingId === draft.id && (
+                                <Loader2 className="size-3.5 animate-spin" />
+                              )}
+                              Aprovar e publicar
+                            </Button>
+                          )}
+                          {(draft.status === "draft" ||
+                            (isAdmin && draft.status === "rejected")) && (
                             <Button
                               type="button"
                               variant="outline"
                               size="sm"
                               disabled={archivingId !== null || publishingId !== null}
                               onClick={() => void removeSavedDraft(draft)}
-                              title="Remover este rascunho sem afetar o histórico"
+                              title="Excluir da lista preservando o histórico"
+                              aria-label={`Excluir rascunho versão ${draft.revision}`}
                             >
                               {archivingId === draft.id ? (
                                 <Loader2 className="size-3.5 animate-spin" />
                               ) : (
                                 <Trash2 className="size-3.5" />
                               )}
-                              Remover
+                              Excluir rascunho
                             </Button>
                           )}
                         </div>
@@ -760,7 +803,9 @@ export function ScheduleGeneratorDialog({
                   Versão {savedRevision} selecionada.{" "}
                   {drafts.find((d) => d.revision === savedRevision)?.status === "approved"
                     ? "Esta é uma versão oficial publicada."
-                    : "Para torná-la oficial, vincule a aba e clique em Aprovar e publicar."}
+                    : selectedSheet
+                      ? "A aba mensal já existe. Clique em Aprovar e publicar para oficializar esta versão usando o conteúdo atual do Sheets."
+                      : "Crie a aba mensal e depois clique em Aprovar e publicar."}
                 </p>
               )}
               {generating && (
@@ -1217,20 +1262,36 @@ export function ScheduleGeneratorDialog({
             </a>
           )}
           <DialogFooter>
-            {savedRevision !== null &&
-              drafts.find((d) => d.revision === savedRevision)?.status !== "approved" && (
-                <Button
-                  onClick={() => void createSheet()}
-                  disabled={creatingSheet || loadingDrafts}
-                >
-                  {creatingSheet && <Loader2 className="size-4 animate-spin" />}
-                  {city === "natal" && sector === "controle-operacional"
-                    ? "Criar aba do mês no Sheets Controle"
-                    : "Criar aba do mês no Sheets oficial"}
-                </Button>
-              )}
+            {selectedDraft?.status === "draft" && !selectedSheet && (
+              <Button
+                onClick={() => void createSheet()}
+                disabled={publicationBusy || loadingDrafts || loadingSheets || !!sheetLoadError}
+              >
+                {creatingSheet && <Loader2 className="size-4 animate-spin" />}
+                {city === "natal" && sector === "controle-operacional"
+                  ? "Criar aba do mês no Sheets Controle"
+                  : "Criar aba do mês no Sheets oficial"}
+              </Button>
+            )}
+            {isAdmin && selectedDraft?.status === "draft" && (
+              <Button
+                onClick={() => void approveOfficial(selectedDraft)}
+                disabled={
+                  publicationBusy ||
+                  loadingSheets ||
+                  !selectedSheet ||
+                  draftHasPublicationBlockers(selectedDraft)
+                }
+              >
+                {publishingId === selectedDraft.id && <Loader2 className="size-4 animate-spin" />}
+                Aprovar e publicar versão {selectedDraft.revision}
+              </Button>
+            )}
             {preview && (
-              <Button onClick={() => void saveDraft()} disabled={saving || !userId || !source}>
+              <Button
+                onClick={() => void saveDraft()}
+                disabled={publicationBusy || !userId || !source}
+              >
                 {saving && <Loader2 className="size-4 animate-spin" />}
                 Salvar nova versão no Supabase
               </Button>

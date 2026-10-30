@@ -63,6 +63,10 @@ import { useControlScheduleAccess } from "@/hooks/useControlScheduleAccess";
 import { ScheduleControlAccessGate } from "@/components/ScheduleControlAccessGate";
 import { ScheduleControlAccessDialog } from "@/components/ScheduleControlAccessDialog";
 import {
+  ScheduleControlAccessRequestDialog,
+  ScheduleControlAccessShortcut,
+} from "@/components/ScheduleControlAccessRequestDialog";
+import {
   SCHEDULE_CITY_OPTIONS,
   SCHEDULE_SECTOR_OPTIONS,
   scheduleFrontOptionsForCity,
@@ -169,6 +173,7 @@ function SchedulesPage() {
   const [operationalRefreshKey, setOperationalRefreshKey] = useState(0);
   const [exportingReport, setExportingReport] = useState(false);
   const [accessDialogOpen, setAccessDialogOpen] = useState(false);
+  const [accessRequestOpen, setAccessRequestOpen] = useState(false);
   const scopeAccess = useControlScheduleAccess(profile?.id, isAdmin, city, sector);
   const canManageSchedules = profile ? canManageSchedulesForRole(profile.role, sector) : false;
   const canUseSuggestions = (isAdmin || isController) && scopeAccess.allowed;
@@ -515,6 +520,11 @@ function SchedulesPage() {
             </div>
           </div>
           <div className="schedule-page-actions">
+            <ScheduleControlAccessShortcut
+              role={profile?.role}
+              onRequest={() => setAccessRequestOpen(true)}
+              onReview={() => setAccessDialogOpen(true)}
+            />
             {canManageSchedules && (
               <>
                 <Button
@@ -600,12 +610,6 @@ function SchedulesPage() {
                     <DropdownMenuItem onSelect={() => setSuggestionsOpen(true)}>
                       <Lightbulb className="size-4" />
                       Sugestões
-                    </DropdownMenuItem>
-                  )}
-                  {isAdmin && (
-                    <DropdownMenuItem onSelect={() => setAccessDialogOpen(true)}>
-                      <UserCheck className="size-4" />
-                      Autorizações Controle
                     </DropdownMenuItem>
                   )}
                   {isAdmin &&
@@ -763,6 +767,22 @@ function SchedulesPage() {
             setSchedule(null);
             setOperationalRefreshKey((value) => value + 1);
             await loadSummaries();
+          }}
+        />
+      )}
+      {!isAdmin && profile && (
+        <ScheduleControlAccessRequestDialog
+          open={accessRequestOpen}
+          onOpenChange={setAccessRequestOpen}
+          userId={profile.id}
+          initialCity={city}
+          onViewSchedule={(targetCity) => {
+            setCity(targetCity);
+            setSector("controle-operacional");
+            const published = summaries.find(
+              (item) => item.city === targetCity && item.sector === "controle-operacional",
+            );
+            setMonth(published?.schedule_month || month || currentScheduleMonth());
           }}
         />
       )}

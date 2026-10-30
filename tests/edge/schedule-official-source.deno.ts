@@ -12,7 +12,12 @@ const payload = {
       name: "FIXTURE",
       login: "ZFIXTURE",
       jobTitle: "TEST",
-      assignments: Object.fromEntries(dates.map((d) => [d, "M. 1"])),
+      assignments: Object.fromEntries(
+        dates.map((d) => {
+          const weekday = new Date(d + "T12:00:00Z").getUTCDay();
+          return [d, weekday === 2 || weekday === 3 ? "Folga" : "M. 1"];
+        }),
+      ),
     },
   ],
 };
@@ -31,7 +36,7 @@ try {
 function assert(value: unknown, message: string): asserts value {
   if (!value) throw Error(message);
 }
-async function run(action: "create" | "publish", existing = false) {
+async function run(action: "create" | "publish", existing = false, includeRevision = true) {
   mock.role = "admin";
   mock.status = "active";
   mock.authenticated = true;
@@ -95,7 +100,11 @@ async function run(action: "create" | "publish", existing = false) {
       new Request("https://fixture.invalid", {
         method: "POST",
         headers: { Authorization: "Bearer fixture", "Content-Type": "application/json" },
-        body: JSON.stringify({ action, draftId: mock.sheet.id, sheetId: mock.sheet.id }),
+        body: JSON.stringify({
+          action,
+          ...(action === "create" || includeRevision ? { draftId: mock.sheet.id } : {}),
+          sheetId: mock.sheet.id,
+        }),
       }),
     );
     return { response, body: await response.json(), calls };
@@ -137,9 +146,22 @@ Deno.test("aba oficial existente impede outra cópia ou sobrescrita", async () =
 Deno.test("admin publica VT explicitamente e Google permanece somente leitura", async () => {
   const r = await run("publish");
   assert(r.response.status === 200 && r.body.published === true, "publication failed");
-  assert(mock.rpcCalls[0]?.name === "schedule_operational_publish", "no atomic publication");
+  assert(
+    mock.rpcCalls[0]?.name === "schedule_operational_publish_revision",
+    "no atomic revision publication",
+  );
   assert(
     r.calls.every((c) => c.method === "GET" || c.url.includes("oauth2")),
     "publication wrote Google",
+  );
+});
+
+Deno.test("cliente anterior ainda publica VT sem draftId e sem gravar no Google", async () => {
+  const r = await run("publish", false, false);
+  assert(r.response.status === 200 && r.body.published === true, "legacy publication failed");
+  assert(mock.rpcCalls[0]?.name === "schedule_operational_publish", "legacy RPC changed");
+  assert(
+    r.calls.every((c) => c.method === "GET" || c.url.includes("oauth2")),
+    "legacy publication wrote Google",
   );
 });
