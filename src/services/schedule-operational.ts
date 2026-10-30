@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import type { Json, Database } from "@/integrations/supabase/types";
 import type { SchedulePayload } from "@/lib/types";
+import type { GenerationDraft } from "./schedule-generation";
 import { scheduleCodeKind } from "../lib/schedule-import";
 export type OperationalSheet = Database["public"]["Tables"]["schedule_operational_sheets"]["Row"];
 export type OperationalChange = Database["public"]["Tables"]["schedule_operational_changes"]["Row"];
@@ -113,8 +114,40 @@ export const createOperationalSheet = (draftId: string) => invoke("create", { dr
 export const syncOperationalSheet = (sheetId: string) => invoke("sync", { sheetId });
 export const deleteOperationalSheet = (sheetId: string, scheduleId: string, confirmation: string) =>
   invoke("delete", { sheetId, scheduleId, confirmation });
-/** Sincroniza a aba Google ao aprovar e publica a mesma versão como oficial. */
-export const publishOperationalSheet = (sheetId: string) => invoke("publish", { sheetId });
+/** A revisão escolhida é vinculada e publicada atomicamente, sem copiar a aba. */
+export const publishOperationalSheet = (sheetId: string, draftId?: string) =>
+  invoke("publish", { sheetId, ...(draftId ? { draftId } : {}) });
+
+export function publicationSheetForDraft(
+  draft: Pick<GenerationDraft, "id" | "city" | "sector" | "schedule_month">,
+  sheets: OperationalSheet[],
+): OperationalSheet | null {
+  const active = sheets.filter(
+    (sheet) =>
+      !sheet.deleted_at &&
+      !sheet.deletion_requested_at &&
+      sheet.sheet_tab &&
+      sheet.sheet_tab !== "ATUALIZADA" &&
+      sheet.city === draft.city &&
+      sheet.sector === draft.sector &&
+      sheet.schedule_month === draft.schedule_month,
+  );
+  const exact = active.find((sheet) => sheet.draft_id === draft.id);
+  return exact ?? (active.length === 1 ? active[0]! : null);
+}
+
+export function draftHasPublicationBlockers(draft: GenerationDraft): boolean {
+  return (
+    Array.isArray(draft.warnings) &&
+    draft.warnings.some(
+      (notice) =>
+        notice &&
+        typeof notice === "object" &&
+        !Array.isArray(notice) &&
+        notice["level"] === "blocking",
+    )
+  );
+}
 
 export function livePayload(row: OperationalSheet): SchedulePayload {
   return row.current_payload as unknown as SchedulePayload;

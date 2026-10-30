@@ -78,7 +78,8 @@ export function createClient(..._args: unknown[]): any {
       mock.rpcCalls.push({ name, args });
       return Promise.resolve({
         data:
-          name === "schedule_operational_publish"
+          name === "schedule_operational_publish" ||
+          name === "schedule_operational_publish_revision"
             ? "official-id"
             : name === "schedule_operational_metadata_audit_ready"
               ? mock.metadataAuditReady

@@ -170,3 +170,63 @@ Deno.test("AI receives pseudonymous metrics without names logins roles or cell c
   );
   assert(mock.mutationCalls.length === 0 && mock.rpcCalls.length === 0, "AI wrote schedule");
 });
+
+Deno.test(
+  "preview suggests COP duty with compensation at zero coverage and keeps provider data anonymous",
+  async () => {
+    const preview = input();
+    preview.city = "natal";
+    preview.sector = "controle-operacional";
+    const configured = {
+      sundayDutyCount: 3,
+      holidayDutyCount: 3,
+      dutyCode: "PLANTÃO",
+      minimumSupervisorDuty: 1,
+      minimumAdesaoControllerDuty: 1,
+      allowRestCompensation: true,
+      minimumIntermediateDuties: 0,
+      fixedOffByName: { "PRIVATE PERSON 0": 3, "PRIVATE PERSON 1": 2 },
+      excludedFromDuty: ["PRIVATE PERSON 1"],
+    };
+    Object.assign(preview.rule, configured);
+    preview.current.people.forEach((p, i) => {
+      p.jobTitle = "SUPERVISOR COP";
+      p.assignments[i === 0 ? "2027-02-10" : "2027-02-09"] = "Folga";
+    });
+    preview.planned = structuredClone(preview.current);
+    const result = await run({ preview }, { ai: true });
+    assert(result.response.status === 200, "compensated preview rejected");
+    const issue = result.data.analysis.issues.find(
+      (i: { id: string }) => i.id === "role:2027-02-07:supervisor",
+    );
+    assert(issue?.candidates[0]?.name === "PRIVATE PERSON 0", "COP not suggested");
+    assert(issue.candidates[0].compensation?.date === "2027-02-08", "compensation lost");
+    assert(
+      result.data.analysis.issues.some((i: { id: string }) => i.id === "role:2027-02-07:adesao"),
+      "missing role at zero coverage hidden",
+    );
+    assert(
+      result.data.writeActions === 0 &&
+        mock.rpcCalls.length === 0 &&
+        mock.mutationCalls.length === 0,
+      "preview analysis attempted writes",
+    );
+    const provider = result.calls.join(" ");
+    assert(
+      provider.includes("needsCompensation") && provider.includes("2027-02-08"),
+      "provider not told compensation is required",
+    );
+    assert(
+      !provider.includes("PRIVATE PERSON") && !provider.includes("SECRET LOGIN"),
+      "private data sent to provider",
+    );
+  },
+);
+Deno.test("invalid compensation context is rejected before contacting provider", async () => {
+  for (const extra of [{ allowRestCompensation: "yes" }, { fixedOffByName: { A: 0 } }]) {
+    const preview = input();
+    Object.assign(preview.rule, extra);
+    const result = await run({ preview }, { ai: true });
+    assert(result.response.status === 400 && result.calls.length === 0, "invalid context accepted");
+  }
+});

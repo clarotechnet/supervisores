@@ -54,6 +54,8 @@ async function explanationByAI(analysis: ScheduleAnalysis) {
       restDays: c.restDays,
       workDays: c.workDays,
       score: c.score,
+      needsCompensation: !!c.compensation,
+      compensationDate: c.compensation?.date || null,
     })),
   }));
   if (!compact.length)
@@ -70,6 +72,7 @@ async function explanationByAI(analysis: ScheduleAnalysis) {
     "NÃO invente candidatos, escalas, normas trabalhistas ou competências.",
     "Candidatos e datas de segunda folga são possibilidades para aprovação humana, nunca autorizam troca automática.",
     "Pendência semanal traz restOptions (datas viáveis); explique essas datas mesmo se candidates estiver vazio.",
+    "Quando needsCompensation for verdadeiro, a sugestão exige plantão e folga em compensationDate juntos. Explique as duas alterações; não trate a compensação como opcional.",
     "Explique o risco e a ordem de revisão de cada pendência, no máximo 15.",
     "Nunca presuma que uma sugestão cumpre todas as regras de jornada, CCT ou RH.",
     "Retorne apenas o JSON do schema. Se não houver candidatos, deixe candidateKeys vazio.",

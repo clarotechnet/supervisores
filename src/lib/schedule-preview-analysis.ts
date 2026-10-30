@@ -4,6 +4,7 @@ import { analyzeSchedule } from "../../supabase/functions/_shared/schedule-ai-an
 import type { PreviewAnalysisInput } from "../../supabase/functions/_shared/schedule-ai-preview";
 import { editControlPreviewCode } from "./schedule-preview-editor";
 import { normalizeScheduleEmployeeName } from "./schedule-generator-rules";
+import { schedulePersonKey } from "./schedule-history-memory";
 
 export function previewAnalysisInput(
   preview: ScheduleGeneratedPreview,
@@ -11,6 +12,17 @@ export function previewAnalysisInput(
 ): PreviewAnalysisInput {
   const build = (p: ScheduleGeneratedPreview) =>
     operationalFromDraft(p.payload, p.calendarWeeks, p.outsideAssignments);
+  const evidence = new Map(
+    (preview.fixedRestEvidence || []).map((item) => [item.personKey, item.day]),
+  );
+  const fixedOffByName = Object.fromEntries(
+    preview.payload.people.flatMap((person) => {
+      const day = evidence.get(schedulePersonKey(person));
+      return typeof day === "number" && day >= 1 && day <= 6
+        ? [[normalizeScheduleEmployeeName(person.name), day]]
+        : [];
+    }),
+  );
   return {
     city: preview.rule.city,
     sector: preview.rule.sector,
@@ -29,6 +41,8 @@ export function previewAnalysisInput(
       ],
       additionalHolidays: [...(preview.rule.additionalHolidays || [])],
       analysisMonth: preview.targetMonth,
+      allowRestCompensation: preview.rule.minimumIntermediateDuties === 0,
+      fixedOffByName,
       ...(preview.rule.city === "natal" &&
       preview.rule.sector === "controle-operacional" &&
       preview.targetMonth === "2026-12"
@@ -40,7 +54,12 @@ export function previewAnalysisInput(
 export function analyzePreview(input: PreviewAnalysisInput) {
   return analyzeSchedule(input.planned, input.current, input.rule);
 }
-export type PreviewSuggestion = { issueId: string; date: string; candidateKey?: string };
+export type PreviewSuggestion = {
+  issueId: string;
+  date: string;
+  candidateKey?: string;
+  compensationDate?: string;
+};
 export function applyPreviewSuggestion(
   preview: ScheduleGeneratedPreview,
   baseline: ScheduleGeneratedPreview,
@@ -72,5 +91,16 @@ export function applyPreviewSuggestion(
     preview.rule.dutyCode ||
     override ||
     (saturday ? preview.rule.saturdayShift : preview.rule.defaultShift);
-  return editControlPreviewCode(preview, index, suggestion.date, code);
+  if (suggestion.compensationDate !== candidate.compensation?.date)
+    throw Error("A compensação sugerida mudou. Revise a análise atual.");
+  if (
+    candidate.compensation &&
+    (!preview.payload.dates.includes(candidate.compensation.date) ||
+      !candidate.compensation.date.startsWith(preview.targetMonth + "-"))
+  )
+    throw Error("A compensação não pode alterar o histórico ou outra competência.");
+  let next = editControlPreviewCode(preview, index, suggestion.date, code);
+  if (candidate.compensation)
+    next = editControlPreviewCode(next, index, candidate.compensation.date, "Folga");
+  return next;
 }

@@ -98,6 +98,7 @@ export function validatePreviewAnalysisInput(value: unknown): PreviewAnalysisInp
     "holidayDutyCount",
     "minimumSupervisorDuty",
     "minimumAdesaoControllerDuty",
+    "minimumIntermediateDuties",
   ] as const) {
     const v = rawRule[key];
     if (v !== undefined && v !== null && (!Number.isInteger(v) || Number(v) < 0 || Number(v) > 500))
@@ -120,6 +121,26 @@ export function validatePreviewAnalysisInput(value: unknown): PreviewAnalysisInp
   if (rawRule["holidayWeekdaysOnly"] !== undefined)
     rule.holidayWeekdaysOnly = rawRule["holidayWeekdaysOnly"] as boolean;
   if (rawRule["dutyCode"] !== undefined) rule.dutyCode = rawRule["dutyCode"] as string;
+  if (rawRule["allowRestCompensation"] !== undefined) {
+    if (typeof rawRule["allowRestCompensation"] !== "boolean") return invalid();
+    rule.allowRestCompensation = rawRule["allowRestCompensation"];
+  }
+  if (rawRule["fixedOffByName"] !== undefined) {
+    const entries = Object.entries(record(rawRule["fixedOffByName"]));
+    if (
+      entries.length > 500 ||
+      entries.some(
+        ([name, day]) =>
+          !safeText(name, 120) ||
+          !name.trim() ||
+          !Number.isInteger(day) ||
+          Number(day) < 1 ||
+          Number(day) > 6,
+      )
+    )
+      return invalid();
+    rule.fixedOffByName = Object.fromEntries(entries) as Record<string, number>;
+  }
   if (rawRule["additionalHolidays"] !== undefined) {
     if (
       !Array.isArray(rawRule["additionalHolidays"]) ||

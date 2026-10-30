@@ -34,7 +34,12 @@ const payload: Payload = {
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw Error(message);
 }
-async function run(action: unknown = "publish", changeRows?: (rows: string[][]) => void) {
+async function run(
+  action: unknown = "publish",
+  changeRows?: (rows: unknown[][]) => void,
+  sourcePayload: Payload = payload,
+  extraParams: Record<string, unknown> = {},
+) {
   const googleCalls: Array<{ url: string; method: string }> = [];
   const originalFetch = globalThis.fetch;
   const names = [
@@ -51,8 +56,8 @@ async function run(action: unknown = "publish", changeRows?: (rows: string[][]) 
     googleCalls.push({ url: address, method: options?.method ?? "GET" });
     const control = mock.sheet["sector"] === "controle-operacional";
     const rows = control
-      ? controlMonthValues(payload, "2026-12-01")
-      : officialMonthValues(payload, "2026-12-01");
+      ? controlMonthValues(sourcePayload, "2026-12-01")
+      : officialMonthValues(sourcePayload, "2026-12-01");
     rows[2]![control ? 2 : 3] = "FALTA";
     changeRows?.(rows);
     if (address === "https://oauth2.googleapis.com/token")
@@ -69,7 +74,7 @@ async function run(action: unknown = "publish", changeRows?: (rows: string[][]) 
       new Request("https://example.invalid", {
         method: "POST",
         headers: { Authorization: "Bearer fixture", "Content-Type": "application/json" },
-        body: JSON.stringify(action === null ? null : { action, sheetId }),
+        body: JSON.stringify(action === null ? null : { action, sheetId, ...extraParams }),
       }),
     );
     return { response, body: await response.json(), googleCalls };
@@ -86,6 +91,8 @@ function reset() {
   mock.authenticated = true;
   mock.rpcCalls = [];
   mock.rpcError = null;
+  mock.rowsByTable = {};
+  mock.mutationCalls = [];
   mock.sheet = {
     id: sheetId,
     city: "natal",
@@ -309,4 +316,306 @@ Deno.test("pending or completed deletion blocks later synchronization before Goo
     const { response, googleCalls } = await run("sync");
     assert(response.status === 409 && googleCalls.length === 0, "retired sheet synchronized");
   }
+});
+
+Deno.test(
+  "Control sync accepts a native date or formatted month in B1 without Google writes",
+  async () => {
+    for (const value of [46357, "dezembro 26"]) {
+      reset();
+      const { response, body, googleCalls } = await run("sync", (rows) => {
+        rows[0]![1] = value;
+      });
+      assert(
+        response.status === 200 && !body.published,
+        "equivalent month was rejected or published",
+      );
+      assert(
+        mock.rpcCalls.length === 1 && mock.rpcCalls[0]!.name === "schedule_operational_apply_sync",
+        "wrong synchronization action",
+      );
+      assert(
+        (mock.rpcCalls[0]!.args["p_changes"] as unknown[]).length === 1,
+        "schedule change lost",
+      );
+      assert(
+        googleCalls.every((call) => call.url.includes("oauth2") || call.method === "GET"),
+        "Google write attempted",
+      );
+    }
+  },
+);
+Deno.test("Control rejects a real month change before saving any schedule changes", async () => {
+  reset();
+  const { response, body } = await run("sync", (rows) => {
+    rows[0]![1] = 46388;
+  });
+  assert(
+    response.status === 409 && body.code === "SHEET_STRUCTURE_CHANGED",
+    "wrong month accepted",
+  );
+  assert(mock.rpcCalls.length === 0, "wrong month reached database writes");
+});
+
+Deno.test(
+  "Control reordered rows keep employee assignments and audit linked during sync",
+  async () => {
+    reset();
+    const source: Payload = {
+      ...payload,
+      people: [
+        { ...structuredClone(payload.people[0]!), name: "ANTONIA ELIZIENE" },
+        {
+          ...structuredClone(payload.people[0]!),
+          name: "MATHEUS FREITAS",
+          jobTitle: "ANALISTA",
+        },
+      ],
+    };
+    mock.sheet["planned_payload"] = source;
+    mock.sheet["current_payload"] = source;
+    const before = JSON.stringify(source);
+    const { response, body, googleCalls } = await run(
+      "sync",
+      (rows) => {
+        rows[0]![1] = 46357;
+        [rows[2], rows[3]] = [rows[3]!, rows[2]!];
+      },
+      source,
+    );
+    assert(response.status === 200 && !body.published, "reordered sync rejected or published");
+    assert(mock.rpcCalls.length === 1, "unexpected database actions");
+    const call = mock.rpcCalls[0]!;
+    assert(call.name === "schedule_operational_apply_sync", "sync published automatically");
+    const next = call.args["p_payload"] as Payload;
+    assert(next.people[0]!.name === "ANTONIA ELIZIENE", "baseline identity order changed");
+    assert(next.people[0]!.assignments["2026-12-01"] === "FALTA", "Antonia change lost");
+    assert(
+      next.people[1]!.assignments["2026-12-01"] === "T. 1",
+      "Matheus received another person's code",
+    );
+    const changes = call.args["p_changes"] as Array<Record<string, unknown>>;
+    assert(
+      changes.length === 1 && changes[0]!["employee_name"] === "ANTONIA ELIZIENE",
+      "audit attributed to the wrong employee",
+    );
+    assert(
+      changes[0]!["previous_code"] === "T. 1" && changes[0]!["current_code"] === "FALTA",
+      "audit values lost",
+    );
+    assert(JSON.stringify(source) === before, "original plan mutated");
+    assert(
+      googleCalls.every((call) => call.url.includes("oauth2") || call.method === "GET"),
+      "Google write attempted",
+    );
+  },
+);
+Deno.test("Control duplicate or unknown name returns 409 before database writes", async () => {
+  for (const name of ["ANTONIA ELIZIENE", "UNKNOWN EMPLOYEE"]) {
+    reset();
+    const source: Payload = {
+      ...payload,
+      people: [
+        { ...structuredClone(payload.people[0]!), name: "ANTONIA ELIZIENE" },
+        { ...structuredClone(payload.people[0]!), name: "MATHEUS FREITAS" },
+      ],
+    };
+    mock.sheet["planned_payload"] = source;
+    mock.sheet["current_payload"] = source;
+    const { response, body } = await run(
+      "sync",
+      (rows) => {
+        rows[3]![0] = name;
+      },
+      source,
+    );
+    assert(
+      response.status === 409 && body.code === "SHEET_STRUCTURE_CHANGED",
+      "invalid employee structure accepted",
+    );
+    assert(mock.rpcCalls.length === 0, "invalid names reached database writes");
+  }
+});
+
+Deno.test(
+  "Control function/base changes use the same audited sync, including metadata-only updates",
+  async () => {
+    for (const cellsChanged of [true, false]) {
+      reset();
+      mock.metadataAuditReady = true;
+      const source: Payload = {
+        ...payload,
+        people: [
+          {
+            ...structuredClone(payload.people[0]!),
+            jobTitle: "CONTROLADOR (ADESÃO APOIO)-FTZ-MSRO",
+          },
+        ],
+      };
+      mock.sheet["planned_payload"] = source;
+      mock.sheet["current_payload"] = source;
+      const { response, body, googleCalls } = await run(
+        "sync",
+        (rows) => {
+          rows[2]![1] = "CONTROLADOR (ADESÃO) - FTZ - APOIO";
+          if (!cellsChanged) rows[2]![2] = "T. 1";
+        },
+        source,
+      );
+      assert(
+        response.status === 200 && !body.published,
+        "function change rejected or auto-published",
+      );
+      assert(
+        body.changes === (cellsChanged ? 2 : 1) &&
+          body.functionChanges === 1 &&
+          body.cellChanges === (cellsChanged ? 1 : 0) &&
+          body.auditLogged === true,
+        "metadata-only change reported as unchanged",
+      );
+      assert(
+        mock.rpcCalls.map((c) => c.name).join(",") ===
+          "schedule_operational_metadata_audit_ready,schedule_operational_apply_sync",
+        "audit check skipped",
+      );
+      const next = mock.rpcCalls[1]!.args["p_payload"] as Payload;
+      assert(next.people[0]!.jobTitle === "CONTROLADOR (ADESÃO) - FTZ - APOIO", "new role lost");
+      assert(source.people[0]!.jobTitle === "CONTROLADOR (ADESÃO APOIO)-FTZ-MSRO", "plan mutated");
+      assert(
+        googleCalls.every((c) => c.url.includes("oauth2") || c.method === "GET"),
+        "Google write attempted",
+      );
+    }
+  },
+);
+Deno.test("Control general function changes cannot bypass missing metadata audit", async () => {
+  reset();
+  mock.metadataAuditReady = false;
+  const { response } = await run("sync", (rows) => {
+    rows[2]![1] = "CONTROLADOR (ADESÃO) - FTZ - APOIO";
+  });
+  assert(response.status === 409, "missing audit accepted");
+  assert(
+    mock.rpcCalls.length === 1 &&
+      mock.rpcCalls[0]!.name === "schedule_operational_metadata_audit_ready",
+    "unprotected sync attempted",
+  );
+});
+
+const selectedId = "10000000-0000-0000-0000-000000000004";
+function revisionFixture() {
+  reset();
+  const normal = structuredClone(payload);
+  for (const date of normal.dates) {
+    const day = new Date(date + "T12:00:00Z").getUTCDay();
+    normal.people[0]!.assignments[date] = day === 0 || day === 6 ? "Folga" : "T. 1";
+  }
+  mock.sheet["draft_id"] = "10000000-0000-0000-0000-000000000003";
+  mock.sheet["planned_payload"] = normal;
+  mock.sheet["current_payload"] = normal;
+  mock.rowsByTable["schedule_generation_drafts"] = {
+    id: selectedId,
+    city: "natal",
+    sector: "controle-operacional",
+    schedule_month: "2026-12-01",
+    status: "draft",
+    archived_at: null,
+    warnings: [],
+    payload: normal,
+    policy_snapshot: { rule: { sundayDutyCount: 0, holidayDutyCount: 0 } },
+  };
+  return normal;
+}
+Deno.test("explicit selected revision uses one atomic RPC and never writes Google", async () => {
+  const normal = revisionFixture();
+  const result = await run("publish", undefined, normal, { draftId: selectedId });
+  assert(
+    result.response.status === 200 && result.body.published === true,
+    "selected revision not published",
+  );
+  assert(
+    mock.rpcCalls.length === 1 &&
+      mock.rpcCalls[0]!.name === "schedule_operational_publish_revision",
+    "binding and publish were split",
+  );
+  assert(mock.rpcCalls[0]!.args["p_draft_id"] === selectedId, "wrong revision published");
+  assert(mock.mutationCalls.length === 0, "Edge directly changed binding");
+  assert(
+    result.googleCalls
+      .filter((c) => c.url.includes("sheets.googleapis.com"))
+      .every((c) => c.method === "GET"),
+    "Google was modified",
+  );
+});
+Deno.test("selected draft scope and archive are validated before consulting Google", async () => {
+  for (const change of [
+    { city: "recife" },
+    { archived_at: "2026-10-30" },
+    { status: "rejected" },
+    { warnings: [{ level: "blocking" }] },
+  ]) {
+    const normal = revisionFixture();
+    Object.assign(mock.rowsByTable["schedule_generation_drafts"]!, change);
+    const result = await run("publish", undefined, normal, { draftId: selectedId });
+    assert(
+      result.response.status === 409 &&
+        result.googleCalls.length === 0 &&
+        mock.rpcCalls.length === 0,
+      "invalid draft had effects",
+    );
+  }
+});
+Deno.test(
+  "live Sheets weekly conflict blocks even when saved revision has zero warnings",
+  async () => {
+    const normal = revisionFixture();
+    const result = await run(
+      "publish",
+      (rows) => {
+        rows[2]![7] = "PLANTÃO";
+      },
+      normal,
+      { draftId: selectedId },
+    );
+    assert(
+      result.response.status === 409 && result.body.code === "SHEET_PUBLICATION_BLOCKED",
+      "live weekly conflict ignored",
+    );
+    assert(
+      mock.rpcCalls.length === 0 && mock.mutationCalls.length === 0,
+      "blocked publication changed binding",
+    );
+    assert(result.body.error.includes("TEST EMPLOYEE"), "affected name missing");
+  },
+);
+Deno.test("live Sheets missing coverage blocks a clean saved revision", async () => {
+  const normal = revisionFixture();
+  const selected = mock.rowsByTable["schedule_generation_drafts"]!;
+  selected["policy_snapshot"] = {
+    rule: { sundayDutyCount: 3, holidayDutyCount: 0, minimumSupervisorDuty: 1 },
+  };
+  const result = await run("publish", undefined, normal, { draftId: selectedId });
+  assert(
+    result.response.status === 409 && result.body.code === "SHEET_PUBLICATION_BLOCKED",
+    "live coverage conflict ignored",
+  );
+  assert(mock.rpcCalls.length === 0, "invalid Sheets published");
+});
+Deno.test("missing revision publication SQL returns actionable migration instruction", async () => {
+  const normal = revisionFixture();
+  mock.rpcError = { code: "PGRST202", message: "missing function" };
+  const result = await run("publish", undefined, normal, { draftId: selectedId });
+  assert(
+    result.response.status === 409 &&
+      result.body.error.includes("20261030153159_schedule_publish_saved_revision.sql"),
+    "migration error hidden",
+  );
+});
+Deno.test("invalid publication draft ID is rejected before Google", async () => {
+  revisionFixture();
+  const result = await run("publish", undefined, payload, { draftId: "invalid" });
+  assert(
+    result.response.status === 400 && result.googleCalls.length === 0 && mock.rpcCalls.length === 0,
+    "invalid id accepted",
+  );
 });

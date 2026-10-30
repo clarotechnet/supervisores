@@ -95,12 +95,9 @@ Deno.serve(async (request) => {
     const token = await googleAccessToken(),
       official = schedule.source_file === "Google Sheets - Escala operacional oficial";
     let linked: Record<string, unknown> | null = null;
-    let sources = await loadScheduleSources(
-      schedule.city,
-      schedule.sector,
-      schedule.schedule_month,
-      token,
-    );
+    let sources = official
+      ? []
+      : await loadScheduleSources(schedule.city, schedule.sector, schedule.schedule_month, token);
     if (official) {
       const { data: draft, error: draftError } = await admin
         .from("schedule_generation_drafts")
@@ -134,6 +131,22 @@ Deno.serve(async (request) => {
       if (sheet.spreadsheet_id !== expected || sheet.sheet_tab === "ATUALIZADA")
         throw Error("O vínculo não aponta para o Sheets oficial.");
       const rows = await sheetRows(sheet.spreadsheet_id, sheet.sheet_tab, token);
+      if (usesControlMaster(schedule.city, schedule.sector)) {
+        const validation = parseControlMonthTab(
+          rows,
+          sheet.planned_payload as Payload,
+          sheet.current_payload as Payload,
+          schedule.schedule_month,
+        );
+        if (validation.functionChanges.length) {
+          const ready = await admin.rpc("schedule_operational_metadata_audit_ready");
+          if (ready.error || ready.data !== true)
+            return json(409, {
+              error:
+                "Há funções alteradas no Sheets. A auditoria de funções precisa estar instalada antes de editar.",
+            });
+        }
+      }
       sources = [
         {
           spreadsheetId: sheet.spreadsheet_id,

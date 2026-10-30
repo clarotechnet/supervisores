@@ -107,3 +107,12 @@ describe("Controle operacional: consulta autorizada, gestão separada", () => {
     await expect(requestControlAccess("natal", "")).rejects.toThrow("não confirmou");
   });
 });
+
+it("indica indisponibilidade do serviço quando a função de autorização não está publicada", async () => {
+  state.error = {
+    context: Response.json({ message: "Requested function not found" }, { status: 404 }),
+  };
+  await expect(fetchControlAccess("natal")).rejects.toThrow(
+    "O serviço de autorizações está indisponível",
+  );
+});

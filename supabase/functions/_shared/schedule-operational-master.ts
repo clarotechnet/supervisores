@@ -25,6 +25,47 @@ const MONTHS = [
   "DEZEMBRO",
 ];
 const DOW = ["DOM", "SEG", "TER", "QUA", "QUI", "SEX", "SAB"];
+const headerText = (value: unknown) =>
+  String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+
+/** B1 pode ser texto ou uma data nativa devolvida pela API como serial. */
+function monthHeaderMatches(value: unknown, month: string): boolean {
+  const target = month.slice(0, 7);
+  if (typeof value === "number") {
+    if (!Number.isInteger(value) || value < 20000 || value > 100000) return false;
+    const iso = new Date(Date.UTC(1899, 11, 30) + value * 86400000).toISOString();
+    return iso.slice(0, 7) === target;
+  }
+  if (typeof value !== "string") return false;
+  const raw = headerText(value);
+  const name = headerText(MONTHS[Number(target.slice(5, 7)) - 1]);
+  const year = target.slice(0, 4);
+  const names = [name, name.slice(0, 3), name.slice(0, 3) + "."];
+  if (
+    names.some((name) => raw === name + " " + year || raw === name + " " + year.slice(2)) ||
+    raw === target ||
+    raw === target.slice(5, 7) + "/" + year
+  )
+    return true;
+  const br = raw.match(/^(\d{2})\/(\d{2})\/(\d{4}|\d{2})$/);
+  const iso = br
+    ? (br[3]!.length === 2 ? "20" + br[3] : br[3]) + "-" + br[2] + "-" + br[1]
+    : /^\d{4}-\d{2}-\d{2}$/.test(raw)
+      ? raw
+      : "";
+  const millis = Date.parse(iso + "T12:00:00Z");
+  return (
+    !!iso &&
+    Number.isFinite(millis) &&
+    new Date(millis).toISOString().slice(0, 10) === iso &&
+    iso.slice(0, 7) === target
+  );
+}
 export const CONTROL_NOVEMBER_TAB = "Controle NOVEMBRO 26 - ORIGINAL";
 export const CONTROL_EXPECTED_MASTER_ID = "1fRg2brUmUBFV0EX7jNDZebEJ7AssI87AYC3gS1AgJ64";
 export const usesControlMaster = (city: string, sector: string) =>
@@ -80,19 +121,15 @@ export function parseControlMonthTab(
     rows.slice(expected.length).some((row) => row.some((v) => v !== "" && v != null))
   )
     throw Error("Quantidade de colaboradores alterada na aba de Controle.");
-  if (rows[0]?.[0] !== expected[0]![0] || rows[0]?.[1] !== expected[0]![1])
-    throw Error("Cabeçalho do mês alterado. Restaure A1:B1.");
+  if (headerText(rows[0]?.[0]) !== headerText(expected[0]![0]))
+    throw Error("Cabeçalho A1 inválido. Restaure o texto Mês-ano:.");
+  if (!monthHeaderMatches(rows[0]?.[1], month))
+    throw Error("Cabeçalho do mês alterado. B1 deve indicar " + expected[0]![1] + ".");
   for (let j = 0; j < planned.dates.length; j++) {
     const day = planned.dates[j]!;
     if (rows[0]?.[j + 2] !== expected[0]![j + 2] || rows[1]?.[j + 2] !== expected[1]![j + 2])
       throw Error("Cabeçalho da data " + displayDateHeader(day) + " alterado.");
   }
-  const headerText = (value: unknown) =>
-    String(value ?? "")
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .trim()
-      .toUpperCase();
   if (headerText(rows[1]?.[0]) !== "NOME")
     throw Error(
       "Cabeçalho A2 inválido. Restaure o texto Nome; edite os dias nas linhas dos colaboradores.",
@@ -101,13 +138,31 @@ export function parseControlMonthTab(
     throw Error(
       "Cabeçalho B2 inválido. Restaure o texto Função; edite os dias nas linhas dos colaboradores.",
     );
+  // A ordem visual pode mudar no Sheets. Vincula a linha inteira pelo nome
+  // exato, preservando a identidade e a ordem do planejamento no payload/auditoria.
+  const expectedNames = new Set(planned.people.map((person) => person.name));
+  if (expectedNames.size !== planned.people.length || expectedNames.has(""))
+    throw Error("Identificação duplicada ou ausente no planejamento de Controle.");
+  const byName = new Map<string, unknown[]>();
+  for (let index = 0; index < planned.people.length; index++) {
+    const row = rows[index + 2] ?? [];
+    const name = row[0];
+    if (typeof name !== "string" || !expectedNames.has(name))
+      throw Error(
+        "Identificação alterada na linha " +
+          (index + 3) +
+          ": colaborador desconhecido ou sem nome. Restaure o nome cadastrado.",
+      );
+    if (byName.has(name))
+      throw Error("Identificação duplicada na linha " + (index + 3) + ": " + name);
+    byName.set(name, row);
+  }
   // Reconstitui a entrada do parser consolidado: LOGIN continua interno,
   // não é gravado nem precisa ser editado no Google Sheets.
   const oldHeader = ["COLABORADOR", "LOGIN", "FUNÇÃO", ...planned.dates];
-  const legacyRows = planned.people.map((person, index) => {
-    const row = rows[index + 2] ?? [];
-    if (row[0] !== person.name)
-      throw Error("Identificação alterada na linha " + (index + 3) + ": " + person.name);
+  const legacyRows = planned.people.map((person) => {
+    const row = byName.get(person.name);
+    if (!row) throw Error("Colaborador ausente da aba de Controle: " + person.name);
     return [person.name, person.login || "", row[1], ...planned.dates.map((_, i) => row[i + 2])];
   });
   const result = parseUpdatedSheet([oldHeader, ...legacyRows], planned, previous, true);

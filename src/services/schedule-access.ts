@@ -42,6 +42,10 @@ async function invoke(body: Record<string, unknown>): Promise<Reply> {
   if (error) {
     const context = (error as { context?: unknown }).context;
     if (context instanceof Response) {
+      if (context.status === 404)
+        throw Error(
+          "O serviço de autorizações está indisponível. Avise o administrador do sistema.",
+        );
       const response = (await context
         .clone()
         .json()

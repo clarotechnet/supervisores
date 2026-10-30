@@ -1,4 +1,9 @@
 import { mock } from "./supabase-mock.ts";
+import {
+  controlMonthValues,
+  CONTROL_EXPECTED_MASTER_ID,
+} from "../../supabase/functions/_shared/schedule-operational-master.ts";
+import type { Payload } from "../../supabase/functions/_shared/schedule-operational.ts";
 type Handler = (request: Request) => Promise<Response>;
 let handler: Handler;
 const serve = Deno.serve;
@@ -24,6 +29,9 @@ async function run(
     auditError?: boolean;
     cacheError?: boolean;
     code?: string;
+    officialControl?: boolean;
+    auditReady?: boolean;
+    badControlName?: boolean;
   } = {},
 ) {
   mock.role = options.role || "supervisor";
@@ -33,14 +41,36 @@ async function run(
   mock.auditError = options.auditError ? { message: "missing migration" } : null;
   mock.mutationCalls = [];
   mock.rpcCalls = [];
-  const sector = options.sector || "vt",
+  mock.rowsByTable = {};
+  mock.metadataAuditReady = options.auditReady ?? true;
+  const control = options.officialControl === true;
+  const sector = control ? "controle-operacional" : options.sector || "vt",
     name = "FIXTURE USER",
     date = "2026-12-01";
-  const rows: unknown[][] = [
-    ["Mês-ano:", "2026-12-01", "", "2026-12-01"],
-    ["Login", "Nome", "Função", "1"],
-    ["ZFIXTURE", name, "TÉCNICO", "M. 1"],
-  ];
+  const baseCode = control ? "T. 1" : "M. 1";
+  const tab = control ? "Controle DEZEMBRO 26 - 5X2" : "VT 2026-12";
+  const target = control ? "'Controle DEZEMBRO 26 - 5X2'!C4" : "'VT 2026-12'!D3";
+  const controlPayload: Payload = {
+    dates: [date],
+    codes: [baseCode],
+    people: [
+      { name, jobTitle: "CONTROLADOR (ADESÃO APOIO)-FTZ-MSRO", assignments: { [date]: baseCode } },
+      { name: "OTHER CONTROL USER", jobTitle: "ANALISTA", assignments: { [date]: baseCode } },
+    ],
+  };
+  const rows: unknown[][] = control
+    ? controlMonthValues(controlPayload, date)
+    : [
+        ["Mês-ano:", "2026-12-01", "", "2026-12-01"],
+        ["Login", "Nome", "Função", "1"],
+        ["ZFIXTURE", name, "TÉCNICO", "M. 1"],
+      ];
+  if (control) {
+    rows[0]![1] = 46357;
+    rows[2]![1] = "CONTROLADOR (ADESÃO) - FTZ - APOIO";
+    [rows[2], rows[3]] = [rows[3]!, rows[2]!];
+    if (options.badControlName) rows[3]![0] = "UNKNOWN CONTROL USER";
+  }
   mock.sheet = {
     id,
     city: "natal",
@@ -54,6 +84,24 @@ async function run(
       people: [{ name, login: "ZFIXTURE", jobTitle: "TÉCNICO", assignments: { [date]: "M. 1" } }],
     },
   };
+  if (control) {
+    mock.sheet["source_file"] = "Google Sheets - Escala operacional oficial";
+    mock.sheet["source_sheet"] = tab;
+    mock.sheet["payload"] = controlPayload;
+    mock.rowsByTable["schedule_generation_drafts"] = { id: "approved-draft" };
+    mock.rowsByTable["schedule_operational_sheets"] = {
+      id: "operational-fixture",
+      draft_id: "approved-draft",
+      city: "natal",
+      sector,
+      schedule_month: date,
+      spreadsheet_id: CONTROL_EXPECTED_MASTER_ID,
+      sheet_tab: tab,
+      planned_payload: controlPayload,
+      current_payload: controlPayload,
+      updated_at: "2026-10-29T12:00:00Z",
+    };
+  }
   const calls: Array<{ url: string; method: string; body?: unknown }> = [];
   const fetch = globalThis.fetch,
     names = [
@@ -82,15 +130,15 @@ async function run(
     if (address.includes("values:batchUpdate")) {
       const body = JSON.parse(String(init?.body));
       assert(body.valueInputOption === "RAW", "unsafe value mode");
-      assert(body.data.length === 1 && body.data[0].range === "'VT 2026-12'!D3", "wrong target");
-      rows[2]![3] = body.data[0].values[0][0];
+      assert(body.data.length === 1 && body.data[0].range === target, "wrong target");
+      rows[control ? 3 : 2]![control ? 2 : 3] = body.data[0].values[0][0];
       if (options.cacheError) mock.queryError = { code: "fixture", message: "cache failed" };
       return Response.json({ totalUpdatedCells: 1 });
     }
     if (address.includes("valueRenderOption=FORMULA"))
-      return Response.json({ values: [[options.formula ? "=TEST()" : "M. 1"]] });
-    if (address.includes("!D3") || decodeURIComponent(address).includes("!D3"))
-      return Response.json({ values: [[rows[2]![3]]] });
+      return Response.json({ values: [[options.formula ? "=TEST()" : baseCode]] });
+    if (decodeURIComponent(address).includes(control ? "!C4" : "!D3"))
+      return Response.json({ values: [[rows[control ? 3 : 2]![control ? 2 : 3]]] });
     if (address.includes("/values/")) return Response.json({ values: rows });
     return Response.json({
       properties: { title: "TEST" },
@@ -106,7 +154,7 @@ async function run(
           scheduleId: id,
           name,
           date,
-          expectedCode: options.expected ?? "M. 1",
+          expectedCode: options.expected ?? baseCode,
           code: options.code ?? "AT",
         }),
       }),
@@ -174,4 +222,75 @@ Deno.test("controlador não edita outras frentes", async () => {
 Deno.test("código inválido falha antes de consultar Google", async () => {
   const r = await run({ code: "<script>" });
   assert(r.response.status === 400 && r.calls.length === 0, "invalid code accepted");
+});
+
+Deno.test(
+  "admin edita a célula correta no Controle reordenado e sincroniza funções com auditoria",
+  async () => {
+    const { response, body, calls } = await run({ officialControl: true, role: "admin" });
+    assert(response.status === 200 && body.sheetWritten === true, "Control edit failed");
+    const writes = calls.filter((c) => c.url.includes("values:batchUpdate"));
+    assert(writes.length === 1, "unexpected Google writes");
+    assert(
+      calls
+        .filter((c) => !c.url.includes("oauth2"))
+        .every((c) => c.url.includes(CONTROL_EXPECTED_MASTER_ID)),
+      "read a different workbook",
+    );
+    assert(
+      mock.rpcCalls.map((c) => c.name).join(",") ===
+        "schedule_operational_metadata_audit_ready,schedule_operational_apply_sync",
+      "audit not checked",
+    );
+    const next = mock.rpcCalls[1]!.args["p_payload"] as Payload;
+    assert(
+      next.people[0]!.name === "FIXTURE USER" &&
+        next.people[0]!.jobTitle === "CONTROLADOR (ADESÃO) - FTZ - APOIO" &&
+        next.people[0]!.assignments["2026-12-01"] === "AT",
+      "edited person lost metadata/code",
+    );
+    assert(next.people[1]!.assignments["2026-12-01"] === "T. 1", "edited another person's cell");
+    const baseline = mock.rowsByTable["schedule_operational_sheets"]!["planned_payload"] as Payload;
+    assert(
+      baseline.people[0]!.jobTitle === "CONTROLADOR (ADESÃO APOIO)-FTZ-MSRO",
+      "plan overwritten",
+    );
+  },
+);
+Deno.test(
+  "Controle com função alterada e sem auditoria bloqueia edição antes de gravar",
+  async () => {
+    const { response, calls } = await run({
+      officialControl: true,
+      role: "admin",
+      auditReady: false,
+    });
+    assert(response.status === 409, "missing metadata audit accepted");
+    assert(
+      !calls.some((c) => c.url.includes("values:batchUpdate")),
+      "Google changed without audit",
+    );
+    assert(mock.mutationCalls.length === 0, "edit prepared before metadata validation");
+    assert(
+      mock.rpcCalls.length === 1 &&
+        mock.rpcCalls[0]!.name === "schedule_operational_metadata_audit_ready",
+      "unprotected sync attempted",
+    );
+  },
+);
+Deno.test("Controle com pessoa desconhecida bloqueia edição antes de gravar", async () => {
+  const { response, calls } = await run({
+    officialControl: true,
+    role: "admin",
+    badControlName: true,
+  });
+  assert(response.status === 409, "unknown person accepted");
+  assert(
+    !calls.some((c) => c.url.includes("values:batchUpdate")),
+    "invalid structure changed Google",
+  );
+  assert(
+    mock.mutationCalls.length === 0 && mock.rpcCalls.length === 0,
+    "invalid structure reached mutations",
+  );
 });

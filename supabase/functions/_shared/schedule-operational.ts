@@ -101,7 +101,7 @@ export function parseUpdatedSheet(
   rows: unknown[][],
   planned: Payload,
   previous: Payload,
-  functionAliases = false,
+  editableFunctions = false,
 ): { payload: Payload; changes: OperationalChange[] } {
   if (rows.length !== planned.people.length + 1)
     throw Error("Linhas de colaboradores alteradas no Sheets.");
@@ -119,19 +119,21 @@ export function parseUpdatedSheet(
   const people = planned.people.map((p, i) => {
     const row = rows[i + 1] || [];
     const actualFunction = typeof row[2] === "string" ? row[2].trim() : "";
-    const compatibleFunction =
-      functionAliases &&
-      typeof row[2] === "string" &&
-      normal(actualFunction)
-        .replace(/\s+/g, " ")
-        .replace(/\bFTA\b/g, "FTZ") ===
-        normal(p.jobTitle)
-          .replace(/\s+/g, " ")
-          .replace(/\bFTA\b/g, "FTZ");
+    // Apenas o Controle mensal habilita a edição de Função. A Edge exige
+    // administrador ativo e auditoria transacional antes de sincronizá-la.
+    if (
+      editableFunctions &&
+      (typeof row[2] !== "string" ||
+        !actualFunction ||
+        actualFunction.length > 160 ||
+        /[<>\p{Cc}]/u.test(actualFunction) ||
+        actualFunction.startsWith("="))
+    )
+      throw Error("Função inválida para " + p.name + ". Use texto de 1 a 160 caracteres.");
     if (
       row[0] !== p.name ||
       (row[1] || "") !== (p.login || "") ||
-      ((row[2] || "") !== p.jobTitle && !compatibleFunction)
+      (!editableFunctions && (row[2] || "") !== p.jobTitle)
     )
       throw Error("Identificação alterada: " + p.name + ". Edite só os dias.");
     const previousPerson = previous.people.find((x) => employeeKey(x) === employeeKey(p));
@@ -156,7 +158,7 @@ export function parseUpdatedSheet(
           current_code: value,
         });
     });
-    return { ...p, jobTitle: functionAliases ? actualFunction : p.jobTitle, assignments };
+    return { ...p, jobTitle: editableFunctions ? actualFunction : p.jobTitle, assignments };
   });
   return {
     payload: {

@@ -47,12 +47,14 @@ export async function archiveGenerationDraft(
   draft: GenerationDraft,
   userId: string,
 ): Promise<void> {
-  if (draft.status !== "draft") throw Error("Apenas rascunhos não aprovados podem ser removidos.");
+  if (draft.archived_at) throw Error("Este rascunho já foi removido da lista.");
+  if (!["draft", "rejected"].includes(draft.status))
+    throw Error("Apenas rascunhos não aprovados podem ser removidos.");
   const { data, error } = await supabase
     .from("schedule_generation_drafts")
     .update({ archived_at: new Date().toISOString(), archived_by: userId })
     .eq("id", draft.id)
-    .eq("status", "draft")
+    .eq("status", draft.status)
     .is("archived_at", null)
     .select("id")
     .maybeSingle();
