@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label";
 import {
   latestOperationalSource,
   deleteOperationalSheet,
+  inspectOperationalSheetDeletion,
   type OperationalSheet,
 } from "@/services/schedule-operational";
 import type { ScheduleUpload } from "@/lib/types";
@@ -35,18 +36,32 @@ export function ScheduleMonthDeleteDialog({
     [deleting, setDeleting] = useState(false);
   const [confirmation, setConfirmation] = useState(""),
     [error, setError] = useState("");
-  const expected = "EXCLUIR " + schedule?.schedule_month.slice(0, 7);
+  const [target, setTarget] = useState<Awaited<
+    ReturnType<typeof inspectOperationalSheetDeletion>
+  > | null>(null);
+  const expected = target?.confirmation || "EXCLUIR " + schedule?.schedule_month.slice(0, 7);
   useEffect(() => {
     if (!open || !schedule) return;
     let active = true;
     setLinked(null);
+    setTarget(null);
     setError("");
     setConfirmation("");
     setLoading(true);
-    void latestOperationalSource(schedule.city, schedule.sector, schedule.schedule_month)
-      .then((sheet) => {
+    void latestOperationalSource(schedule.city, schedule.sector, schedule.schedule_month, {
+      allowDeletionPending: true,
+    })
+      .then(async (sheet) => {
         if (!sheet) throw Error("A aba oficial vinculada não foi encontrada.");
-        if (active) setLinked(sheet);
+        const inspected = await inspectOperationalSheetDeletion(sheet.id);
+        if (!inspected.confirmation || inspected.gridId == null)
+          throw Error(
+            "O servidor não confirmou a aba. Atualize a função schedule-operational antes de excluir.",
+          );
+        if (active) {
+          setLinked(sheet);
+          setTarget(inspected);
+        }
       })
       .catch((e) => {
         if (active)
@@ -60,11 +75,11 @@ export function ScheduleMonthDeleteDialog({
     };
   }, [open, schedule]);
   async function remove() {
-    if (!linked || !schedule || confirmation !== expected || deleting) return;
+    if (!linked || !target || !schedule || confirmation !== expected || deleting) return;
     setDeleting(true);
     setError("");
     try {
-      const result = await deleteOperationalSheet(linked.id, schedule.id, confirmation);
+      const result = await deleteOperationalSheet(linked.id, schedule.id, confirmation, target);
       if (!result.deleted) throw Error("O servidor não confirmou a exclusão.");
       toast.success("Escala e aba mensal excluídas. O histórico foi preservado.");
       onOpenChange(false);
@@ -108,10 +123,18 @@ export function ScheduleMonthDeleteDialog({
             <>
               <div className="rounded-lg border p-3 text-sm">
                 <b>{linked.sheet_tab}</b>
+                <p className="text-xs text-muted-foreground">
+                  Identificador da aba: {target?.gridId}
+                </p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {linked.city} · {linked.sector} · {linked.schedule_month.slice(0, 7)}
                 </p>
               </div>
+              {target?.warning && (
+                <p role="status" className="rounded-lg border p-3 text-sm">
+                  {target.warning}
+                </p>
+              )}
               <p className="text-sm">
                 A aba será apagada no Google Sheets. Para refazer a competência, sincronize o mês
                 anterior e gere uma nova versão.

@@ -1,5 +1,9 @@
 import { analyzeSchedule, type AnalysisRule } from "../_shared/schedule-ai-analysis.ts";
-import { deleteOperationalMonth, ScheduleDeletionError } from "../_shared/schedule-month-delete.ts";
+import {
+  deleteOperationalMonth,
+  inspectOperationalMonth,
+  ScheduleDeletionError,
+} from "../_shared/schedule-month-delete.ts";
 import {
   sourceSpreadsheet,
   officialMonthTitle,
@@ -28,6 +32,7 @@ import {
   controlMonthTabName,
   controlMonthValues,
   parseControlMonthTab,
+  readControlMonthSource,
   controlMonthFormatting,
 } from "../_shared/schedule-operational-master.ts";
 
@@ -133,6 +138,8 @@ Deno.serve(async (req) => {
     sheetId?: string;
     scheduleId?: string;
     confirmation?: string;
+    confirmedGridId?: number;
+    expectedUpdatedAt?: string;
   };
   try {
     params = await req.json();
@@ -141,16 +148,23 @@ Deno.serve(async (req) => {
   }
   if (!params || typeof params !== "object") return json(400, { error: "Requisição inválida." });
   const action = params.action;
-  if (action !== "create" && action !== "sync" && action !== "publish" && action !== "delete")
+  if (!["create", "sync", "publish", "delete", "inspect_delete", "read"].includes(action || ""))
     return json(400, { error: "Ação desconhecida." });
-  if ((action === "publish" || action === "delete") && profile.role !== "admin")
+  if (
+    (action === "publish" || action === "delete" || action === "inspect_delete") &&
+    profile.role !== "admin"
+  )
     return json(403, {
       error: "Apenas administrador pode aprovar/publicar ou excluir uma escala oficial.",
     });
   if (action === "create" && !validUuid(params.draftId))
     return json(400, { error: "Rascunho inválido." });
   if (
-    (action === "sync" || action === "publish" || action === "delete") &&
+    (action === "sync" ||
+      action === "publish" ||
+      action === "delete" ||
+      action === "inspect_delete" ||
+      action === "read") &&
     !validUuid(params.sheetId)
   )
     return json(400, { error: "Planilha operacional inválida." });
@@ -161,7 +175,7 @@ Deno.serve(async (req) => {
     action === "delete" &&
     (!validUuid(params.scheduleId) ||
       typeof params.confirmation !== "string" ||
-      params.confirmation.length > 30)
+      params.confirmation.length > 60)
   )
     return json(400, { error: "Escala ou confirmação de exclusão inválida." });
 
@@ -467,9 +481,9 @@ Deno.serve(async (req) => {
     requireScheduleManagement(profile.role, sheet.sector);
 
     const controlMaster = usesControlMaster(sheet.city, sheet.sector);
-    if (action === "delete") {
+    if (action === "delete" || action === "inspect_delete") {
       const token = await googleToken();
-      const deleted = await deleteOperationalMonth({
+      const deletionInput = {
         sheet,
         actorId: user.id,
         scheduleId: params.scheduleId,
@@ -480,9 +494,23 @@ Deno.serve(async (req) => {
         expectedTab: controlMaster
           ? controlMonthTabName(sheet.schedule_month)
           : officialMonthTitle(sheet.sector, sheet.schedule_month),
-        rpc: async (name, args) => await admin.rpc(name, args),
-        google: (url, method, body) => googleJson(url, token, method, body),
-      });
+        rpc: async (name: string, args: Record<string, unknown>) => await admin.rpc(name, args),
+        google: (url: string, method?: string, body?: unknown) =>
+          googleJson(url, token, method, body),
+        confirmedGridId: params.confirmedGridId,
+        expectedUpdatedAt: params.expectedUpdatedAt,
+        validateSnapshot: (values: unknown[][]) => {
+          (controlMaster ? readControlMonthSource : parseOfficialMonthTab)(
+            values,
+            sheet.planned_payload as Payload,
+            sheet.current_payload as Payload,
+            sheet.schedule_month,
+          );
+        },
+      };
+      if (action === "inspect_delete")
+        return json(200, { ok: true, ...(await inspectOperationalMonth(deletionInput)) });
+      const deleted = await deleteOperationalMonth(deletionInput);
       return json(200, { ok: true, ...deleted, sheetId: sheet.id });
     }
     if (sheet.deleted_at || sheet.deletion_requested_at)
@@ -550,7 +578,7 @@ Deno.serve(async (req) => {
               sheet.schedule_month,
             )
           : sharedTab
-            ? parseControlMonthTab(
+            ? (action === "read" ? readControlMonthSource : parseControlMonthTab)(
                 arrays(response.values),
                 publicationBaseline,
                 sheet.current_payload as Payload,
@@ -567,6 +595,15 @@ Deno.serve(async (req) => {
         error: error instanceof Error ? error.message : "Confira o cabeçalho e a estrutura da aba.",
       });
     }
+    if (action === "read")
+      return json(200, {
+        ok: true,
+        sheetId: sheet.id,
+        payload: result.payload,
+        sourceUpdatedAt: sheet.updated_at,
+        readAt: new Date().toISOString(),
+        writeActions: 0,
+      });
     if (publicationDraft) {
       const policy = (publicationDraft.policy_snapshot || {}) as { rule?: AnalysisRule };
       const month = sheet.schedule_month.slice(0, 7);
@@ -606,7 +643,18 @@ Deno.serve(async (req) => {
       "functionChanges" in result && Array.isArray(result.functionChanges)
         ? result.functionChanges.length
         : 0;
-    const changeCount = result.changes.length + functionChangeCount;
+    const addedPeopleCount =
+      "addedPeople" in result && Array.isArray(result.addedPeople) ? result.addedPeople.length : 0;
+    const changeCount = result.changes.length + functionChangeCount + addedPeopleCount;
+    if (addedPeopleCount) {
+      const ready = await admin.rpc("schedule_operational_roster_sync_ready");
+      if (ready.error || ready.data !== true)
+        return json(409, {
+          code: "ROSTER_SYNC_MIGRATION_REQUIRED",
+          error:
+            "Há novos colaboradores no Sheets. Aplique a migration 20261030191159_schedule_control_roster_sync.sql antes de importar as inclusões com auditoria. Nenhum dado foi alterado.",
+        });
+    }
     if (functionChangeCount) {
       const ready = await admin.rpc("schedule_operational_metadata_audit_ready");
       if (ready.error || ready.data !== true)
@@ -649,6 +697,7 @@ Deno.serve(async (req) => {
         changes: changeCount,
         cellChanges: result.changes.length,
         functionChanges: functionChangeCount,
+        addedPeople: addedPeopleCount,
         syncedAt: new Date().toISOString(),
         published: true,
       });
@@ -668,13 +717,15 @@ Deno.serve(async (req) => {
       changes: changeCount,
       cellChanges: result.changes.length,
       functionChanges: functionChangeCount,
+      addedPeople: addedPeopleCount,
       sheetId: sheet.id,
       syncedAt: new Date().toISOString(),
       auditLogged: changeCount > 0,
     });
   } catch (error) {
     if (error instanceof ScheduleScopeForbidden) return json(403, { error: error.message });
-    if (error instanceof ScheduleDeletionError) return json(error.status, { error: error.message });
+    if (error instanceof ScheduleDeletionError)
+      return json(error.status, { error: error.message, code: error.code });
     const message = error instanceof Error ? error.message : "Falha ao processar planilha.";
     return json(502, { error: message.slice(0, 1200) });
   }

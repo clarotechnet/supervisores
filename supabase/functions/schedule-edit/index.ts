@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.111.0";
+import { isSnapshotInheritedDate } from "../_shared/schedule-inherited.ts";
 import {
   requireScheduleManagement,
   ScheduleScopeForbidden,
@@ -101,7 +102,7 @@ Deno.serve(async (request) => {
     if (official) {
       const { data: draft, error: draftError } = await admin
         .from("schedule_generation_drafts")
-        .select("id")
+        .select("id,policy_snapshot")
         .eq("city", schedule.city)
         .eq("sector", schedule.sector)
         .eq("schedule_month", schedule.schedule_month)
@@ -110,6 +111,13 @@ Deno.serve(async (request) => {
         .contains("policy_snapshot", { published: true, officialScheduleId: schedule.id })
         .maybeSingle();
       if (draftError || !draft) throw Error("Versão oficial vinculada não encontrada.");
+      if (isSnapshotInheritedDate(draft.policy_snapshot, person.name, input.date))
+        return json(409, {
+          error:
+            "Este dia foi herdado da escala anterior. Corrija na origem e gere novamente; a marcação não pode ser alterada nesta competência.",
+          sheetWritten: false,
+          writeAttempted: false,
+        });
       const { data: sheet, error: sheetError } = await admin
         .from("schedule_operational_sheets")
         .select("*")
@@ -138,6 +146,13 @@ Deno.serve(async (request) => {
           sheet.current_payload as Payload,
           schedule.schedule_month,
         );
+        if (validation.addedPeople.length)
+          return json(409, {
+            error:
+              "Há novos colaboradores no Sheets. Atualize via API antes de editar uma marcação.",
+            sheetWritten: false,
+            writeAttempted: false,
+          });
         if (validation.functionChanges.length) {
           const ready = await admin.rpc("schedule_operational_metadata_audit_ready");
           if (ready.error || ready.data !== true)

@@ -14,6 +14,7 @@ export const mock = {
   queryCalls: [] as Array<{ table: string; filters: Record<string, unknown>; range?: number[] }>,
   rpcError: null as null | { code: string; message: string },
   metadataAuditReady: false,
+  rosterSyncReady: false,
   queryError: null as null | { code: string; message: string },
 };
 const userId = "00000000-0000-0000-0000-000000000001";
@@ -83,7 +84,9 @@ export function createClient(..._args: unknown[]): any {
             ? "official-id"
             : name === "schedule_operational_metadata_audit_ready"
               ? mock.metadataAuditReady
-              : null,
+              : name === "schedule_operational_roster_sync_ready"
+                ? mock.rosterSyncReady
+                : null,
         error: mock.rpcError,
       });
     },

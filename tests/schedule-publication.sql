@@ -150,7 +150,7 @@ begin
    'duty_date',day,'planned_code','T. 1',
    'previous_code',item.current_payload->'people'->0->'assignments'->>day,'current_code',status));
   perform schedule_operational_apply_sync(item.id,item.updated_at,
-    '00000000-0000-0000-0000-000000000002',payload,changes);
+    '00000000-0000-0000-0000-000000000001',payload,changes);
   perform pg_temp.assert((select u.payload->'people'->0->'assignments'->>day=status
     from schedule_uploads u),'official receives '||status);
  end loop;
@@ -159,12 +159,12 @@ select pg_temp.assert((select count(*)=6 from schedule_operational_changes),'all
 select pg_temp.assert((select changes->'published_payload'->'people'->0->'assignments'->>'2026-12-02'='T. 1'
  from schedule_generation_events),'later sync preserves publication snapshot');
 select schedule_operational_apply_sync(id,updated_at,
- '00000000-0000-0000-0000-000000000002',current_payload,'[]') from schedule_operational_sheets;
+ '00000000-0000-0000-0000-000000000001',current_payload,'[]') from schedule_operational_sheets;
 select pg_temp.assert((select count(*)=6 from schedule_operational_changes),'no-op sync does not duplicate history');
 update schedule_uploads set source_sheet='BROKEN LINK';
 select pg_temp.expect_error($$
  select schedule_operational_apply_sync(id,updated_at,
- '00000000-0000-0000-0000-000000000002',current_payload,'[]') from schedule_operational_sheets
+ '00000000-0000-0000-0000-000000000001',current_payload,'[]') from schedule_operational_sheets
 $$,'oficial vinculada');
 select pg_temp.assert((select count(*)=6 from schedule_operational_changes),'failed sync rolls back audit');
 insert into schedule_generation_drafts(id,city,sector,schedule_month,revision,payload,created_by)

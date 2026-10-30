@@ -6,7 +6,9 @@
 import {
   displayDateHeader,
   parseUpdatedSheet,
+  employeeKey,
   type Payload,
+  type Person,
   type OperationalChange,
 } from "./schedule-operational.ts";
 
@@ -25,6 +27,18 @@ const MONTHS = [
   "DEZEMBRO",
 ];
 const DOW = ["DOM", "SEG", "TER", "QUA", "QUI", "SEX", "SAB"];
+const CONTROL_CODES = [
+  "T. 1",
+  "M. 1",
+  "M. 2",
+  "Folga",
+  "PLANTÃO",
+  "AT",
+  "FALTA",
+  "Férias",
+  "BH",
+  "Afastamento",
+];
 const headerText = (value: unknown) =>
   String(value ?? "")
     .normalize("NFD")
@@ -32,6 +46,27 @@ const headerText = (value: unknown) =>
     .replace(/\s+/g, " ")
     .trim()
     .toUpperCase();
+const emptyCell = (value: unknown) => value == null || value === "";
+const summaryNumber = (value: unknown) =>
+  emptyCell(value) ||
+  (typeof value === "number" && Number.isFinite(value)) ||
+  (typeof value === "string" && /^\d+(?:[.,]\d+)?$/.test(value.trim()));
+
+/** Totais e critérios de CONT.SE não são colaboradores. Só aceita abaixo da
+ * lista: contagens sem Nome/Função ou uma legenda isolada de código conhecido.
+ * Demais linhas precisam passar pela validação de Nome/Função como pessoas.
+ */
+function controlSummaryRow(row: unknown[], planned: Payload, legends: Set<string>): boolean {
+  if (!emptyCell(row[1])) return false;
+  const days = row.slice(2, planned.dates.length + 2);
+  if (emptyCell(row[0])) return days.every(summaryNumber);
+  return (
+    typeof row[0] === "string" &&
+    legends.has(headerText(row[0])) &&
+    !planned.people.some((person) => person.name === row[0]) &&
+    days.every(emptyCell)
+  );
+}
 
 /** B1 pode ser texto ou uma data nativa devolvida pela API como serial. */
 function monthHeaderMatches(value: unknown, month: string): boolean {
@@ -109,6 +144,7 @@ export function parseControlMonthTab(
 ): {
   payload: Payload;
   changes: OperationalChange[];
+  addedPeople: Person[];
   functionChanges: Array<{
     employee_name: string;
     previous_function: string;
@@ -116,10 +152,7 @@ export function parseControlMonthTab(
   }>;
 } {
   const expected = controlMonthValues(planned, month);
-  if (
-    rows.length < expected.length ||
-    rows.slice(expected.length).some((row) => row.some((v) => v !== "" && v != null))
-  )
+  if (rows.length < expected.length)
     throw Error("Quantidade de colaboradores alterada na aba de Controle.");
   if (headerText(rows[0]?.[0]) !== headerText(expected[0]![0]))
     throw Error("Cabeçalho A1 inválido. Restaure o texto Mês-ano:.");
@@ -143,29 +176,81 @@ export function parseControlMonthTab(
   const expectedNames = new Set(planned.people.map((person) => person.name));
   if (expectedNames.size !== planned.people.length || expectedNames.has(""))
     throw Error("Identificação duplicada ou ausente no planejamento de Controle.");
+  const legends = new Set([...CONTROL_CODES, ...planned.codes].map(headerText));
+  // O planejamento original é imutável. Pessoas adicionadas numa sincronização
+  // anterior continuam obrigatórias no snapshot atual, sem duplicar inclusões.
+  const people = [...planned.people];
+  for (const person of previous.people)
+    if (!expectedNames.has(person.name)) {
+      people.push(person);
+      expectedNames.add(person.name);
+    }
+  const requiredPeople = [...people];
+  const addedPeople: Person[] = [];
   const byName = new Map<string, unknown[]>();
-  for (let index = 0; index < planned.people.length; index++) {
-    const row = rows[index + 2] ?? [];
+  const keys = new Set<string>();
+  let firstNewLine: number | undefined;
+  for (let index = 2; index < rows.length; index++) {
+    const row = rows[index] ?? [];
+    if (controlSummaryRow(row, { ...planned, people: requiredPeople }, legends)) continue;
     const name = row[0];
-    if (typeof name !== "string" || !expectedNames.has(name))
+    if (
+      typeof name !== "string" ||
+      !name.trim() ||
+      name !== name.trim() ||
+      name.length > 160 ||
+      /[<>\p{Cc}]/u.test(name) ||
+      name.startsWith("=") ||
+      legends.has(headerText(name))
+    )
       throw Error(
         "Identificação alterada na linha " +
-          (index + 3) +
-          ": colaborador desconhecido ou sem nome. Restaure o nome cadastrado.",
+          (index + 1) +
+          ": use Nome e Função para colaboradores; totais e legendas isoladas não são pessoas.",
       );
-    if (byName.has(name))
-      throw Error("Identificação duplicada na linha " + (index + 3) + ": " + name);
+    const key = employeeKey({ name });
+    if (keys.has(key))
+      throw Error(
+        "Quantidade de colaboradores inválida. Identificação duplicada na linha " +
+          (index + 1) +
+          ": " +
+          name,
+      );
+    keys.add(key);
+    if (!expectedNames.has(name)) {
+      firstNewLine ??= index + 1;
+      if (typeof row[1] !== "string" || !row[1].trim())
+        throw Error("Novo colaborador na linha " + (index + 1) + " precisa de Nome e Função.");
+      const person = { name, login: "", jobTitle: row[1].trim(), assignments: {} };
+      people.push(person);
+      addedPeople.push(person);
+      if (people.length > 500) throw Error("Quantidade de colaboradores excede o limite de 500.");
+    }
     byName.set(name, row);
   }
+  for (const person of requiredPeople)
+    if (!byName.has(person.name))
+      throw Error(
+        "Identificação alterada na linha " +
+          (firstNewLine ?? rows.length) +
+          ": colaborador ausente ou renomeado: " +
+          person.name +
+          ". A atualização não remove pessoas já cadastradas.",
+      );
   // Reconstitui a entrada do parser consolidado: LOGIN continua interno,
   // não é gravado nem precisa ser editado no Google Sheets.
   const oldHeader = ["COLABORADOR", "LOGIN", "FUNÇÃO", ...planned.dates];
-  const legacyRows = planned.people.map((person) => {
+  const legacyRows = people.map((person) => {
     const row = byName.get(person.name);
     if (!row) throw Error("Colaborador ausente da aba de Controle: " + person.name);
     return [person.name, person.login || "", row[1], ...planned.dates.map((_, i) => row[i + 2])];
   });
-  const result = parseUpdatedSheet([oldHeader, ...legacyRows], planned, previous, true);
+  const result = parseUpdatedSheet(
+    [oldHeader, ...legacyRows],
+    { ...planned, people },
+    { ...previous, people: [...previous.people, ...addedPeople] },
+    true,
+  );
   const functionChanges = result.payload.people.flatMap((person) => {
     const before = previous.people.find((p) => p.name === person.name);
     return before && before.jobTitle !== person.jobTitle
@@ -178,7 +263,55 @@ export function parseControlMonthTab(
         ]
       : [];
   });
-  return { ...result, functionChanges };
+  return {
+    ...result,
+    functionChanges,
+    addedPeople: result.payload.people.filter((person) =>
+      addedPeople.some((added) => added.name === person.name),
+    ),
+  };
+}
+/** Read-only source: include columns appended to the prior month's extension.
+ * Existing headers remain strict; only contiguous real dates, bounded to 42 days.
+ * Named auxiliary columns after the dates are never imported as schedule days.
+ * This does not change planning or publish/synchronize anything.
+ */
+export function readControlMonthSource(
+  rows: unknown[][],
+  planned: Payload,
+  previous: Payload,
+  month: string,
+) {
+  const dates = [...planned.dates];
+  const width = Math.max(rows[0]?.length || 0, rows[1]?.length || 0);
+  for (let column = dates.length + 2; column < width; column++) {
+    if (rows.every((r) => r[column] == null || r[column] === "")) continue;
+    const headings = [rows[0]?.[column], rows[1]?.[column]];
+    const namedSummary = headings.some((value) => typeof value === "string" && !!value.trim());
+    const dateHeading = headings.some(
+      (value) =>
+        (!emptyCell(value) && typeof value === "number") ||
+        DOW.includes(headerText(value)) ||
+        /^\d{1,4}[/.-]\d{1,2}(?:[/.-]\d{1,4})?$/.test(headerText(value)),
+    );
+    if (namedSummary && !dateHeading) continue;
+    const last = dates.at(-1);
+    if (!last || dates.length >= 42)
+      throw Error("Extensão da escala anterior inválida; confira as datas da aba.");
+    const next = new Date(Date.parse(last + "T12:00:00Z") + 86400000).toISOString().slice(0, 10);
+    if (
+      column !== dates.length + 2 ||
+      rows[1]?.[column] !== next.slice(8) + "/" + next.slice(5, 7) ||
+      rows[0]?.[column] !== DOW[new Date(next + "T12:00:00Z").getUTCDay()]
+    )
+      throw Error(
+        "Extensão da escala anterior fora de sequência; confira o cabeçalho da coluna " +
+          (column + 1) +
+          ".",
+      );
+    dates.push(next);
+  }
+  return parseControlMonthTab(rows, { ...planned, dates }, previous, month);
 }
 /** Formatação visual somente da nova ABA, nunca do arquivo inteiro. */
 export function controlMonthFormatting(
@@ -238,18 +371,7 @@ export function controlMonthFormatting(
         rule: {
           condition: {
             type: "ONE_OF_LIST",
-            values: [
-              "T. 1",
-              "M. 1",
-              "M. 2",
-              "Folga",
-              "PLANTÃO",
-              "AT",
-              "FALTA",
-              "Férias",
-              "BH",
-              "Afastamento",
-            ].map((userEnteredValue) => ({ userEnteredValue })),
+            values: CONTROL_CODES.map((userEnteredValue) => ({ userEnteredValue })),
           },
           strict: false,
           showCustomUi: true,

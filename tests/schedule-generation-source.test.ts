@@ -3,6 +3,8 @@ const state = vi.hoisted(() => ({
   live: null as unknown,
   error: null as unknown,
   row: null as unknown,
+  freshPayload: null as unknown,
+  readError: null as unknown,
   filters: [] as Array<[string, unknown]>,
   tables: [] as string[],
 }));
@@ -10,6 +12,10 @@ vi.mock("../src/services/schedule-operational", () => ({
   latestOperationalSource: vi.fn(async () => {
     if (state.error) throw state.error;
     return state.live;
+  }),
+  readOperationalSheet: vi.fn(async () => {
+    if (state.readError) throw state.readError;
+    return state.freshPayload;
   }),
 }));
 vi.mock("@/integrations/supabase/client", () => ({
@@ -33,6 +39,8 @@ beforeEach(() => {
   state.live = null;
   state.row = null;
   state.error = null;
+  state.freshPayload = { dates: ["2027-01-04"], people: [{ name: "UPDATED" }], codes: [] };
+  state.readError = null;
   state.filters = [];
   state.tables = [];
 });
@@ -41,7 +49,7 @@ describe("fonte oficial para o gerador", () => {
     state.live = {
       id: "op",
       sheet_tab: "Controle DEZEMBRO 26 - 5X2",
-      current_payload: { dates: ["2026-12-01"], people: [{ name: "UPDATED" }], codes: [] },
+      current_payload: { dates: ["2026-12-01"], people: [{ name: "STALE" }], codes: [] },
       created_by: "admin",
       created_at: "2026-12-01",
       last_synced_at: "2026-12-31",
@@ -88,5 +96,13 @@ describe("fonte oficial para o gerador", () => {
   it("não aceita uma oficial sem vínculo como fallback", async () => {
     state.row = { id: "official", source_file: "Google Sheets - Escala operacional oficial" };
     await expect(loadScheduleGenerationSource("natal", "vt", "2026-12")).rejects.toThrow("vínculo");
+  });
+  it("não usa o snapshot salvo nem uma importação antiga se a leitura do Sheets falhar", async () => {
+    state.live = { id: "op", current_payload: { people: [{ name: "STALE" }] } };
+    state.readError = Error("Sheets unavailable");
+    await expect(
+      loadScheduleGenerationSource("natal", "controle-operacional", "2026-12"),
+    ).rejects.toThrow("Sheets unavailable");
+    expect(state.tables).toEqual([]);
   });
 });

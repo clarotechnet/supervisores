@@ -8,6 +8,7 @@ import {
   type FixedRestEvidence,
 } from "./schedule-history-memory";
 import { scheduleMonthDates } from "./schedule-view";
+import type { InheritedSchedulePerson } from "./schedule-continuity";
 import {
   CONTROL_DECEMBER_REFERENCE_ID,
   controlDecemberReference,
@@ -31,6 +32,7 @@ export interface ScheduleGeneratedPreview {
   referenceSeedId?: string;
   fixedRestPolicy?: "preserve-history" | "initial-distribution";
   fixedRestEvidence?: FixedRestEvidence[];
+  inheritedAssignments?: InheritedSchedulePerson[];
   generationDecision?: {
     mode: "ai" | "rules";
     selectedOption: string;
@@ -425,14 +427,16 @@ export function generateSchedulePreview(
       );
     }
     const inheritedDays = new Set(
-      dates.filter(
-        (date) =>
-          typeof person.assignments[date] === "string" && person.assignments[date]!.trim() !== "",
-      ),
+      calendarWeeks
+        .flat()
+        .filter(
+          (date) =>
+            typeof person.assignments[date] === "string" && person.assignments[date]!.trim() !== "",
+        ),
     );
     const assignments = Object.fromEntries(
       dates.map((date) => {
-        // O modelo importado inclui 01–03/01. Esses dias não podem ser substituídos.
+        // Toda marcação explícita da origem é imutável, inclusive sua extensão.
         if (inheritedDays.has(date)) return [date, person.assignments[date]!];
         if (protectedStatus) return [date, protectedStatus];
         if (weekday(date) === 0 || weekday(date) === fixed || dateIsHoliday(date, rule)) {
@@ -604,6 +608,7 @@ export function generateSchedulePreview(
       calendarDates
         .filter((day) => day < firstDate || day > lastDate)
         .map((day) => {
+          if (person.inheritedDays.has(day)) return [day, person.source.assignments[day]!];
           if (day < firstDate) {
             const historical = person.source.assignments[day] || "Sem informação";
             if (historical === "Sem informação") {
@@ -730,6 +735,13 @@ export function generateSchedulePreview(
   );
   const result: ScheduleGeneratedPreview = {
     rule,
+    inheritedAssignments: people.map((p) => ({
+      name: p.name,
+      ...(p.login !== undefined ? { login: p.login } : {}),
+      assignments: Object.fromEntries(
+        [...p.inheritedDays].map((day) => [day, p.source.assignments[day]!]),
+      ),
+    })),
     fixedRestPolicy: "preserve-history",
     fixedRestEvidence,
     sourceMonth: src,
@@ -745,6 +757,17 @@ export function generateSchedulePreview(
       codes: [...new Set(outPeople.flatMap((p) => Object.values(p.assignments)))].sort(),
     },
   };
+  const inheritedTargetDays = [...new Set(people.flatMap((p) => [...p.inheritedDays]))]
+    .filter((d) => d >= firstDate)
+    .sort();
+  if (inheritedTargetDays.length)
+    result.warnings.push(
+      "Continuidade preservada da aba " +
+        source.source_sheet +
+        ": marcações já preenchidas até " +
+        inheritedTargetDays.at(-1) +
+        " estão bloqueadas. Conflitos nesses dias devem ser conferidos na escala anterior, sem remanejamento automático.",
+    );
   return revalidateSchedulePreview(result);
 }
 

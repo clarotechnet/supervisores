@@ -110,6 +110,51 @@ Deno.test("unsaved preview is analyzed without database or Sheets writes", async
     "saved draft required",
   );
 });
+Deno.test(
+  "saved operational AI analysis respects inherited dates from the approved revision snapshot",
+  async () => {
+    mock.rowsByTable = {
+      schedule_operational_sheets: {
+        id: "fixture",
+        draft_id: "v4",
+        city: "recife",
+        sector: "desconexao",
+        schedule_month: "2027-02-01",
+        planned_payload: payload,
+        current_payload: payload,
+      },
+      schedule_generation_drafts: {
+        policy_snapshot: {
+          rule: { sundayDutyCount: 0 },
+          inheritedAssignments: payload.people.map((p) => ({
+            name: p.name,
+            assignments: { "2027-02-08": "M. 1" },
+          })),
+        },
+      },
+    };
+    try {
+      const result = await run({ sheetId: "10000000-0000-0000-0000-000000000001" });
+      assert(
+        result.response.status === 200 && result.data.source === "operational",
+        "saved analysis failed",
+      );
+      assert(result.data.analysis.issues.length > 0, "fixture lacks pending weekly rest");
+      assert(
+        result.data.analysis.issues.every((i: { restOptions?: Array<{ date: string }> }) =>
+          (i.restOptions || []).every((o) => o.date !== "2027-02-08"),
+        ),
+        "AI offered inherited compensation",
+      );
+      assert(
+        mock.mutationCalls.length === 0 && mock.rpcCalls.length === 0,
+        "analysis mutated data",
+      );
+    } finally {
+      mock.rowsByTable = {};
+    }
+  },
+);
 Deno.test("preview updates are analyzed using current cells rather than saved data", async () => {
   const preview = structuredClone(input());
   for (const person of preview.current.people) person.assignments["2027-02-09"] = "Folga";

@@ -1,5 +1,6 @@
 import {
   deleteOperationalMonth,
+  inspectOperationalMonth,
   ScheduleDeletionError,
   type DeleteSheetLink,
 } from "../../supabase/functions/_shared/schedule-month-delete.ts";
@@ -188,3 +189,99 @@ Deno.test("completed deletion is idempotent", async () => {
     "duplicate finalization",
   );
 });
+Deno.test(
+  "reused monthly tab requires explicit new gid, validates snapshot and preserves the old tab",
+  async () => {
+    const linked = { ...sheet, updated_at: "2026-10-30T12:00:00Z" };
+    let present = true;
+    const writes: unknown[] = [],
+      rpcs: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const google = async (url: string, method = "GET", body?: unknown) => {
+      if (method === "POST") {
+        writes.push(body);
+        present = false;
+        return {};
+      }
+      if (url.includes("/values/"))
+        return {
+          values: [
+            ["Mês-ano:", "JANEIRO 27"],
+            ["Nome", "Função"],
+          ],
+        };
+      return {
+        sheets: [
+          { properties: { sheetId: 99, title: "ARQUIVADA - revisão anterior" } },
+          ...(present ? [{ properties: { sheetId: 100, title: sheet.sheet_tab } }] : []),
+          { properties: { sheetId: 55, title: "Controle DEZEMBRO 26 - 5X2" } },
+        ],
+      };
+    };
+    const base = {
+      sheet: linked,
+      expectedSpreadsheet: "official-book",
+      expectedTab: sheet.sheet_tab,
+      google,
+      actorId: "00000000-0000-0000-0000-000000000001",
+      scheduleId,
+      rpc: async (name: string, args: Record<string, unknown>) => {
+        rpcs.push({ name, args });
+        return {
+          data:
+            name === "schedule_month_relink_begin_delete"
+              ? { id: operationId, status: "pending" }
+              : { deleted: true },
+          error: null,
+        };
+      },
+    };
+    const target = await inspectOperationalMonth(base);
+    assert(
+      target.gridId === 100 &&
+        target.linkChanged &&
+        target.confirmation === "EXCLUIR 2027-01 ABA 100",
+      "unsafe preflight",
+    );
+    assert(writes.length === 0 && rpcs.length === 0, "inspection mutated state");
+    for (const input of [
+      { confirmation: "EXCLUIR 2027-01" },
+      {
+        confirmation: target.confirmation,
+        confirmedGridId: 99,
+        expectedUpdatedAt: linked.updated_at,
+      },
+      { confirmation: target.confirmation, confirmedGridId: 100, expectedUpdatedAt: "stale" },
+    ]) {
+      let rejected = false;
+      try {
+        await deleteOperationalMonth({ ...base, ...input });
+      } catch (e) {
+        rejected = e instanceof ScheduleDeletionError;
+      }
+      assert(
+        rejected && writes.length === 0 && rpcs.length === 0,
+        "changed target accepted without fresh confirmation",
+      );
+    }
+    let validated = false;
+    const result = await deleteOperationalMonth({
+      ...base,
+      confirmation: target.confirmation,
+      confirmedGridId: target.gridId,
+      expectedUpdatedAt: linked.updated_at,
+      validateSnapshot: (rows) => {
+        validated = rows.length === 2;
+      },
+    });
+    assert(result.deleted && validated, "reused tab was not validated/deleted");
+    assert(
+      JSON.stringify(writes) === '[{"requests":[{"deleteSheet":{"sheetId":100}}]}]',
+      "wrong tab deleted",
+    );
+    assert(
+      rpcs[0]?.name === "schedule_month_relink_begin_delete" &&
+        rpcs[0].args.p_previous_grid_id === 99,
+      "link correction was not prepared atomically",
+    );
+  },
+);

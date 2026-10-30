@@ -94,4 +94,39 @@ jsonb_set(s.current_payload,'{people,0,assignments,2027-01-04}','"AT"'),
 '[{"employee_key":"NOME:TEST EMPLOYEE","employee_name":"TEST EMPLOYEE","duty_date":"2027-01-04","planned_code":"T. 1","previous_code":"T. 1","current_code":"AT"}]')
 from schedule_operational_sheets s;
 select pg_temp.assert((select payload->'people'->0->'assignments'->>'2027-01-04'='AT' from schedule_uploads),'API sync still updates re-bound official');
+-- Deletion after reuse and archive: stale gid is repaired ONLY after the new
+-- gid is explicitly confirmed, with a snapshot, and in the same transaction.
+select pg_temp.assert(not has_function_privilege('authenticated',
+ 'schedule_month_relink_begin_delete(uuid,uuid,uuid,integer,text,jsonb,timestamptz,integer)','EXECUTE'),
+ 'browser cannot repair destructive linkage');
+update schedule_operational_sheets set spreadsheet_url=
+ 'https://docs.google.com/spreadsheets/d/'||spreadsheet_id||'/edit#gid=99';
+create function pg_temp.confirm_delete(actor uuid,confirmation text,expected timestamptz default null) returns jsonb language sql as $$
+ select schedule_month_relink_begin_delete(s.id,actor,u.id,100,confirmation,
+  jsonb_build_object('metadata',jsonb_build_object('title',s.sheet_tab,'gridId',100),'values',jsonb_build_array(jsonb_build_array('saved Google copy'))),
+  coalesce(expected,s.updated_at),99) from schedule_operational_sheets s cross join schedule_uploads u
+$$;
+select pg_temp.expect_error($$select pg_temp.confirm_delete('00000000-0000-0000-0000-000000000002','EXCLUIR 2027-01 ABA 100')$$,'administrador ativo');
+select pg_temp.expect_error($$select pg_temp.confirm_delete('00000000-0000-0000-0000-000000000001','EXCLUIR 2027-01')$$,'Confirme');
+select pg_temp.expect_error($$select pg_temp.confirm_delete('00000000-0000-0000-0000-000000000001','EXCLUIR 2027-01 ABA 100','2000-01-01')$$,'vínculo mudou');
+select pg_temp.assert((select spreadsheet_url like '%gid=99' from schedule_operational_sheets),'rejected confirmations preserve old link');
+-- Prove a failure in the existing ownership check rolls back the gid repair.
+update schedule_uploads set source_sheet='WRONG';
+select pg_temp.expect_error($$select pg_temp.confirm_delete('00000000-0000-0000-0000-000000000001','EXCLUIR 2027-01 ABA 100')$$,'não corresponde');
+select pg_temp.assert((select spreadsheet_url like '%gid=99' from schedule_operational_sheets),'ownership conflict rolls back link repair');
+update schedule_uploads set source_sheet='Controle JANEIRO 27 - 5X2';
+set local role service_role;
+select pg_temp.confirm_delete('00000000-0000-0000-0000-000000000001','EXCLUIR 2027-01 ABA 100');
+reset role;
+select pg_temp.assert((select grid_id=100 and snapshot->'draft'->>'revision'='4'
+ and google_snapshot->'previous_binding'->>'spreadsheet_url' like '%gid=99' from schedule_month_deletions),
+ 'prepared deletion points to approved revision 4, not archived revision 3, with old linkage retained');
+select pg_temp.assert((select count(*)=1 from schedule_generation_events where changes->>'kind'='deletion_tab_link_confirmed'),'link repair audited once');
+set local role service_role;
+select schedule_month_finish_delete(id,'00000000-0000-0000-0000-000000000001') from schedule_month_deletions;
+reset role;
+select pg_temp.assert((select count(*)=0 from schedule_uploads),'reused month deleted from official panel');
+select pg_temp.assert((select archived_at is not null and status='draft' from schedule_generation_drafts where revision=3),'archived revision preserved after deletion');
+select pg_temp.assert((select count(*)=1 from schedule_month_deletions where status='applied'),'deletion history finalized');
+select pg_temp.assert((select deleted_at is not null from schedule_operational_sheets),'link soft deleted, not history removed');
 rollback;

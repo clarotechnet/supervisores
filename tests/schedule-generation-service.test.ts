@@ -106,6 +106,20 @@ beforeEach(() => {
 });
 
 describe("persistência segura de rascunhos de escala", () => {
+  it("persiste e restaura os bloqueios de continuidade na nova revisão", async () => {
+    const inheritedAssignments = [
+      { name: "TESTE", login: "Z123", assignments: { "2026-12-06": "M. 1" } },
+    ];
+    const result = await saveGeneratedDraft({
+      source,
+      preview: { ...preview, inheritedAssignments },
+      userId: "user-id",
+    });
+    expect(restoreGenerationPreview(result.draft, preview.rule).inheritedAssignments).toEqual(
+      inheritedAssignments,
+    );
+    expect(state.inserts[0]!.value.policy_snapshot).toMatchObject({ inheritedAssignments });
+  });
   it("salva revisão independente sem alterar schedule_uploads", async () => {
     const result = await saveGeneratedDraft({
       source,

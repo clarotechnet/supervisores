@@ -85,7 +85,10 @@ export type AnalysisRule = {
   analysisMonth?: string;
   allowRestCompensation?: boolean;
   fixedOffByName?: Record<string, number>;
+  lockedDatesByName?: Record<string, string[]>;
 };
+const locked = (person: Person, date: string, rule?: AnalysisRule) =>
+  !!rule?.lockedDatesByName?.[norm(person.name)]?.includes(date);
 const isEvent = (date: string, rule?: AnalysisRule) =>
   weekdays(date) === 0 ||
   [
@@ -133,6 +136,8 @@ function candidates(
       if (absRole && absRole !== "outro" && r !== absRole) return [];
       const code = person.assignments[date] || "";
       if (!["F", "FOLGA"].includes(norm(code)) || affected.includes(person)) return [];
+      if (locked(person, date, rule))
+        return reject("Dia herdado da escala anterior; ajuste somente na origem");
       if (rule?.excludedFromDuty?.some((name) => norm(name) === norm(person.name)))
         return reject("Excluído(s) do rodízio");
       if (
@@ -185,6 +190,7 @@ function candidates(
           .filter(
             (d) =>
               d !== date &&
+              !locked(person, d, rule) &&
               (!rule.analysisMonth || d.startsWith(rule.analysisMonth + "-")) &&
               !isEvent(d, rule) &&
               /^(?:M\.|T\.)\s*[1-4]$/.test((person.assignments[d] || "").trim()) &&
@@ -405,7 +411,8 @@ export function analyzeSchedule(
               // Rest options are workdays that can be converted to the SECOND rest.
               // Never propose removing mandatory duty, AT, leave, absence, or the
               // already chosen first rest day.
-              if (kind(code) !== "work" || norm(code) === "PLANTAO") return [];
+              if (locked(person, day, rule) || kind(code) !== "work" || norm(code) === "PLANTAO")
+                return [];
               if (weekdays(day) === 0 || holiday.has(day.slice(5))) return [];
               const peopleAtWork = current.people.filter(
                 (p) => kind(p.assignments[day] || "") === "work",
