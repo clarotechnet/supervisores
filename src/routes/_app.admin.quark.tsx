@@ -25,6 +25,7 @@ import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
 import { QuarkGate } from "@/components/QuarkGate";
 import { QuarkLocationMap } from "@/components/QuarkLocationMap";
+import { QuarkBankHours } from "@/components/QuarkBankHours";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -109,12 +110,6 @@ export const Route = createFileRoute("/_app/admin/quark")({
 });
 
 type DirectoryForm = Pick<QuarkDirectory, "city" | "sector" | "supervisor">;
-type BankRankingRow = {
-  person: QuarkPersonView;
-  latest: QuarkDay;
-  balance: number;
-  extras: number;
-};
 type HomeForm = {
   address: string;
   latitude: string;
@@ -155,15 +150,6 @@ function monthPeriod(value: string): { startDate: string; endDate: string } {
 function formatDistance(value: number | null): string {
   if (value === null) return "Sem referência";
   return value < 1000 ? `${Math.round(value)} m` : `${(value / 1000).toFixed(1)} km`;
-}
-
-function formatHoursLong(value: number): string {
-  const rounded = Math.round(value);
-  const sign = rounded < 0 ? "-" : "";
-  const absolute = Math.abs(rounded);
-  const hours = Math.floor(absolute / 60);
-  const minutes = absolute % 60;
-  return `${sign}${hours}h ${String(minutes).padStart(2, "0")}min`;
 }
 
 function syncStatus(run: QuarkSyncRun | null): string {
@@ -378,30 +364,6 @@ function QuarkPage() {
     () => buildOccurrences(filteredPeople, filteredDays, filteredPunches),
     [filteredPeople, filteredDays, filteredPunches],
   );
-  const latestDayByPerson = useMemo(() => {
-    const map = new Map<string, QuarkDay>();
-    for (const day of [...filteredDays].sort((a, b) => b.work_date.localeCompare(a.work_date))) {
-      if (!map.has(personKey(day))) map.set(personKey(day), day);
-    }
-    return map;
-  }, [filteredDays]);
-  const extraByPerson = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const day of filteredDays) {
-      const key = personKey(day);
-      const extra = day.normal_extra_minutes + day.night_extra_minutes + day.extra_100_minutes;
-      map.set(key, (map.get(key) ?? 0) + extra);
-    }
-    return map;
-  }, [filteredDays]);
-  const bankBalanceByPerson = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const day of filteredDays) {
-      const key = personKey(day);
-      map.set(key, (map.get(key) ?? 0) + day.bank_balance_minutes);
-    }
-    return map;
-  }, [filteredDays]);
   const locationRows = useMemo(
     () =>
       locationPunches
@@ -568,34 +530,6 @@ function QuarkPage() {
         })),
     [mapNearPunches, mapDayNumbers, mapPerson],
   );
-
-  const bankRows = useMemo(
-    () =>
-      filteredPeople
-        .map((person) => {
-          const latest = latestDayByPerson.get(personKey(person));
-          if (!latest) return null;
-          return {
-            person,
-            latest,
-            balance: bankBalanceByPerson.get(personKey(person)) ?? 0,
-            extras: extraByPerson.get(personKey(person)) ?? 0,
-          };
-        })
-        .filter((row): row is BankRankingRow => row !== null),
-    [filteredPeople, latestDayByPerson, bankBalanceByPerson, extraByPerson],
-  );
-  const positiveBankRows = useMemo(
-    () => bankRows.filter((row) => row.balance > 0).sort((a, b) => b.balance - a.balance),
-    [bankRows],
-  );
-  const negativeBankRows = useMemo(
-    () => bankRows.filter((row) => row.balance < 0).sort((a, b) => a.balance - b.balance),
-    [bankRows],
-  );
-  const totalPositiveMinutes = positiveBankRows.reduce((sum, row) => sum + row.balance, 0);
-  const totalNegativeMinutes = negativeBankRows.reduce((sum, row) => sum + row.balance, 0);
-  const extraAlerts = occurrences.filter((item) => item.type === "extra").length;
 
   async function updateFromQuark() {
     setSyncing(true);
@@ -1210,96 +1144,22 @@ function QuarkPage() {
           </TabsList>
 
           <TabsContent value="hours" className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <HoursMetricCard
-                label="Horas positivas"
-                value={formatHoursLong(totalPositiveMinutes)}
-                subtitle="Soma dos saldos positivos no período"
-                icon={Clock3}
-              />
-              <HoursMetricCard
-                label="Horas negativas"
-                value={formatHoursLong(totalNegativeMinutes)}
-                subtitle="Soma dos saldos negativos no período"
-                icon={Clock3}
-                emphasis="danger"
-              />
-              <HoursMetricCard
-                label="Alertas acima de 2h/dia"
-                value={String(extraAlerts)}
-                subtitle="Ocorrências que pedem atenção"
-                icon={AlertTriangle}
-                emphasis="danger"
-              />
-              <HoursMetricCard
-                label="Colaboradores analisados"
-                value={String(bankRows.length)}
-                subtitle={`${filteredDays.length.toLocaleString("pt-BR")} registros válidos no período`}
-                icon={Users}
-              />
-            </div>
-
-            <div className="grid gap-4 xl:grid-cols-2">
-              <BankRankingPanel
-                title="Maiores saldos positivos"
-                hint=">20h alerta · >40h crítico"
-                rows={positiveBankRows.slice(0, 10)}
-                startDate={startDate}
-                endDate={endDate}
-                kind="positive"
-              />
-              <BankRankingPanel
-                title="Maiores saldos negativos"
-                hint="Ordenado do menor saldo"
-                rows={negativeBankRows.slice(0, 10)}
-                startDate={startDate}
-                endDate={endDate}
-                kind="negative"
-              />
-            </div>
-
-            <Panel
-              title="Banco de horas por colaborador"
-              subtitle={`Colaboradores da área técnica associados pela base de supervisão, com ou sem moradia. O saldo é a soma das movimentações do banco entre ${localeDate(startDate)} e ${localeDate(endDate)}.`}
-            >
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Colaborador</TableHead>
-                    <TableHead>Cidade / setor</TableHead>
-                    <TableHead>Último dia</TableHead>
-                    <TableHead>Saldo no período</TableHead>
-                    <TableHead>Extras no período</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {bankRows.map(({ person, latest, balance, extras }) => (
-                    <TableRow key={personKey(person)}>
-                      <TableCell>
-                        <b>{person.full_name}</b>
-                        <small className="block text-muted-foreground">
-                          {person.job_title ?? "Sem função"}
-                        </small>
-                      </TableCell>
-                      <TableCell>
-                        {resolvePersonCity(person)}
-                        <small className="block text-muted-foreground">
-                          {resolvePersonSector(person)}
-                        </small>
-                      </TableCell>
-                      <TableCell>{localeDate(latest.work_date)}</TableCell>
-                      <TableCell>
-                        <Balance value={balance} />
-                      </TableCell>
-                      <TableCell className="font-semibold">{formatMinutes(extras)}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-              {!bankRows.length && (
-                <Empty text="Nenhum colaborador técnico com moradia e registros no período." />
-              )}
-            </Panel>
+            <QuarkBankHours
+              people={filteredPeople}
+              days={filteredDays}
+              loading={loading}
+              context={{
+                startDate,
+                endDate,
+                filters: {
+                  collaborator: search.trim() || "Todos",
+                  unit: unit === "all" ? "Todas" : (units.find(([id]) => id === unit)?.[1] ?? unit),
+                  city: city === "all" ? "Todas" : city,
+                  sector: sector === "all" ? "Todos" : sector,
+                  supervisor: supervisor === "all" ? "Todos" : supervisor,
+                },
+              }}
+            />
           </TabsContent>
 
           <TabsContent value="people">
@@ -2564,126 +2424,6 @@ function FormInput({
   );
 }
 
-function HoursMetricCard({
-  label,
-  value,
-  subtitle,
-  icon: Icon,
-  emphasis = "default",
-}: {
-  label: string;
-  value: string;
-  subtitle: string;
-  icon: React.ComponentType<{ className?: string }>;
-  emphasis?: "default" | "danger";
-}) {
-  return (
-    <div className="rounded-2xl border border-border bg-card p-4 shadow-card">
-      <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-        <Icon className="size-3.5" />
-        {label}
-      </span>
-      <strong
-        className={`mt-2 block text-3xl font-black tracking-tight ${
-          emphasis === "danger" ? "text-destructive" : "text-foreground"
-        }`}
-      >
-        {value}
-      </strong>
-      <p className="mt-2 text-[10px] text-muted-foreground">{subtitle}</p>
-    </div>
-  );
-}
-
-function BankRankingPanel({
-  title,
-  hint,
-  rows,
-  startDate,
-  endDate,
-  kind,
-}: {
-  title: string;
-  hint: string;
-  rows: BankRankingRow[];
-  startDate: string;
-  endDate: string;
-  kind: "positive" | "negative";
-}) {
-  const maxBalance = Math.max(1, ...rows.map((row) => Math.abs(row.balance)));
-  return (
-    <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-card">
-      <div className="flex flex-wrap items-end justify-between gap-2 border-b border-border px-4 py-4">
-        <div>
-          <span className="text-[10px] font-black uppercase tracking-[0.12em] text-primary">
-            Top 10
-          </span>
-          <h2 className="mt-0.5 text-sm font-black">{title}</h2>
-        </div>
-        <span className="text-[10px] text-muted-foreground">{hint}</span>
-      </div>
-
-      <div className="grid grid-cols-[44px_minmax(0,1.5fr)_minmax(160px,1fr)_120px] border-b border-border px-3 py-2 text-[9px] font-black uppercase tracking-wide text-muted-foreground">
-        <span>#</span>
-        <span>Colaborador</span>
-        <span>Unidade / período</span>
-        <span>Saldo</span>
-      </div>
-
-      {rows.map((row, index) => {
-        const width = Math.max(8, (Math.abs(row.balance) / maxBalance) * 100);
-        return (
-          <div
-            key={personKey(row.person)}
-            className="grid grid-cols-[44px_minmax(0,1.5fr)_minmax(160px,1fr)_120px] items-center border-b border-border/80 px-3 py-3 last:border-b-0"
-          >
-            <div>
-              <span className="grid size-7 place-items-center rounded-lg bg-secondary text-xs font-black">
-                {index + 1}
-              </span>
-            </div>
-            <div className="min-w-0 pr-3">
-              <b className="block truncate text-[11px]">{row.person.full_name}</b>
-              <small className="block truncate text-[9px] text-muted-foreground">
-                {resolvePersonSector(row.person)}
-              </small>
-            </div>
-            <div className="min-w-0 pr-3">
-              <span className="block truncate text-[10px]">{row.person.unit_name}</span>
-              <small className="block text-[9px] text-muted-foreground">
-                {localeDate(startDate)} a {localeDate(endDate)}
-              </small>
-            </div>
-            <div>
-              <b
-                className={`text-[11px] ${
-                  kind === "negative" ? "text-destructive" : "text-foreground"
-                }`}
-              >
-                {formatHoursLong(row.balance)}
-              </b>
-              <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-secondary">
-                <div
-                  className={`h-full rounded-full ${
-                    kind === "negative" ? "bg-destructive" : "bg-primary"
-                  }`}
-                  style={{ width: `${width}%` }}
-                />
-              </div>
-            </div>
-          </div>
-        );
-      })}
-
-      {!rows.length && (
-        <div className="grid min-h-32 place-items-center px-4 text-xs text-muted-foreground">
-          Nenhum saldo {kind === "negative" ? "negativo" : "positivo"} neste período.
-        </div>
-      )}
-    </section>
-  );
-}
-
 function KpiGrid({
   items,
   clickableItems = [],
@@ -2773,22 +2513,6 @@ function Status({ active }: { active: boolean }) {
     >
       {active ? "Ativo" : "Inativo"}
     </span>
-  );
-}
-
-function Balance({ value }: { value: number }) {
-  return (
-    <b
-      className={
-        value < 0
-          ? "text-late-foreground"
-          : value > 0
-            ? "text-success-foreground"
-            : "text-muted-foreground"
-      }
-    >
-      {formatMinutes(value)}
-    </b>
   );
 }
 
