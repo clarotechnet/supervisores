@@ -177,8 +177,68 @@ for (const [kind, id, name] of [
       "if(state.ready)svReconcileSelection(tcSupervisors",
       "if(state.ready&&!document.body.classList.contains('presentation-mode'))svReconcileSelection(tcSupervisors",
     );
-    // Keep the original DATA_NOTA/work-day closing logic; only select the
-    // reference competence from the user's month filter, not the full base.
+    // Keep source data untouched. Confirmed QQ periods are view-time cohorts;
+    // other competencies and VT preserve their DATA_NOTA closing logic.
+    adapt(
+      "function monthKey(r){return r.year&&r.month?String(r.year)+'-'+String(r.month).padStart(2,'0'):''}",
+      "const tcPeriodMonths=new WeakMap();\n    function monthKey(r){if(tcPeriodMonths.has(r))return tcPeriodMonths.get(r);const month=referenceTCRecordMonth(r,environment.technicalVisit);tcPeriodMonths.set(r,month);return month;}",
+    );
+    adapt(
+      "/* Monthly certification uses DATA_NOTA; work-day productivity stays unchanged. */",
+      "/* Confirmed QQ closings use FIM_TRABALHO; VT and other months retain DATA_NOTA. */",
+    );
+    adapt(
+      "const suggestedEnd=month?new Date(Date.UTC(year,mo,0)-lag*TC_DAY_MS).toISOString().slice(0,10):'';",
+      "const closing=referenceTCClosing(month,environment.technicalVisit);\n const suggestedEnd=closing?.end||(month?new Date(Date.UTC(year,mo,0)-lag*TC_DAY_MS).toISOString().slice(0,10):'');",
+    );
+    adapt(
+      "const end=Number.isFinite(tcProjectionEpoch(saved.end))?saved.end:suggestedEnd;",
+      "const end=closing?.end||(Number.isFinite(tcProjectionEpoch(saved.end))?saved.end:suggestedEnd);",
+    );
+    adapt(
+      "state.projectionContext={month,loaded,reference,end,suggestedEnd,lag,calendarDays,workDays,pointedOrders};",
+      "state.projectionContext={month,loaded,reference,end,suggestedEnd,lag,calendarDays,workDays,pointedOrders,closing};",
+    );
+    adapt(
+      "const endLabel=Number.isFinite(tcProjectionEpoch(tcProjectionPlans[c.month]?.end))?'fechamento':'fechamento sugerido';",
+      "const endLabel=c.closing?'fechamento confirmado':Number.isFinite(tcProjectionEpoch(tcProjectionPlans[c.month]?.end))?'fechamento':'fechamento sugerido';",
+    );
+    adapt(
+      "${esc(monthLabel(c.month))} · base até",
+      "${esc(monthLabel(c.month))}${c.closing?' · período <b>'+date(c.closing.start)+' a '+date(c.closing.end)+'</b>':''} · base até",
+    );
+    adapt(
+      'id="tcProjectionEnd" type="date" value="${c.end}"',
+      'id="tcProjectionEnd" type="date" value="${c.end}" ${c.closing?\'readonly\':\'\'}',
+    );
+    adapt(
+      "Fechamento sugerido: fim da competência por DATA_NOTA menos ${c.lag} dias de defasagem observada. Ajuste a data ao fechamento oficial.",
+      "${c.closing?'Fechamento confirmado: '+date(c.closing.start)+' a '+date(c.closing.end)+', inclusive, por FIM_TRABALHO.':'Fechamento sugerido: fim da competência por DATA_NOTA menos '+c.lag+' dias de defasagem observada. Ajuste a data ao fechamento oficial.'}",
+    );
+    adapt(
+      "$('#tcProjectionEnd').onchange=e=>{const v=e.target.value;",
+      "$('#tcProjectionEnd').onchange=e=>{const v=e.target.value;if(c.closing&&v!==c.closing.end){e.target.value=c.closing.end;$('#tcProjectionError').textContent='O fechamento confirmado desta competência é '+date(c.closing.end)+'.';return;}",
+    );
+    adapt(
+      "Competência por DATA_NOTA; filtro de datas e dias de produtividade por FIM_TRABALHO.",
+      "${esc(referenceTCPeriodDescription(environment.technicalVisit))}",
+    );
+    adapt(
+      "A comparação mensal respeita DATA_NOTA",
+      "A comparação mensal respeita ${environment.technicalVisit?'DATA_NOTA':'o fechamento confirmado'}",
+    );
+    adapt(
+      "A competência vem da data da nota; o dia de trabalho vem de FIM_TRABALHO.",
+      "${environment.technicalVisit?'A competência vem da data da nota; o dia de trabalho vem de FIM_TRABALHO.':esc(referenceTCPeriodDescription())}",
+    );
+    adapt(
+      "Competência por DATA_NOTA.</div></section>",
+      "${environment.technicalVisit?'Competência por DATA_NOTA.':esc(referenceTCPeriodDescription())}</div></section>",
+    );
+    adapt(
+      "showTech=function(a){tcBaseShowTech(a);",
+      "showTech=function(a){tcBaseShowTech(a);const closing=referenceTCClosing(a.tcMonth||(tcSelectedMonths().length===1?tcSelectedMonths()[0]:''),environment.technicalVisit);if(closing)$('#modalBody').insertAdjacentHTML('afterbegin','<p class=\"tc-detail-note\">Fechamento: '+tcDateLabel(closing.start)+' a '+tcDateLabel(closing.end)+', inclusive.</p>');",
+    );
     adapt(
       "/* The two fixed columns always use the newest DATA_NOTA month in the full base. */",
       "/* Reference columns follow the latest selected DATA_NOTA competence. */",
@@ -325,7 +385,7 @@ for (const [kind, id, name] of [
   `;
   const imports =
     kind === "tc"
-      ? 'import { referenceCertificationRule } from "../reference-certification-rule";\nimport { referenceCityMembers } from "../reference-city-members";\nimport { referenceTCMonth } from "../reference-tc-month";\n'
+      ? 'import { referenceCertificationRule } from "../reference-certification-rule";\nimport { referenceCityMembers } from "../reference-city-members";\nimport { referenceTCMonth } from "../reference-tc-month";\nimport { referenceTCClosing, referenceTCRecordMonth, referenceTCPeriodDescription } from "../reference-tc-period";\n'
       : 'import { qqChartPointMarkup, wireQQChartDrilldown } from "../reference-qq-charts";\n';
   const output = `// Reviewed reference ${hash}; generated visual engine. No personal seed data.\n${imports}export function ${name}(environment) {\nconst {document,window,localStorage,location,ResizeObserver,setTimeout,clearTimeout,requestAnimationFrame}=environment;\n${code}\n${load}\nreturn window;\n}\n`;
   fs.writeFileSync(`${folder}/${kind}-engine.js`, output);

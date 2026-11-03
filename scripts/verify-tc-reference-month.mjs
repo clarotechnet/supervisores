@@ -200,7 +200,10 @@ try {
         .getAttribute("data-current-state"),
       "offender",
     );
-    assert.match(await root.locator("#tcProjectionToolbar").textContent(), /20\/11\/2026/);
+    assert.match(
+      await root.locator("#tcProjectionToolbar").textContent(),
+      technicalVisit ? /20\/11\/2026/ : /21\/11\/2026/,
+    );
     await page.evaluate(() => window.engine.setUnifiedMonths(["2026-09", "2026-10"]));
     await referenceMonth("2026-10");
     assert.match(
