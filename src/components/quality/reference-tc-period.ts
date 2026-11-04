@@ -3,7 +3,7 @@
  * Os dados importados e seus campos de DATA_NOTA permanecem intactos.
  */
 const confirmedClosings: Readonly<Record<string, Readonly<{ start: string; end: string }>>> = {
-  "2026-11": { start: "2026-10-21", end: "2026-11-21" },
+  "2026-11": { start: "2026-10-22", end: "2026-11-21" },
 };
 
 type PeriodRecord = {
@@ -35,7 +35,7 @@ function adjacentMonth(month: string, offset: number): string {
   return new Date(Date.UTC(year!, number! - 1 + offset, 1)).toISOString().slice(0, 7);
 }
 
-/** Um único fechamento por registro: os dias 21/10 e 21/11 pertencem a novembro,
+/** Um único fechamento por registro: os dias 22/10 e 21/11 pertencem a novembro,
  * não são contados novamente em outubro/dezembro. Demais cortes seguem a nota.
  */
 export function referenceTCRecordMonth(row: PeriodRecord, technicalVisit = false): string {
@@ -56,5 +56,5 @@ export function referenceTCRecordMonth(row: PeriodRecord, technicalVisit = false
 export function referenceTCPeriodDescription(technicalVisit = false): string {
   return technicalVisit
     ? "Competência por DATA_NOTA; filtro de datas e dias de produtividade por FIM_TRABALHO."
-    : "Novembro/2026: de 21/10/2026 a 21/11/2026, inclusive, por FIM_TRABALHO. Demais competências seguem DATA_NOTA.";
+    : "Novembro/2026: de 22/10/2026 a 21/11/2026, inclusive, por FIM_TRABALHO. Demais competências seguem DATA_NOTA.";
 }
