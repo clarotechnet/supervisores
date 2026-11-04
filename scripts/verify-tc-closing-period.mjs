@@ -35,9 +35,9 @@ const row = (wo, day, month, noteAt, points) => ({
   noteAt,
 });
 const records = [
-  row("ANTES", "2026-10-20", 10, "30/10/2026", 500),
-  row("INICIO", "2026-10-21", 10, "31/10/2026", 150),
-  row("MEIO", "2026-10-22", 11, "01/11/2026", 180),
+  row("ANTES", "2026-10-21", 10, "30/10/2026", 500),
+  row("INICIO", "2026-10-22", 10, "31/10/2026", 150),
+  row("MEIO", "2026-10-23", 11, "01/11/2026", 180),
   row("FIM", "2026-11-21", 12, "01/12/2026", 210),
   row("DEPOIS", "2026-11-22", 12, "02/12/2026", 900),
 ];
@@ -121,7 +121,7 @@ try {
       );
       assert.match(
         await root.locator("#tcProjectionToolbar").innerText(),
-        technicalVisit ? /20\/11\/2026/ : /21\/10\/2026 a 21\/11\/2026/,
+        technicalVisit ? /20\/11\/2026/ : /22\/10\/2026 a 21\/11\/2026/,
       );
     };
     await checkNovember();
@@ -143,9 +143,9 @@ try {
     });
     await root.locator('[data-tc-current-login="Z1"]').click();
     const summary = await root.locator("#modalBody").innerText();
-    assert.match(summary, /22\/10\/2026/);
+    assert.match(summary, /23\/10\/2026/);
     if (!technicalVisit) {
-      assert.match(summary, /21\/10\/2026/);
+      assert.match(summary, /22\/10\/2026/);
       assert.match(summary, /21\/11\/2026/);
       assert.match(summary, /540 pontos ÷ 3 dias com pontos = 180,0/);
     } else assert.doesNotMatch(summary, /21\/10\/2026|21\/11\/2026/);
@@ -159,6 +159,10 @@ try {
     await root.locator("#modalClose").click();
     await page.evaluate(() =>
       window.engine.setUnifiedDates({ start: "2026-10-21", end: "2026-10-21" }),
+    );
+    assert.equal((await state()).result.length, 0);
+    await page.evaluate(() =>
+      window.engine.setUnifiedDates({ start: "2026-10-22", end: "2026-10-22" }),
     );
     assert.equal((await state()).result.length, technicalVisit ? 0 : 1);
     if (!technicalVisit) assert.equal((await state()).result[0].os, 1);
@@ -194,7 +198,7 @@ try {
   assert.equal(externalRequests, 0);
   console.log(
     JSON.stringify({
-      exactQQPeriod: "21/10/2026 a 21/11/2026 inclusive",
+      exactQQPeriod: "22/10/2026 a 21/11/2026 inclusive",
       noAdjacentMonthDuplicates: true,
       dailyAndContractDetails: true,
       immutableSourceAndImports: true,
