@@ -66,7 +66,7 @@ async function qqReadWorkbook(buffer){
  Categoria pela AH; "MAIS DE UM PROCESSO" é rateada 1/3 entre TEC1, Contato Cliente e GEO
  Evolução semanal = SEMANA (CB) | Dia/Mês = DAT_AGENDA (M) | UN = UN_TECNICO (K) */
 const CATS=['Infra Claro Tec','TEC1','Tubulação','Contato Cliente','GEO','Baixa100'];
-const QQ_QUALIFIED_GOAL=Object.freeze({ND:0.07,PME:0.07,MIG:0.115,ME:0.07}),QQ_DEFAULT_BREAK_GOAL=Object.freeze({ND:0.20,PME:0.20,MIG:0.30,ME:0.20});
+const QQ_QUALIFIED_GOAL=Object.freeze({ND:0.07,PME:0.07,MIG:0.115,ME:0.07}),QQ_DEFAULT_BREAK_GOAL=Object.freeze({ND:0.20,PME:0.20,MIG:0.27,ME:0.20});
 const QQ_BREAK_GOAL={...QQ_DEFAULT_BREAK_GOAL};
 const MESES=['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
 const REQ=['TIPO_ATENDIMENTO','DAT_AGENDA','TIPO_TRATAMENTO','SUB_AGRUPAMENTO_SC'];
