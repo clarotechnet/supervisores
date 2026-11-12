@@ -315,6 +315,22 @@ for (const [kind, id, name] of [
       "<small class=\"sv-sub\">Meta ≥ '+tcRule().prod+'</small>",
     );
   }
+  if (kind === "qq") {
+    const declaration = /QQ_BREAK_GOAL=(Object\.freeze\(\{[^}]+\}\));/;
+    if (!declaration.test(code)) throw Error("QQ default break goals declaration not found.");
+    code = code.replace(
+      declaration,
+      "QQ_DEFAULT_BREAK_GOAL=$1;\nconst QQ_BREAK_GOAL={...QQ_DEFAULT_BREAK_GOAL};",
+    );
+    code = code
+      .replaceAll("pct(goal,0)", "qqGoalPercent(goal)")
+      .replaceAll("pct(QQ_BREAK_GOAL.MIG,0)", "qqGoalPercent(QQ_BREAK_GOAL.MIG)")
+      .replaceAll("pct(QQ_BREAK_GOAL[front],0)", "qqGoalPercent(QQ_BREAK_GOAL[front])")
+      .replace(
+        "const max=Math.max(.4,...units.flatMap",
+        "const max=Math.max(.4,...Object.values(QQ_BREAK_GOAL),...units.flatMap",
+      );
+  }
   const load =
     kind === "qq"
       ? `
@@ -354,6 +370,8 @@ for (const [kind, id, name] of [
   $('qqImportMode').querySelector('option[value="replace"]')?.remove();
   $('clr').hidden=true;
   if(!environment.editable){$('drop').hidden=true;$('file').disabled=true;$('qqImportMode').hidden=true;document.querySelector('.qq-import-help').hidden=true;}
+  function qqGoalPercent(goal){return pct(goal,Number.isInteger(goal*100)?0:2);}
+  bindQQMigrationGoal(document,QQ_BREAK_GOAL,()=>draw());
   init(true); window.qqDataReady=true;
   `
       : `
@@ -386,7 +404,7 @@ for (const [kind, id, name] of [
   const imports =
     kind === "tc"
       ? 'import { referenceCertificationRule } from "../reference-certification-rule";\nimport { referenceCityMembers } from "../reference-city-members";\nimport { referenceTCMonth } from "../reference-tc-month";\nimport { referenceTCClosing, referenceTCRecordMonth, referenceTCPeriodDescription } from "../reference-tc-period";\n'
-      : 'import { qqChartPointMarkup, wireQQChartDrilldown } from "../reference-qq-charts";\n';
+      : 'import { qqChartPointMarkup, wireQQChartDrilldown } from "../reference-qq-charts";\nimport { bindQQMigrationGoal } from "../reference-qq-goals";\n';
   const output = `// Reviewed reference ${hash}; generated visual engine. No personal seed data.\n${imports}export function ${name}(environment) {\nconst {document,window,localStorage,location,ResizeObserver,setTimeout,clearTimeout,requestAnimationFrame}=environment;\n${code}\n${load}\nreturn window;\n}\n`;
   fs.writeFileSync(`${folder}/${kind}-engine.js`, output);
   fs.writeFileSync(
