@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { referenceCertificationRule } from "../src/components/quality/reference-certification-rule";
+import {
+  referenceCertificationRule,
+  referenceProductivityTarget,
+} from "../src/components/quality/reference-certification-rule";
 import { tcRule } from "../src/lib/quality-math";
 
 describe("metas de produtividade independentes por painel", () => {
@@ -43,5 +46,29 @@ describe("metas de produtividade independentes por painel", () => {
   ])("aplica o limite inclusivo (VT=%s, pontos/dia=%s)", (visit, points, expected) => {
     const rule = referenceCertificationRule(visit);
     expect(rule.strict ? points > rule.prod : points >= rule.prod).toBe(expected);
+  });
+  it.each(["Mossoró", "MOSSORO", " mossoró "])("usa 100 somente em %s no TC de QQ", (city) => {
+    expect(referenceCertificationRule(false, city).prod).toBe(100);
+    expect(referenceCertificationRule(false, city).label).toContain("≥ 100 pontos/dia");
+    expect(referenceCertificationRule(true, city).prod).toBe(175);
+  });
+  it("preserva 150 nas outras cidades e não aplica a exceção a um técnico com cidades misturadas", () => {
+    for (const city of ["Recife", "GOIANIA", "Fortaleza", "Natal / Parnamirim", ""])
+      expect(referenceCertificationRule(false, city).prod).toBe(150);
+    expect(referenceCertificationRule(false, new Set(["MOSSORO", "Mossoró"])).prod).toBe(100);
+    expect(referenceCertificationRule(false, ["Mossoró", "Recife"]).prod).toBe(150);
+    expect(referenceProductivityTarget(false, ["Mossoró", "Recife"])).toBe(
+      "Mossoró ≥ 100 · demais ≥ 150 pontos/dia",
+    );
+    expect(referenceProductivityTarget(true, ["Mossoró", "Recife"])).toBe("≥ 175 pontos/dia");
+  });
+  it.each([
+    [99.9, false],
+    [100, true],
+    [127.5, true],
+    [143.3, true],
+  ])("Mossoró: limite inclusivo de 100 (%s)", (points, expected) => {
+    const rule = referenceCertificationRule(false, "Mossoró");
+    expect(points >= rule.prod).toBe(expected);
   });
 });

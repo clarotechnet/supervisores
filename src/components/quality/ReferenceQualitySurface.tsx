@@ -654,8 +654,8 @@ export function ReferenceQualitySurface(props: Props) {
       techMap: props.techMap,
       nameUpdates: props.nameUpdates,
     });
-    // Preserve the source's distinct initial defaults (QQ latest month, TC all months).
-    // Only an explicit shared month choice overrides TC when it is first opened.
+    // Keep the engine's initial period (latest closing in QQ TC) unless the user
+    // explicitly picked shared months before opening the panel.
     if (r.sharedMonths !== null) r.tc.setUnifiedMonths(r.sharedMonths);
     r.loadedTC = inputs;
     r.update();
