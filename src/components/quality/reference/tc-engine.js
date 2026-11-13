@@ -2,6 +2,7 @@
 import { referenceCertificationRule } from "../reference-certification-rule";
 import { referenceCityMembers } from "../reference-city-members";
 import { referenceTCMonth } from "../reference-tc-month";
+import { referenceMonthSelection } from "../reference-month-selection";
 import { referenceTCClosing, referenceTCRecordMonth, referenceTCPeriodDescription } from "../reference-tc-period";
 export function mountTC(environment) {
 const {document,window,localStorage,location,ResizeObserver,setTimeout,clearTimeout,requestAnimationFrame}=environment;
@@ -650,8 +651,8 @@ function tcRefreshMonthPicker(){
  const all=!selected.length||months.every(m=>selected.includes(m));$('#tcMonthLabel').textContent=all?'Todos os meses':selected.length===1?monthLabel(selected[0]):selected.length+' meses selecionados';
  root.innerHTML='<label class="all-months"><input type="checkbox" data-tc-all '+(all?'checked':'')+'>Todos os meses</label>'+months.map(m=>`<label><input type="checkbox" data-tc-month="${m}" ${all||selected.includes(m)?'checked':''}>${esc(monthLabel(m))}</label>`).join('');
  root.querySelector('[data-tc-all]').indeterminate=!all&&selected.length>0;
- root.querySelector('[data-tc-all]').onchange=()=>window.setUnifiedMonths([]);
- root.querySelectorAll('[data-tc-month]').forEach(box=>box.onchange=()=>{const values=[...root.querySelectorAll('[data-tc-month]:checked')].map(x=>x.dataset.tcMonth);if(!values.length){box.checked=true;return;}window.setUnifiedMonths(values);});
+ root.querySelector('[data-tc-all]').onchange=e=>window.setUnifiedMonths(referenceMonthSelection(months,selected,'*',e.target.checked));
+ root.querySelectorAll('[data-tc-month]').forEach(box=>box.onchange=()=>window.setUnifiedMonths(referenceMonthSelection(months,selected,box.dataset.tcMonth,box.checked)));
 }
 const tcInitMultiMonths=initFilters;initFilters=function(defaults=false){const available=uniq(state.rows.map(monthKey));state.selectedMonths=defaults?[]:tcSelectedMonths().filter(m=>available.includes(m));tcInitMultiMonths(defaults);$('#fMonth').value=tcSelectedMonths().length===1?tcSelectedMonths()[0]:'';tcRefreshMonthPicker();};
 const tcRenderFilters=render;render=function(){tcRenderFilters();tcRefreshMonthPicker();const range=[tcDates.start,tcDates.end].filter(Boolean).map(tcDateLabel).join(' a ');if(range&&$('#tcPanelContext'))$('#tcPanelContext').textContent+=' · trabalho: '+range;};

@@ -1,8 +1,9 @@
-import type { QQRecord, TCRecord } from "./quality-math";
+import { presentationCityLabel, type QQRecord, type TCRecord } from "./quality-math";
 import { normalizeLogin, type QualityLogin } from "./quality-directory";
 import {
   emptyQualityFilters,
   qualityCity,
+  qualityTCRecordCity,
   qualityPeriodPass,
   qqUnitPass,
   type QualityFilters,
@@ -78,7 +79,9 @@ export function buildQualitySlides(
       !supervisorPass(row.login)
     )
       continue;
-    const city = qualityCity(row.login, row.city, index);
+    const city = presentationCityLabel(
+      qualityTCRecordCity(row.login, row.city, index, technicalVisit),
+    );
     if (!city || !row.login) continue;
     if (!teams.has(city)) teams.set(city, new Set());
     teams.get(city)!.add(index.get(normalizeLogin(row.login))?.supervisor || "Sem supervisor");
