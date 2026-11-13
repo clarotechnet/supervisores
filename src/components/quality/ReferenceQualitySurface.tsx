@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { QQRecord, TCRecord } from "@/lib/quality-math";
-import { emptyQualityFilters, isQQAdhesionUnit, type QualityMode } from "@/lib/quality-scope";
+import {
+  emptyQualityFilters,
+  isQQAdhesionUnit,
+  qualityTCRecordCity,
+  type QualityMode,
+} from "@/lib/quality-scope";
 import { normalizeLogin, type QualityLogin } from "@/lib/quality-directory";
 import {
   buildQualitySlides,
@@ -11,6 +16,7 @@ import {
 import type { QualityRegistry } from "@/lib/quality";
 import { referenceScope } from "./reference-scope";
 import { referenceFilters } from "./reference-filters";
+import { referenceMonthSelection } from "./reference-month-selection";
 import { presentationSupervisorPicker } from "./reference-presentation-toolbar";
 import type { ReferenceEngine, ReferenceParent } from "./reference-types";
 import { mountQQ } from "./reference/qq-engine";
@@ -445,12 +451,12 @@ export function ReferenceQualitySurface(props: Props) {
         value = input.dataset["month"],
         months = current().getUnifiedMonths();
       if (!value) return;
-      const selected =
-        value === "*"
-          ? months.months
-          : input.checked
-            ? [...months.selected, value]
-            : (months.selected.length ? months.selected : months.months).filter((m) => m !== value);
+      const selected = referenceMonthSelection(
+        months.months,
+        months.selected,
+        value,
+        input.checked,
+      );
       if (!selected.length) return;
       r.sharedMonths = selected;
       r.qq.setUnifiedMonths(selected);
@@ -643,7 +649,7 @@ export function ReferenceQualitySurface(props: Props) {
     r.tc.loadProjectData({
       rows: props.tc.map((row) => ({
         ...row,
-        city: props.index.get(normalizeLogin(row.login))?.city || row.city,
+        city: qualityTCRecordCity(row.login, row.city, props.index, props.technicalVisit),
       })),
       techMap: props.techMap,
       nameUpdates: props.nameUpdates,
@@ -661,6 +667,7 @@ export function ReferenceQualitySurface(props: Props) {
     props.techMap,
     props.nameUpdates,
     props.editable,
+    props.technicalVisit,
     screen,
     pendingSlides,
     player,

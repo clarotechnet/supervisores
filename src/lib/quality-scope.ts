@@ -13,6 +13,21 @@ export function qualityCity(login: string, city: string, index: Map<string, Qual
   return presentationCityLabel(index.get(normalizeLogin(login))?.city || city);
 }
 
+/** QQ TC uses the attendance municipality, even if the technician's home base differs. */
+export function qualityTCRecordCity(
+  login: string,
+  city: string,
+  index: Map<string, QualityLogin>,
+  technicalVisit = false,
+): string {
+  const registered = index.get(normalizeLogin(login))?.city || "";
+  if (technicalVisit) return registered || city;
+  const source = String(city ?? "").trim();
+  return source && !["-", "-1", "-3", "N/A", "NA", "NULL"].includes(norm(source))
+    ? source
+    : registered;
+}
+
 export type QualityMode = "qq" | "general" | "tc" | "logins";
 export interface QualityFilters {
   units: string[];

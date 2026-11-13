@@ -331,6 +331,17 @@ for (const [kind, id, name] of [
         "const max=Math.max(.4,...Object.values(QQ_BREAK_GOAL),...units.flatMap",
       );
   }
+  if (kind === "tc") {
+    code = code
+      .replace(
+        "root.querySelector('[data-tc-all]').onchange=()=>window.setUnifiedMonths([]);",
+        "root.querySelector('[data-tc-all]').onchange=e=>window.setUnifiedMonths(referenceMonthSelection(months,selected,'*',e.target.checked));",
+      )
+      .replace(
+        "root.querySelectorAll('[data-tc-month]').forEach(box=>box.onchange=()=>{const values=[...root.querySelectorAll('[data-tc-month]:checked')].map(x=>x.dataset.tcMonth);if(!values.length){box.checked=true;return;}window.setUnifiedMonths(values);});",
+        "root.querySelectorAll('[data-tc-month]').forEach(box=>box.onchange=()=>window.setUnifiedMonths(referenceMonthSelection(months,selected,box.dataset.tcMonth,box.checked)));",
+      );
+  }
   const load =
     kind === "qq"
       ? `
@@ -403,7 +414,7 @@ for (const [kind, id, name] of [
   `;
   const imports =
     kind === "tc"
-      ? 'import { referenceCertificationRule } from "../reference-certification-rule";\nimport { referenceCityMembers } from "../reference-city-members";\nimport { referenceTCMonth } from "../reference-tc-month";\nimport { referenceTCClosing, referenceTCRecordMonth, referenceTCPeriodDescription } from "../reference-tc-period";\n'
+      ? 'import { referenceCertificationRule } from "../reference-certification-rule";\nimport { referenceCityMembers } from "../reference-city-members";\nimport { referenceTCMonth } from "../reference-tc-month";\nimport { referenceMonthSelection } from "../reference-month-selection";\nimport { referenceTCClosing, referenceTCRecordMonth, referenceTCPeriodDescription } from "../reference-tc-period";\n'
       : 'import { qqChartPointMarkup, wireQQChartDrilldown } from "../reference-qq-charts";\nimport { bindQQMigrationGoal } from "../reference-qq-goals";\n';
   const output = `// Reviewed reference ${hash}; generated visual engine. No personal seed data.\n${imports}export function ${name}(environment) {\nconst {document,window,localStorage,location,ResizeObserver,setTimeout,clearTimeout,requestAnimationFrame}=environment;\n${code}\n${load}\nreturn window;\n}\n`;
   fs.writeFileSync(`${folder}/${kind}-engine.js`, output);
