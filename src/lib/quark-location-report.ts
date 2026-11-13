@@ -12,6 +12,7 @@ export interface QuarkNearPunch {
   person: QuarkPersonView;
   punch: QuarkPunch;
   distanceMeters: number;
+  dayNumber: number;
 }
 
 export interface QuarkNearHomeRank {
@@ -35,6 +36,7 @@ export function buildQuarkNearHomeReport(
   punches: QuarkPunch[],
   radiusMeters: number,
 ): QuarkNearHomeReport {
+  const punchNumbers = numberedQuarkPunchesByDay(punches);
   const summaries = buildLocationSummaries(people, punches, radiusMeters);
   const peopleByKey = new Map(people.map((person) => [personKey(person), person]));
   const details: QuarkNearPunch[] = [];
@@ -53,7 +55,12 @@ export function buildQuarkNearHomeReport(
     );
     if (!Number.isFinite(meters) || meters > radiusMeters) continue;
     const key = personKey(person);
-    details.push({ person, punch, distanceMeters: meters });
+    details.push({
+      person,
+      punch,
+      distanceMeters: meters,
+      dayNumber: punchNumbers.get(punch.point_id)!,
+    });
     const dates = daysByPerson.get(key) ?? new Set<string>();
     dates.add(punch.work_date);
     daysByPerson.set(key, dates);
@@ -91,6 +98,45 @@ export function buildQuarkNearHomeReport(
         b.nearRate - a.nearRate ||
         a.person.full_name.localeCompare(b.person.full_name, "pt-BR"),
     );
+  return { ranking, details };
+}
+
+/** Select specific records only AFTER applying the person, period and proximity filters. */
+export function selectQuarkNearPunches(
+  report: QuarkNearHomeReport,
+  selectedIds: readonly string[] | null,
+): QuarkNearHomeReport {
+  if (selectedIds === null) return report;
+  const selected = new Set(selectedIds);
+  const details = report.details.filter(({ punch }) => selected.has(punch.point_id));
+  const byPerson = new Map<string, QuarkNearPunch[]>();
+  for (const entry of details) {
+    const key = personKey(entry.person);
+    const group = byPerson.get(key) ?? [];
+    group.push(entry);
+    byPerson.set(key, group);
+  }
+  const ranking = report.ranking.flatMap((entry) => {
+    const group = byPerson.get(personKey(entry.person));
+    if (!group?.length) return [];
+    return [
+      {
+        ...entry,
+        nearPunches: group.length,
+        nearDays: new Set(group.map(({ punch }) => punch.work_date)).size,
+        // Keep the period's GPS base; selection must not change the source denominator.
+        nearRate: entry.validPunches ? (group.length / entry.validPunches) * 100 : 0,
+        lastNearDate: group
+          .map(({ punch }) => punch.work_date)
+          .sort()
+          .at(-1)!,
+        nearestDistanceMeters: group.reduce(
+          (minimum, item) => Math.min(minimum, item.distanceMeters),
+          Infinity,
+        ),
+      },
+    ];
+  });
   return { ranking, details };
 }
 
