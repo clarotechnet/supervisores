@@ -5,6 +5,23 @@ export function isTechnicalVisitSector(sector: unknown): boolean {
   return nameKey(sector) === "VISITA TECNICA";
 }
 
+
+const EXCLUDED_TECHNICAL_VISIT_SERVICES = new Set([
+  "MUDANCA DE ENDERECO",
+  "INSTALACAO",
+  "MUDANCA DE PACOTE",
+  "INST GPON - INST CABO",
+  "TROCA DE EQUIPAMENTO STREAMING",
+]);
+
+/** Exact TIPO_SERVICO exclusions, independent of the login's registered VT sector. */
+export function isExcludedTechnicalVisitService(service: unknown): boolean {
+  const key = nameKey(service)
+    .replace(/[‐‑‒–—−]/g, "-")
+    .replace(/\s*-\s*/g, " - ");
+  return EXCLUDED_TECHNICAL_VISIT_SERVICES.has(key);
+}
+
 /** View-only selection. Imports/cache retain the complete, original dataset. */
 export function technicalVisitState(
   state: QualityState,
@@ -18,8 +35,10 @@ export function technicalVisitState(
       ...state.datasets,
       technical_visit: {
         ...dataset,
-        records: dataset.records.filter((record) =>
-          isTechnicalVisitSector(index.get(normalizeLogin(record["login"]))?.sector),
+        records: dataset.records.filter(
+          (record) =>
+            isTechnicalVisitSector(index.get(normalizeLogin(record["login"]))?.sector) &&
+            !isExcludedTechnicalVisitService(record["service"] ?? record["TIPO_SERVICO"]),
         ),
       },
     },
