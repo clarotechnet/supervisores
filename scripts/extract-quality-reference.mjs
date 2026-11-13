@@ -332,6 +332,72 @@ for (const [kind, id, name] of [
       );
   }
   if (kind === "tc") {
+    // Apply the same city-specific productivity policy as the maintained renderer.
+    const cityProductivity = [
+      [
+        "function tcRule(){return referenceCertificationRule(environment.technicalVisit);}",
+        "let tcVisibleCities=[];\n    function tcRule(a){return referenceCertificationRule(environment.technicalVisit,a?.cities??tcVisibleCities);}",
+      ],
+      ["function tcProdOK(v){const t=tcRule();", "function tcProdOK(v,a){const t=tcRule(a);"],
+      [
+        "function tcRefreshRuleLabels(){",
+        "function tcRefreshRuleLabels(){tcVisibleCities=uniq(state.rows.filter(rowPass).map(r=>r.city));",
+      ],
+      [
+        "$('#prodMeta').textContent='≥ '+tcRule().prod+' pontos/dia';",
+        "$('#prodMeta').textContent=tcMetricTarget('prod');",
+      ],
+      [
+        "$('#fRule option[value=\"fixed\"]').textContent='Todas as operações · ≥ '+tcRule().prod+' pontos/dia';",
+        "$('#fRule option[value=\"fixed\"]').textContent='Regra do recorte · '+tcMetricTarget('prod');",
+      ],
+      ["prodOK=tcProdOK(a.prod)", "prodOK=tcProdOK(a.prod,a)"],
+      ["function goodMetric(v, k)", "function goodMetric(v, k, a)"],
+      ["tcTecOK(v) : tcProdOK(v)", "tcTecOK(v) : tcProdOK(v,a)"],
+      ["goodMetric(avg, k)", "goodMetric(avg, k, a)"],
+      ["goodMetric(v, k) ?", "goodMetric(v, k, a) ?"],
+      ["goodMetric(o.avg, state.metric)", "goodMetric(o.avg, state.metric, o.a)"],
+      ["goodMetric(v, state.metric)", "goodMetric(v, state.metric, o.a)"],
+      [
+        "['prod', 'PONTOS/DIA', 'meta '+(tcRule().strict?'>':'≥')+' '+tcRule().prod]",
+        "['prod', 'PONTOS/DIA', 'meta '+tcMetricTarget('prod')]",
+      ],
+      ["who, S, 'prod', tcRule().prod,", "who, S, 'prod', tcRule(a).prod,"],
+      [
+        "A produtividade usa o limite inclusivo de ${tcRule().prod} pontos/dia informado nesta revisão.",
+        "Produtividade no recorte: ${esc(tcMetricTarget('prod'))}. A regra é aplicada por técnico conforme os municípios dos seus atendimentos.",
+      ],
+      [
+        "function tcMetricTarget(k){const t=tcRule();return",
+        "function tcMetricTarget(k,a){const t=tcRule(a);if(k==='prod'&&!a)return referenceProductivityTarget(environment.technicalVisit,tcVisibleCities);return",
+      ],
+      ["goodMetric(value,k)", "goodMetric(value,k,a)"],
+      ["!tcProdOK(days.get(r.day))", "!tcProdOK(days.get(r.day),a)"],
+      ["goodMetric(ctx.value,k)", "goodMetric(ctx.value,k,ctx.totals)"],
+      [
+        "<small>Meta ${tcMetricTarget(k)}</small>",
+        "<small>Meta ${tcMetricTarget(k,ctx.totals)}</small>",
+      ],
+      ["!tcProdOK(total)", "!tcProdOK(total,ctx.a)"],
+      ["const rule=tcRule(),D=ctx.workDays", "const rule=tcRule(a),D=ctx.workDays"],
+      ["tcProdOK(current.prod)", "tcProdOK(current.prod,current)"],
+      [
+        "<small>Meta ${esc(tcMetricTarget(k))}</small>",
+        "<small>Meta ${esc(tcMetricTarget(k,a))}</small>",
+      ],
+      ["function tcSupervisorValue(value,key){", "function tcSupervisorValue(value,key,a){"],
+      ["tcProdOK(value),label=", "tcProdOK(value,a),label="],
+      ["Meta ≥ '+tcRule().prod+'", "'+esc(tcMetricTarget('prod'))+'"],
+      ["tcSupervisorValue(s.prod,'prod')", "tcSupervisorValue(s.prod,'prod',s)"],
+      [
+        "return {n:items.length,evaluated,certified,score:",
+        "return {cities:new Set(items.flatMap(a=>[...a.cities])),n:items.length,evaluated,certified,score:",
+      ],
+    ];
+    for (const [from, to] of cityProductivity) {
+      if (!code.includes(from)) throw Error("Review TC city-productivity adapter: " + from);
+      code = code.replaceAll(from, to);
+    }
     code = code
       .replace(
         "root.querySelector('[data-tc-all]').onchange=()=>window.setUnifiedMonths([]);",
@@ -340,6 +406,10 @@ for (const [kind, id, name] of [
       .replace(
         "root.querySelectorAll('[data-tc-month]').forEach(box=>box.onchange=()=>{const values=[...root.querySelectorAll('[data-tc-month]:checked')].map(x=>x.dataset.tcMonth);if(!values.length){box.checked=true;return;}window.setUnifiedMonths(values);});",
         "root.querySelectorAll('[data-tc-month]').forEach(box=>box.onchange=()=>window.setUnifiedMonths(referenceMonthSelection(months,selected,box.dataset.tcMonth,box.checked)));",
+      )
+      .replace(
+        "state.selectedMonths=defaults?[]:tcSelectedMonths().filter(m=>available.includes(m));",
+        "state.selectedMonths=defaults?(environment.technicalVisit?[]:referenceMonthSelection(available,[],'*',false)):tcSelectedMonths().filter(m=>available.includes(m));",
       );
   }
   const load =
@@ -414,7 +484,7 @@ for (const [kind, id, name] of [
   `;
   const imports =
     kind === "tc"
-      ? 'import { referenceCertificationRule } from "../reference-certification-rule";\nimport { referenceCityMembers } from "../reference-city-members";\nimport { referenceTCMonth } from "../reference-tc-month";\nimport { referenceMonthSelection } from "../reference-month-selection";\nimport { referenceTCClosing, referenceTCRecordMonth, referenceTCPeriodDescription } from "../reference-tc-period";\n'
+      ? 'import { referenceCertificationRule, referenceProductivityTarget } from "../reference-certification-rule";\nimport { referenceCityMembers } from "../reference-city-members";\nimport { referenceTCMonth } from "../reference-tc-month";\nimport { referenceMonthSelection } from "../reference-month-selection";\nimport { referenceTCClosing, referenceTCRecordMonth, referenceTCPeriodDescription } from "../reference-tc-period";\n'
       : 'import { qqChartPointMarkup, wireQQChartDrilldown } from "../reference-qq-charts";\nimport { bindQQMigrationGoal } from "../reference-qq-goals";\n';
   const output = `// Reviewed reference ${hash}; generated visual engine. No personal seed data.\n${imports}export function ${name}(environment) {\nconst {document,window,localStorage,location,ResizeObserver,setTimeout,clearTimeout,requestAnimationFrame}=environment;\n${code}\n${load}\nreturn window;\n}\n`;
   fs.writeFileSync(`${folder}/${kind}-engine.js`, output);

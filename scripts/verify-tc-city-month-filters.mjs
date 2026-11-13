@@ -97,7 +97,7 @@ try {
       const root = createRoot(document.getElementById("host"));
       window.tcCitySource = tc;
       window.tcCityOriginal = JSON.stringify(tc);
-      window.renderTcCity = (withJanuary = false, technicalVisit = false) => {
+      window.renderTcCity = (withJanuary = false, technicalVisit = false, instance = "qq") => {
         const rows = withJanuary
           ? [
               ...tc,
@@ -115,7 +115,7 @@ try {
           : tc;
         root.render(
           React.createElement(ReferenceQualitySurface, {
-            key: technicalVisit ? "vt" : "qq",
+            key: technicalVisit ? "vt" : instance,
             qq: [],
             tc: rows,
             index,
@@ -171,8 +171,7 @@ try {
       .locator("#monthOptions [data-month]:checked")
       .evaluateAll((boxes) => boxes.map((box) => box.dataset.month));
   await page.locator("#monthPicker > summary").click();
-  assert.equal(await all.isChecked(), true);
-  await all.click();
+  assert.equal(await all.isChecked(), false);
   assert.deepEqual(await checkedMonths(), ["2026-11"]);
   assert.equal(await page.locator("#monthPickerLabel").innerText(), "11/2026");
   assert.doesNotMatch(await root.locator("#tcHead").innerText(), /SETEMBRO|OUTUBRO/i);
@@ -207,10 +206,23 @@ try {
   await page.evaluate(() => window.renderTcCity(true));
   await page.locator("#monthPicker > summary").click();
   await page.locator('#monthOptions [data-month="2027-01"]').waitFor();
+  assert.equal(
+    await page.locator("#monthPickerLabel").innerText(),
+    "11/2026",
+    "refresh preserves an explicit selection",
+  );
   await all.click();
   await all.click();
   assert.deepEqual(await checkedMonths(), ["2027-01"]);
   assert.equal(await page.locator("#monthPickerLabel").innerText(), "01/2027");
+  await page.evaluate(() => window.renderTcCity(true, false, "fresh-january"));
+  await page.locator("#goTC").click();
+  assert.equal(
+    await page.locator("#monthPickerLabel").innerText(),
+    "01/2027",
+    "fresh opening defaults to the latest available year/month",
+  );
+  assert.deepEqual(await checkedMonths(), ["2027-01"]);
   await page.evaluate(() => window.renderTcCity(false, true));
   await root.locator('[data-tc-current-login="GOI"]').waitFor();
   assert.equal(
@@ -219,6 +231,11 @@ try {
     "VT keeps its existing registry-based city assignment",
   );
   assert.equal(await city("Recife").count(), 1);
+  assert.equal(
+    await page.locator("#monthPickerLabel").innerText(),
+    "Todos os meses",
+    "VT keeps its existing default",
+  );
   assert.equal(
     await page.evaluate(() => JSON.stringify(window.tcCitySource) === window.tcCityOriginal),
     true,
