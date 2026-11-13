@@ -9,6 +9,7 @@ export interface QuarkLocationReportFilters {
   city?: string;
   sector?: string;
   supervisor?: string;
+  punchSelection?: string;
 }
 
 export async function createQuarkLocationWorkbook(
@@ -37,6 +38,10 @@ export async function createQuarkLocationWorkbook(
     tab.addRow(["TECHNET | QUARK • RELATÓRIO DE PROXIMIDADE"]);
     tab.addRow(["Início", startDate, "Fim", endDate]);
     tab.addRow(["Raio (m)", radiusMeters, "Critério", "GPS a até o raio da moradia"]);
+    if (kind === "individual") {
+      tab.getCell("E3").value = "Seleção de registros";
+      tab.getCell("F3").value = filters.punchSelection ?? "Todas as batidas próximas";
+    }
     tab.addRow([
       "Informativo: proximidade geográfica não determina, isoladamente, irregularidade.",
     ]);
@@ -120,10 +125,10 @@ export async function createQuarkLocationWorkbook(
         "Cidade",
         "Setor",
         "Supervisor",
-        "Batidas próximas",
-        "Dias distintos",
-        "Batidas com GPS",
-        "% próximas / GPS",
+        kind === "individual" ? "Batidas selecionadas" : "Batidas próximas",
+        kind === "individual" ? "Dias com seleção" : "Dias distintos",
+        kind === "individual" ? "Batidas com GPS no período" : "Batidas com GPS",
+        kind === "individual" ? "% selecionadas / GPS do período" : "% próximas / GPS",
         "Último dia próximo",
         "Menor distância (m)",
       ],
@@ -159,8 +164,9 @@ export async function createQuarkLocationWorkbook(
         "Longitude",
         "Local informado",
         "Coordenadas no mapa",
+        ...(kind === "individual" ? ["Batida do dia"] : []),
       ],
-      details.map(({ person, punch, distanceMeters }) => [
+      details.map(({ person, punch, distanceMeters, dayNumber }) => [
         person.full_name,
         person.directory?.supervisor ?? "",
         person.unit_name,
@@ -173,8 +179,9 @@ export async function createQuarkLocationWorkbook(
         punch.latitude !== null && punch.longitude !== null
           ? `https://www.google.com/maps?q=${punch.latitude},${punch.longitude}`
           : "",
+        ...(kind === "individual" ? [dayNumber] : []),
       ]),
-      [42, 26, 32, 18, 14, 18, 19, 19, 50, 63],
+      [42, 26, 32, 18, 14, 18, 19, 19, 50, 63, ...(kind === "individual" ? [18] : [])],
     );
   }
 

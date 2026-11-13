@@ -25,6 +25,8 @@ import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
 import { QuarkGate } from "@/components/QuarkGate";
 import { QuarkLocationMap } from "@/components/QuarkLocationMap";
+import { QuarkHomeRadiusInput } from "@/components/QuarkHomeRadiusInput";
+import { QuarkNearPunchSelection } from "@/components/QuarkNearPunchSelection";
 import { QuarkBankHours } from "@/components/QuarkBankHours";
 import { Button } from "@/components/ui/button";
 import {
@@ -73,7 +75,11 @@ import {
   type QuarkSyncRun,
 } from "@/lib/quark";
 import { parseDirectoryWorkbook } from "@/lib/quark-directory-import";
-import { buildQuarkNearHomeReport, numberedQuarkPunchesByDay } from "@/lib/quark-location-report";
+import {
+  buildQuarkNearHomeReport,
+  numberedQuarkPunchesByDay,
+  selectQuarkNearPunches,
+} from "@/lib/quark-location-report";
 import { createQuarkLocationWorkbook } from "@/lib/quark-location-export";
 import {
   deleteQuarkDirectory,
@@ -199,6 +205,7 @@ function QuarkPage() {
   const [mapPerson, setMapPerson] = useState<QuarkPersonView | null>(null);
   const [mapMode, setMapMode] = useState<"day" | "month" | "period">("month");
   const [mapNearHomeOnly, setMapNearHomeOnly] = useState(false);
+  const [mapSelectedNearIds, setMapSelectedNearIds] = useState<string[] | null>(null);
   const [mapDate, setMapDate] = useState(endDate);
   const [mapMonth, setMapMonth] = useState(endDate.slice(0, 7));
   const [syncingLocations, setSyncingLocations] = useState(false);
@@ -444,6 +451,27 @@ function QuarkPage() {
         ),
       );
   }, [mapPerson, mapRange, punches, todayKey]);
+  // Original day numbers remain informative; selection uses the unique nearby record IDs.
+  const mapDayNumbers = useMemo(() => numberedQuarkPunchesByDay(mapPunches), [mapPunches]);
+  const availableIndividualNearReport = useMemo(
+    () => buildQuarkNearHomeReport(mapPerson ? [mapPerson] : [], mapPunches, homeRadiusMeters),
+    [mapPerson, mapPunches, homeRadiusMeters],
+  );
+  const individualNearReport = useMemo(
+    () => selectQuarkNearPunches(availableIndividualNearReport, mapSelectedNearIds),
+    [availableIndividualNearReport, mapSelectedNearIds],
+  );
+  const mapNearSelectionRows = useMemo(
+    () =>
+      [...availableIndividualNearReport.details].sort(
+        (a, b) =>
+          `${a.punch.work_date} ${a.punch.punch_time ?? ""}`.localeCompare(
+            `${b.punch.work_date} ${b.punch.punch_time ?? ""}`,
+          ) || a.punch.point_id.localeCompare(b.punch.point_id),
+      ),
+    [availableIndividualNearReport],
+  );
+  const mapSelectionLabel = `${individualNearReport.details.length} de ${availableIndividualNearReport.details.length} batida(s) próxima(s) selecionada(s)`;
   const mapStats = useMemo(() => {
     let near = 0;
     let outside = 0;
@@ -474,35 +502,15 @@ function QuarkPage() {
     };
   }, [mapPunches, mapPerson, homeRadiusMeters]);
   const mapNearHomeDates = useMemo(() => {
-    const dates = new Set<string>();
-    if (!mapPerson?.home) return dates;
-    for (const punch of mapPunches) {
-      if (punch.latitude === null || punch.longitude === null) continue;
-      const meters = distanceMeters(
-        punch.latitude,
-        punch.longitude,
-        mapPerson.home.latitude,
-        mapPerson.home.longitude,
-      );
-      if (meters <= homeRadiusMeters) dates.add(punch.work_date);
-    }
-    return dates;
-  }, [mapPunches, mapPerson, homeRadiusMeters]);
+    return new Set(individualNearReport.details.map(({ punch }) => punch.work_date));
+  }, [individualNearReport]);
   const mapNearPunches = useMemo(() => {
-    if (!mapPerson?.home) return [];
-    const home = mapPerson.home;
-    return mapPunches.filter(
-      (punch) =>
-        punch.latitude !== null &&
-        punch.longitude !== null &&
-        distanceMeters(punch.latitude, punch.longitude, home.latitude, home.longitude) <=
-          homeRadiusMeters,
-    );
-  }, [mapPunches, mapPerson, homeRadiusMeters]);
+    const selected = new Set(individualNearReport.details.map(({ punch }) => punch.point_id));
+    return mapPunches.filter((punch) => selected.has(punch.point_id));
+  }, [mapPunches, individualNearReport]);
   const visibleMapPunches = mapNearHomeOnly ? mapNearPunches : mapPunches;
   // Keep the original 1st/2nd/3rd/4th punch of each day even while
   // rendering only the punches near home. Do not renumber the filtered subset.
-  const mapDayNumbers = useMemo(() => numberedQuarkPunchesByDay(mapPunches), [mapPunches]);
   const mapNearHighlights = useMemo(
     () =>
       [...mapNearPunches]
@@ -560,10 +568,7 @@ function QuarkPage() {
     if (exportingReport) return;
     setExportingReport(true);
     try {
-      const report =
-        kind === "individual" && mapPerson
-          ? buildQuarkNearHomeReport([mapPerson], mapPunches, homeRadiusMeters)
-          : nearReport;
+      const report = kind === "individual" && mapPerson ? individualNearReport : nearReport;
       const rangeStart = kind === "individual" ? mapRange.startDate : startDate;
       const rangeEnd = kind === "individual" ? mapRange.endDate : endDate;
       const bytes = await createQuarkLocationWorkbook(
@@ -580,7 +585,9 @@ function QuarkPage() {
               sector: sector === "all" ? "Todos" : sector,
               supervisor: supervisor === "all" ? "Todos" : supervisor,
             }
-          : {},
+          : kind === "individual"
+            ? { punchSelection: mapSelectionLabel }
+            : {},
       );
       const blob = new Blob([bytes], {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -744,6 +751,7 @@ function QuarkPage() {
     // Same date interval as the team summary: identical radius + punches = identical totals.
     setMapMode("period");
     setMapNearHomeOnly(false);
+    setMapSelectedNearIds(null);
     setMapRefreshedKey(null);
     setMapPerson(person);
   }
@@ -1272,22 +1280,10 @@ function QuarkPage() {
                 </p>
               </div>
               <div className="w-full sm:w-48">
-                <Label>Distância considerada próxima</Label>
-                <Select
-                  value={String(homeRadiusMeters)}
-                  onValueChange={(value) => setHomeRadiusMeters(Number(value))}
-                >
-                  <SelectTrigger className="mt-1.5">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {[100, 200, 300, 500, 1000, 2000].map((value) => (
-                      <SelectItem key={value} value={String(value)}>
-                        {value >= 1000 ? `${value / 1000} km` : `${value} metros`}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <QuarkHomeRadiusInput
+                  valueMeters={homeRadiusMeters}
+                  onChange={setHomeRadiusMeters}
+                />
               </div>
             </div>
 
@@ -1955,22 +1951,11 @@ function QuarkPage() {
                 )}
 
                 <div className="grid gap-1.5">
-                  <Label>Raio da moradia</Label>
-                  <Select
-                    value={String(homeRadiusMeters)}
-                    onValueChange={(value) => setHomeRadiusMeters(Number(value))}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {[100, 200, 300, 500, 1000, 2000].map((value) => (
-                        <SelectItem key={value} value={String(value)}>
-                          {value >= 1000 ? `${value / 1000} km` : `${value} m`}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <QuarkHomeRadiusInput
+                    label="Raio da moradia"
+                    valueMeters={homeRadiusMeters}
+                    onChange={setHomeRadiusMeters}
+                  />
                 </div>
 
                 <div className="grid gap-1.5 md:col-span-2 xl:col-span-1">
@@ -2007,40 +1992,51 @@ function QuarkPage() {
                 </div>
               )}
 
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-3">
-                <div>
-                  <b className="text-xs">Relatório individual de batidas próximas</b>
-                  <p className="mt-1 text-[10px] text-muted-foreground">
-                    Salve ou imprima a análise deste colaborador com apenas as batidas a até{" "}
-                    {homeRadiusMeters} m da moradia.
-                  </p>
+              <div className="space-y-3 rounded-xl border border-border bg-card p-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <b className="text-xs">Relatório individual de batidas próximas</b>
+                    <p className="mt-1 text-[10px] text-muted-foreground">
+                      Salve ou imprima a análise deste colaborador com apenas as batidas a até{" "}
+                      {homeRadiusMeters} m da moradia.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={exportingReport || !mapNearPunches.length || mapHasUnloadedRange}
+                      onClick={() => void saveIndividualImage()}
+                    >
+                      <ImageDown className="size-4" /> Salvar imagem PNG
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={exportingReport || !mapNearPunches.length || mapHasUnloadedRange}
+                      onClick={() => void printIndividualReport()}
+                    >
+                      <Printer className="size-4" /> Imprimir / PDF
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={exportingReport || !mapNearPunches.length || mapHasUnloadedRange}
+                      onClick={() => void downloadNearReport("individual")}
+                    >
+                      <FileDown className="size-4" /> XLSX individual
+                    </Button>
+                  </div>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={exportingReport || !mapNearPunches.length || mapHasUnloadedRange}
-                    onClick={() => void saveIndividualImage()}
-                  >
-                    <ImageDown className="size-4" /> Salvar imagem PNG
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={exportingReport || !mapNearPunches.length || mapHasUnloadedRange}
-                    onClick={() => void printIndividualReport()}
-                  >
-                    <Printer className="size-4" /> Imprimir / PDF
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={exportingReport || !mapNearPunches.length || mapHasUnloadedRange}
-                    onClick={() => void downloadNearReport("individual")}
-                  >
-                    <FileDown className="size-4" /> XLSX individual
-                  </Button>
-                </div>
+                <QuarkNearPunchSelection
+                  punches={mapNearSelectionRows}
+                  selected={mapSelectedNearIds}
+                  disabled={exportingReport}
+                  onChange={(ids) => {
+                    setMapSelectedNearIds(ids);
+                    setMapNearHomeOnly(true);
+                  }}
+                />
               </div>
 
               <div
@@ -2060,6 +2056,9 @@ function QuarkPage() {
                     Moradia: {mapPerson.home?.address ?? "Não cadastrada"} ·{" "}
                     {localeDate(mapRange.startDate)} a {localeDate(mapRange.endDate)} · Raio:{" "}
                     {homeRadiusMeters} metros
+                  </p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Relatório: {mapSelectionLabel}
                   </p>
                   <p className="mt-1 text-[10px] text-muted-foreground">
                     Conferência operacional baseada em GPS; proximidade não comprova irregularidade.
@@ -2133,9 +2132,9 @@ function QuarkPage() {
                     data-quark-report-filter
                     className="rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-muted-foreground"
                   >
-                    Filtro ativo: mostrando apenas {mapNearPunches.length} batida(s) dentro de{" "}
-                    {homeRadiusMeters} m da moradia, em {mapNearHomeDates.size} dia(s). O mapa e a
-                    tabela abaixo mostram exatamente os mesmos registros. Clique em{" "}
+                    Filtro ativo: mostrando {mapNearPunches.length} batida(s) selecionada(s), dentro
+                    de {homeRadiusMeters} m da moradia, em {mapNearHomeDates.size} dia(s). O mapa e
+                    a tabela abaixo mostram exatamente os mesmos registros. Clique em{" "}
                     <b className="mx-1 text-foreground">Próximas</b>
                     para voltar a todas as batidas.
                   </div>
@@ -2247,7 +2246,7 @@ function QuarkPage() {
                       <Empty
                         text={
                           mapNearHomeOnly
-                            ? "Nenhum dia com batida próxima da moradia neste recorte."
+                            ? "Nenhuma batida próxima selecionada. Marque os registros desejados na lista do relatório acima."
                             : "Nenhuma batida carregada para este recorte. Use Atualizar pela API."
                         }
                       />
