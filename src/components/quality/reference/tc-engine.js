@@ -561,6 +561,8 @@ function tcTrend(value,previous,key){
  const up=delta>0,better=key==='revisit'?!up:up;
  return {direction:up?'up':'down',outcome:better?'improved':'worsened',symbol:up?'↑':'↓',delta};
 }
+
+
 function tcTrendDelta(t,key){
  if(t.delta==null)return '';
  return (t.delta>0?'+':t.delta<0?'−':'')+nf2.format(Math.abs(t.delta)*(key==='prod'?1:100))+(key==='prod'?' pontos/dia':' p.p.');

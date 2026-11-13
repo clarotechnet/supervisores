@@ -355,10 +355,10 @@ export function QualityDashboard({
           <>
             {technicalVisit && loading.tcReady && (
               <p role="status" className="quality-vt-scope-notice">
-                Visita técnica: somente logins com esse setor no cadastro · {hydrated.tc.length}{" "}
-                registros considerados.
+                Visita técnica: somente logins com esse setor no cadastro e serviços elegíveis ·{" "}
+                {hydrated.tc.length} registros considerados.
                 {!hydrated.tc.length &&
-                  " Cadastre os logins ou ajuste o setor para Visita técnica em QQ e Certificação."}
+                  " Confira o setor dos logins e o TIPO_SERVICO: os serviços excluídos não entram neste painel."}
               </p>
             )}
             {!technicalVisit && loading.qq.error && (
