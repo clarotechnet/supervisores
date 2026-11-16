@@ -1,3 +1,11 @@
+import type {
+  PublicationReview,
+  PublicationExceptionInput,
+} from "../../supabase/functions/_shared/schedule-publication-exception";
+export type {
+  PublicationReview,
+  PublicationExceptionInput,
+} from "../../supabase/functions/_shared/schedule-publication-exception";
 import { supabase } from "@/integrations/supabase/client";
 import type { Json, Database } from "@/integrations/supabase/types";
 import type { SchedulePayload } from "@/lib/types";
@@ -79,7 +87,7 @@ export async function fetchOperationalChanges(sheetId: string): Promise<Operatio
 }
 
 async function invoke(
-  action: "create" | "sync" | "publish" | "delete" | "inspect_delete" | "read",
+  action: "create" | "sync" | "publish" | "delete" | "inspect_delete" | "read" | "review_publish",
   props: {
     draftId?: string;
     sheetId?: string;
@@ -87,6 +95,7 @@ async function invoke(
     confirmation?: string;
     confirmedGridId?: number;
     expectedUpdatedAt?: string;
+    exception?: PublicationExceptionInput;
   },
 ) {
   const { data, error } = await supabase.functions.invoke("schedule-operational", {
@@ -110,6 +119,8 @@ async function invoke(
     ok: boolean;
     existing?: boolean;
     published?: boolean;
+    publishedWithException?: boolean;
+    review?: PublicationReview;
     deleted?: boolean;
     officialId?: string;
     sheetId: string;
@@ -157,8 +168,33 @@ export const deleteOperationalSheet = (
       : {}),
   });
 /** A revisão escolhida é vinculada e publicada atomicamente, sem copiar a aba. */
-export const publishOperationalSheet = (sheetId: string, draftId?: string) =>
-  invoke("publish", { sheetId, ...(draftId ? { draftId } : {}) });
+export const publishOperationalSheet = (
+  sheetId: string,
+  draftId?: string,
+  exception?: PublicationExceptionInput,
+) =>
+  invoke("publish", {
+    sheetId,
+    ...(draftId ? { draftId } : {}),
+    ...(exception ? { exception } : {}),
+  });
+export async function reviewOperationalPublication(
+  sheetId: string,
+  draftId: string,
+): Promise<PublicationReview> {
+  const result = await invoke("review_publish", { sheetId, draftId });
+  if (
+    !result.review ||
+    result.review.sheetId !== sheetId ||
+    result.review.draftId !== draftId ||
+    !Array.isArray(result.review.issues) ||
+    !/^[a-f0-9]{64}$/.test(result.review.reviewToken)
+  )
+    throw Error(
+      "O servidor não confirmou a revisão das pendências. Atualize as funções do sistema.",
+    );
+  return result.review;
+}
 
 export function publicationSheetForDraft(
   draft: Pick<GenerationDraft, "id" | "city" | "sector" | "schedule_month">,

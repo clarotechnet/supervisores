@@ -1,3 +1,4 @@
+import { controlFullName } from "../src/lib/schedule-control-names";
 import { describe, expect, it } from "vitest";
 import type { ScheduleUpload } from "../src/lib/types";
 import {
@@ -58,9 +59,11 @@ describe("Controle RN: implantação inicial dezembro 2026 (modelo Excel)", () =
   it("não prolonga Férias de novembro se a referência traz escala explícita em dezembro", () => {
     const s = november();
     const p = generateInitialControlDecemberPreview(s);
-    expect(p.payload.people.find((x) => x.name === "ANA PATRICIA")?.assignments["2026-12-01"]).toBe(
-      "T. 1",
-    );
+    expect(
+      p.payload.people.find((x) => x.name === controlFullName("ANA PATRICIA"))?.assignments[
+        "2026-12-01"
+      ],
+    ).toBe("T. 1");
     expect(
       p.warnings.some(
         (s) => s.includes("ANA PATRICIA") && s.includes("confirmar data efetiva de retorno"),
@@ -77,47 +80,53 @@ describe("Controle RN: implantação inicial dezembro 2026 (modelo Excel)", () =
   });
   it("preserva plantões e folgas de 01 a 04/01 no rascunho e na planilha editável", () => {
     const p = generateInitialControlDecemberPreview(november());
-    const rosa = p.payload.people.findIndex((x) => x.name === "ROSA FERNANDA");
+    const rosa = p.payload.people.findIndex((x) => x.name === controlFullName("ROSA FERNANDA"));
     expect(p.outsideAssignments[rosa]?.["2027-01-01"]).toBe("PLANTÃO");
     expect(p.outsideAssignments[rosa]?.["2027-01-04"]).toBe("T. 1");
     const operational = operationalFromDraft(p.payload, p.calendarWeeks, p.outsideAssignments);
     expect(operational.dates[0]).toBe("2026-11-29");
     expect(operational.dates.at(-1)).toBe("2027-01-04");
     expect(operational.dates).toHaveLength(37);
-    const draft = operational.people.find((x) => x.name === "ROSA FERNANDA")!;
+    const draft = operational.people.find((x) => x.name === controlFullName("ROSA FERNANDA"))!;
     expect(draft.assignments["2027-01-01"]).toBe("PLANTÃO");
     expect(draft.assignments["2027-01-04"]).toBe("T. 1");
     expect(draft.login).toMatch(/^Z/);
   });
   it("avisa somente violações reais do modelo e não ajusta 6x1 de exceções silenciosamente", () => {
     const p = generateInitialControlDecemberPreview(november());
-    const jose = p.payload.people.find((x) => x.name === "JOSE VICTOR")!;
+    const jose = p.payload.people.find((x) => x.name === controlFullName("JOSE VICTOR"))!;
     expect(jose.assignments["2026-12-08"]).toBe("Folga");
     // Four corrected employees now have the missing rest days in the UPDATED Excel.
     for (const name of ["JOSE VICTOR", "STUART ARAUJO", "EVANIO", "ANA PATRICIA"]) {
-      expect(p.blockingIssues.some((s) => s.startsWith(name + ": referência de dezembro"))).toBe(
-        false,
-      );
+      expect(
+        p.blockingIssues.some((s) =>
+          s.startsWith(controlFullName(name) + ": referência de dezembro"),
+        ),
+      ).toBe(false);
     }
     expect(p.blockingIssues.filter((s) => s.includes("confirmar exceção 5x2"))).toHaveLength(0);
     // MARTA foi falsamente sinalizada no agrupamento segunda–domingo.
     // Domingo 13/12 pertence à semana 13–19, distinta de 06–12.
-    expect(p.blockingIssues.some((s) => s.startsWith("MARTA MARIA: referência de dezembro"))).toBe(
-      false,
-    );
+    expect(
+      p.blockingIssues.some((s) =>
+        s.startsWith(controlFullName("MARTA MARIA") + ": referência de dezembro"),
+      ),
+    ).toBe(false);
     expect(p.calendarWeeks.some((w) => w[0] === "2026-12-06" && w[6] === "2026-12-12")).toBe(true);
     expect(p.blockingIssues.every((s) => !s.includes("folga fixa não identificada"))).toBe(true);
   });
   it("MARTA tem plantão domingo 06/12 e folgas na segunda 07 e sexta 11", () => {
     const p = generateInitialControlDecemberPreview(november());
-    const m = p.payload.people.find((x) => x.name === "MARTA MARIA")!;
+    const m = p.payload.people.find((x) => x.name === controlFullName("MARTA MARIA"))!;
     expect(m.assignments["2026-12-06"]).toBe("PLANTÃO");
     expect(m.assignments["2026-12-07"]).toBe("Folga");
     expect(m.assignments["2026-12-11"]).toBe("Folga");
     const week = p.calendarWeeks.find((w) => w[0] === "2026-12-06")!;
     expect(week.filter((d) => m.assignments[d] === "Folga")).toHaveLength(2);
     expect(m.assignments["2026-12-13"]).toBe("Folga");
-    expect(p.blockingIssues.some((s) => s.startsWith("MARTA MARIA: referência"))).toBe(false);
+    expect(
+      p.blockingIssues.some((s) => s.startsWith(controlFullName("MARTA MARIA") + ": referência")),
+    ).toBe(false);
   });
   it("janeiro continua usando dezembro como mês base, fora do fluxo de implantação", () => {
     const ref = generateInitialControlDecemberPreview(november());
@@ -129,7 +138,9 @@ describe("Controle RN: implantação inicial dezembro 2026 (modelo Excel)", () =
     };
     const jan = generateSchedulePreview(source, "2027-01");
     expect(
-      jan.payload.people.find((p) => p.name === "ROSA FERNANDA")?.assignments["2027-01-04"],
+      jan.payload.people.find((p) => p.name === controlFullName("ROSA FERNANDA"))?.assignments[
+        "2027-01-04"
+      ],
     ).toBe("T. 1");
     expect(jan.sourceMonth).toBe("2026-12");
   });

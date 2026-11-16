@@ -707,3 +707,260 @@ Deno.test("invalid publication draft ID is rejected before Google", async () => 
     "invalid id accepted",
   );
 });
+
+Deno.test("publication review reads Google but never changes Sheets or database", async () => {
+  const normal = revisionFixture();
+  mock.rowsByTable["schedule_generation_drafts"]!["warnings"] = [
+    { level: "blocking", message: "03/01: plantão mínimo 3, atual 2" },
+  ];
+  const result = await run("review_publish", undefined, normal, { draftId: selectedId });
+  assert(result.response.status === 200, JSON.stringify(result.body));
+  assert(
+    result.body.review.issues.some((issue: { source: string }) => issue.source === "saved"),
+    "saved issue missing",
+  );
+  assert(
+    result.body.writeActions === 0 && mock.rpcCalls.length === 0 && mock.mutationCalls.length === 0,
+    "review mutated data",
+  );
+  assert(/^[a-f0-9]{64}$/.test(result.body.review.reviewToken), "review not bound to snapshot");
+});
+Deno.test("only active administrators can review or accept an exception", async () => {
+  for (const [role, status] of [
+    ["supervisor", "active"],
+    ["controller", "active"],
+    ["admin", "blocked"],
+  ]) {
+    for (const action of ["review_publish", "publish"]) {
+      const normal = revisionFixture();
+      mock.role = role!;
+      mock.status = status!;
+      const result = await run(action, undefined, normal, {
+        draftId: selectedId,
+        ...(action === "publish"
+          ? {
+              exception: {
+                reason: "Cobertura será completada pela equipe de apoio.",
+                acknowledged: true,
+                reviewToken: "a".repeat(64),
+              },
+            }
+          : {}),
+      });
+      assert(
+        result.response.status === 403 && !result.googleCalls.length && !mock.rpcCalls.length,
+        "role bypassed",
+      );
+    }
+  }
+});
+Deno.test(
+  "exception requires justification, acknowledgment, selected revision and valid token before any writes",
+  async () => {
+    for (const exception of [
+      null,
+      {},
+      { reason: "curta" },
+      { reason: "x".repeat(2001), acknowledged: true, reviewToken: "a".repeat(64) },
+      {
+        reason: "Motivo suficientemente detalhado",
+        acknowledged: false,
+        reviewToken: "a".repeat(64),
+      },
+      { reason: "Motivo suficientemente detalhado", acknowledged: true, reviewToken: "false" },
+    ]) {
+      const normal = revisionFixture();
+      const result = await run("publish", undefined, normal, { draftId: selectedId, exception });
+      assert(
+        result.response.status === 400 && !result.googleCalls.length && !mock.rpcCalls.length,
+        "invalid exception accepted",
+      );
+    }
+    const normal = revisionFixture();
+    const result = await run("publish", undefined, normal, {
+      exception: {
+        reason: "Motivo suficientemente detalhado",
+        acknowledged: true,
+        reviewToken: "a".repeat(64),
+      },
+    });
+    assert(
+      result.response.status === 400 && !result.googleCalls.length,
+      "missing selected revision accepted",
+    );
+  },
+);
+Deno.test(
+  "accepted exception sends authoritative issues and snapshot to one atomic RPC",
+  async () => {
+    const normal = revisionFixture();
+    const warnings = [{ level: "blocking", message: "Plantão abaixo do mínimo" }];
+    mock.rowsByTable["schedule_generation_drafts"]!["warnings"] = warnings;
+    const reviewed = await run("review_publish", undefined, normal, { draftId: selectedId });
+    const result = await run("publish", undefined, normal, {
+      draftId: selectedId,
+      exception: {
+        reason: "  Equipe de apoio confirmada para cobrir a diferença.  ",
+        acknowledged: true,
+        reviewToken: reviewed.body.review.reviewToken,
+        issues: [{ detail: "fake issue" }],
+        actorId: "fake-admin",
+      },
+    });
+    assert(
+      result.response.status === 200 && result.body.publishedWithException === true,
+      JSON.stringify(result.body),
+    );
+    assert(
+      mock.rpcCalls.length === 1 &&
+        mock.rpcCalls[0]!.name === "schedule_operational_publish_revision_with_exception",
+      "non-atomic publication",
+    );
+    const receipt = mock.rpcCalls[0]!.args["p_exception"] as {
+      reason: string;
+      issues: { detail: string }[];
+      draftWarnings: unknown;
+      actorId?: unknown;
+    };
+    assert(
+      receipt.reason === "Equipe de apoio confirmada para cobrir a diferença.",
+      "reason not trimmed",
+    );
+    assert(
+      receipt.issues[0]!.detail === "Plantão abaixo do mínimo" && !receipt.actorId,
+      "client forged receipt",
+    );
+    assert(
+      JSON.stringify(receipt.draftWarnings) === JSON.stringify(warnings),
+      "warnings snapshot lost",
+    );
+    assert(
+      JSON.stringify(mock.rowsByTable["schedule_generation_drafts"]!["warnings"]) ===
+        JSON.stringify(warnings),
+      "warnings cleared",
+    );
+  },
+);
+Deno.test(
+  "a changed mark invalidates acceptance even if saved warnings remain identical",
+  async () => {
+    const normal = revisionFixture();
+    mock.rowsByTable["schedule_generation_drafts"]!["warnings"] = [
+      { level: "blocking", message: "Plantão abaixo do mínimo" },
+    ];
+    const reviewed = await run("review_publish", undefined, normal, { draftId: selectedId });
+    const result = await run(
+      "publish",
+      (rows) => {
+        rows[2]![3] = "FALTA";
+      },
+      normal,
+      {
+        draftId: selectedId,
+        exception: {
+          reason: "Equipe de apoio confirmada para cobrir a diferença.",
+          acknowledged: true,
+          reviewToken: reviewed.body.review.reviewToken,
+        },
+      },
+    );
+    assert(
+      result.response.status === 409 &&
+        result.body.code === "SHEET_PUBLICATION_REVIEW_CHANGED" &&
+        !mock.rpcCalls.length,
+      "stale review accepted",
+    );
+  },
+);
+Deno.test("saved warnings, policy or sheet version changes invalidate acceptance", async () => {
+  for (const change of ["warnings", "policy", "sheet"]) {
+    const normal = revisionFixture();
+    mock.rowsByTable["schedule_generation_drafts"]!["warnings"] = [
+      { level: "blocking", message: "Plantão abaixo do mínimo" },
+    ];
+    const reviewed = await run("review_publish", undefined, normal, { draftId: selectedId });
+    if (change === "warnings")
+      mock.rowsByTable["schedule_generation_drafts"]!["warnings"] = [
+        { level: "blocking", message: "Outra pendência" },
+      ];
+    if (change === "policy")
+      mock.rowsByTable["schedule_generation_drafts"]!["policy_snapshot"] = {
+        rule: { sundayDutyCount: 1 },
+      };
+    if (change === "sheet") mock.sheet["updated_at"] = "2026-11-16T20:00:00Z";
+    const result = await run("publish", undefined, normal, {
+      draftId: selectedId,
+      exception: {
+        reason: "Equipe de apoio confirmada para cobrir a diferença.",
+        acknowledged: true,
+        reviewToken: reviewed.body.review.reviewToken,
+      },
+    });
+    assert(
+      result.response.status === 409 && !mock.rpcCalls.length,
+      "changed context accepted: " + change,
+    );
+  }
+});
+Deno.test(
+  "exception does not bypass source, identity, archived revision or transaction errors",
+  async () => {
+    for (const change of ["source", "identity", "archived", "rpc"]) {
+      const normal = revisionFixture();
+      mock.rowsByTable["schedule_generation_drafts"]!["warnings"] = [
+        { level: "blocking", message: "Plantão abaixo do mínimo" },
+      ];
+      const reviewed = await run("review_publish", undefined, normal, { draftId: selectedId });
+      if (change === "source") mock.sheet["spreadsheet_id"] = "wrong-source";
+      if (change === "archived")
+        mock.rowsByTable["schedule_generation_drafts"]!["archived_at"] = "2026-11-16";
+      if (change === "rpc") mock.rpcError = { code: "P0001", message: "Audit insert failed" };
+      const result = await run(
+        "publish",
+        change === "identity"
+          ? (rows) => {
+              rows[2]![0] = "UNKNOWN";
+            }
+          : undefined,
+        normal,
+        {
+          draftId: selectedId,
+          exception: {
+            reason: "Equipe de apoio confirmada para cobrir a diferença.",
+            acknowledged: true,
+            reviewToken: reviewed.body.review.reviewToken,
+          },
+        },
+      );
+      assert(result.response.status === 409 && !result.body.published, "guard bypassed: " + change);
+      assert(
+        mock.rpcCalls.length === (change === "rpc" ? 1 : 0),
+        "unexpected database write: " + change,
+      );
+    }
+  },
+);
+Deno.test(
+  "missing exception RPC has actionable migration error and no strict fallback",
+  async () => {
+    const normal = revisionFixture();
+    mock.rowsByTable["schedule_generation_drafts"]!["warnings"] = [
+      { level: "blocking", message: "Plantão abaixo do mínimo" },
+    ];
+    const reviewed = await run("review_publish", undefined, normal, { draftId: selectedId });
+    mock.rpcError = { code: "PGRST202", message: "missing rpc" };
+    const result = await run("publish", undefined, normal, {
+      draftId: selectedId,
+      exception: {
+        reason: "Equipe de apoio confirmada para cobrir a diferença.",
+        acknowledged: true,
+        reviewToken: reviewed.body.review.reviewToken,
+      },
+    });
+    assert(
+      result.response.status === 409 && result.body.error.includes("20261116192215"),
+      "migration missing",
+    );
+    assert(mock.rpcCalls.length === 1, "fell back to another publication path");
+  },
+);

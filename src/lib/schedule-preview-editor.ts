@@ -7,6 +7,7 @@ import { scheduleCodeKind } from "./schedule-import";
 import { applyVacationContinuationPolicy } from "./schedule-preview-policy";
 import { fixedRestSummary, hasFixedRestDistribution } from "./schedule-fixed-rest";
 import { CONTROL_DECEMBER_REFERENCE_ID } from "./schedule-control-december-reference";
+import { controlFullName } from "./schedule-control-names";
 import {
   inheritedSchedulePerson,
   isInheritedScheduleDate,
@@ -20,6 +21,12 @@ import {
 
 export type EditablePersonField = "name" | "login" | "jobTitle";
 const normalize = normalizeScheduleEmployeeName;
+const personNameKey = (preview: ScheduleGeneratedPreview, name: string) =>
+  normalize(
+    preview.rule.city === "natal" && preview.rule.sector === "controle-operacional"
+      ? controlFullName(name)
+      : name,
+  );
 const isEvent = (date: string) =>
   new Date(date + "T12:00:00Z").getUTCDay() === 0 || date.slice(5) === "12-25";
 const work = (code: string | undefined) =>
@@ -219,7 +226,7 @@ export function editControlPreviewPerson(
   next.payload.people[index]![field] = value.trim();
   if (field === "name" && normalize(oldName) !== normalize(value)) {
     next.rule.excludedFromDuty = next.rule.excludedFromDuty.map((name) =>
-      normalize(name) === normalize(oldName) ? value.trim() : name,
+      personNameKey(next, name) === personNameKey(next, oldName) ? value.trim() : name,
     );
   }
   return revalidateControlPreview(next);
@@ -236,8 +243,8 @@ export function editControlPreviewDutyEligibility(
   const person = preview.payload.people[index];
   if (!person) throw Error("Colaborador inválido.");
   const next = clone(preview);
-  const key = normalize(person.name);
-  const excluded = next.rule.excludedFromDuty.filter((name) => normalize(name) !== key);
+  const key = personNameKey(next, person.name);
+  const excluded = next.rule.excludedFromDuty.filter((name) => personNameKey(next, name) !== key);
   next.rule.excludedFromDuty = canTakeDuty ? excluded : [...excluded, person.name];
   return revalidateControlPreview(next);
 }
@@ -272,7 +279,7 @@ export function removeControlPreviewPerson(preview: ScheduleGeneratedPreview, in
       "Este colaborador possui dias herdados da escala anterior e não pode ser removido nesta prévia.",
     );
   next.rule.excludedFromDuty = next.rule.excludedFromDuty.filter(
-    (name) => normalize(name) !== normalize(removedName),
+    (name) => personNameKey(next, name) !== personNameKey(next, removedName),
   );
   next.payload.people.splice(index, 1);
   next.outsideAssignments.splice(index, 1);

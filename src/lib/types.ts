@@ -146,6 +146,8 @@ export interface AuditLog {
 export interface SchedulePerson {
   name: string;
   login?: string;
+  /** Explicit weekday/status from the Sheets column; undefined identifies a legacy source. */
+  fixedRest?: string;
   jobTitle: string;
   assignments: Record<string, string>;
 }

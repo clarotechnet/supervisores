@@ -98,7 +98,9 @@ describe("folgas fixas de segunda a sábado no RN", () => {
     expect(summary.targets).toEqual({ 1: 9, 2: 9, 3: 9, 4: 8, 5: 8, 6: 14 });
     expect(summary.issues).toEqual([]);
     expect(preview.eventCoverage.map((e) => e.assigned)).toEqual([3, 3, 3, 5, 10]);
-    expect(preview.blockingIssues).toEqual([]);
+    expect(preview.blockingIssues).toEqual([
+      "2026-12-25: cobertura de plantão 5/3 após revisão; conferir substituições.",
+    ]);
     const excluded = preview.payload.people.filter((p) => isExcludedFromDuty(p.name, preview.rule));
     expect(excluded).toHaveLength(6);
     for (const p of excluded)

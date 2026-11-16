@@ -1,4 +1,11 @@
-import { analyzeSchedule, type AnalysisRule } from "../_shared/schedule-ai-analysis.ts";
+import {
+  reviewSchedulePublication,
+  validatePublicationException,
+  InvalidPublicationException,
+  type PublicationExceptionInput,
+} from "../_shared/schedule-publication-exception.ts";
+import { type AnalysisRule } from "../_shared/schedule-ai-analysis.ts";
+import { scheduleCoveragePolicy } from "../_shared/schedule-coverage-policy.ts";
 import {
   deleteOperationalMonth,
   inspectOperationalMonth,
@@ -140,6 +147,7 @@ Deno.serve(async (req) => {
     confirmation?: string;
     confirmedGridId?: number;
     expectedUpdatedAt?: string;
+    exception?: unknown;
   };
   try {
     params = await req.json();
@@ -148,10 +156,17 @@ Deno.serve(async (req) => {
   }
   if (!params || typeof params !== "object") return json(400, { error: "Requisição inválida." });
   const action = params.action;
-  if (!["create", "sync", "publish", "delete", "inspect_delete", "read"].includes(action || ""))
+  if (
+    !["create", "sync", "publish", "review_publish", "delete", "inspect_delete", "read"].includes(
+      action || "",
+    )
+  )
     return json(400, { error: "Ação desconhecida." });
   if (
-    (action === "publish" || action === "delete" || action === "inspect_delete") &&
+    (action === "publish" ||
+      action === "review_publish" ||
+      action === "delete" ||
+      action === "inspect_delete") &&
     profile.role !== "admin"
   )
     return json(403, {
@@ -162,6 +177,7 @@ Deno.serve(async (req) => {
   if (
     (action === "sync" ||
       action === "publish" ||
+      action === "review_publish" ||
       action === "delete" ||
       action === "inspect_delete" ||
       action === "read") &&
@@ -170,6 +186,19 @@ Deno.serve(async (req) => {
     return json(400, { error: "Planilha operacional inválida." });
   if (action === "publish" && params.draftId !== undefined && !validUuid(params.draftId))
     return json(400, { error: "Versão selecionada inválida." });
+
+  if (action === "review_publish" && !validUuid(params.draftId))
+    return json(400, { error: "Versão selecionada inválida." });
+  let publicationException: PublicationExceptionInput | undefined;
+  if (params.exception !== undefined) {
+    if (action !== "publish" || !validUuid(params.draftId))
+      return json(400, { error: "A ressalva exige uma versão selecionada para publicação." });
+    try {
+      publicationException = validatePublicationException(params.exception);
+    } catch (error) {
+      return json(400, { error: error instanceof Error ? error.message : "Ressalva inválida." });
+    }
+  }
 
   if (
     action === "delete" &&
@@ -520,7 +549,7 @@ Deno.serve(async (req) => {
       });
 
     if (
-      action === "publish" &&
+      (action === "publish" || action === "review_publish") &&
       (controlMaster
         ? sheet.spreadsheet_id !== CONTROL_EXPECTED_MASTER_ID ||
           sheet.sheet_tab !== controlMonthTabName(sheet.schedule_month)
@@ -530,9 +559,14 @@ Deno.serve(async (req) => {
       return json(409, {
         error: "Vincule a versão à aba mensal do Sheets oficial antes de aprovar.",
       });
-    let publicationDraft: { id: string; payload: unknown; policy_snapshot: unknown } | null = null;
+    let publicationDraft: {
+      id: string;
+      payload: unknown;
+      policy_snapshot: unknown;
+      warnings: unknown;
+    } | null = null;
     let publicationBaseline = sheet.planned_payload as Payload;
-    if (action === "publish" && params.draftId) {
+    if ((action === "publish" || action === "review_publish") && params.draftId) {
       const { data: selected, error: selectedError } = await admin
         .from("schedule_generation_drafts")
         .select("id,city,sector,schedule_month,status,archived_at,warnings,payload,policy_snapshot")
@@ -551,6 +585,8 @@ Deno.serve(async (req) => {
       if (selected.archived_at || !["draft", "approved"].includes(selected.status))
         return json(409, { error: "A versão selecionada está arquivada ou rejeitada." });
       if (
+        action === "publish" &&
+        !publicationException &&
         Array.isArray(selected.warnings) &&
         selected.warnings.some((notice: { level?: string }) => notice?.level === "blocking")
       )
@@ -604,40 +640,49 @@ Deno.serve(async (req) => {
         readAt: new Date().toISOString(),
         writeActions: 0,
       });
+    let acceptedException: Record<string, unknown> | undefined;
     if (publicationDraft) {
       const policy = (publicationDraft.policy_snapshot || {}) as { rule?: AnalysisRule };
       const month = sheet.schedule_month.slice(0, 7);
-      const analysis = analyzeSchedule(publicationBaseline, result.payload, {
-        ...policy.rule,
-        analysisMonth: month,
+      const review = await reviewSchedulePublication({
+        sheetId: sheet.id,
+        sheetUpdatedAt: sheet.updated_at,
+        draftId: publicationDraft.id,
+        month,
+        planned: publicationBaseline,
+        current: result.payload,
+        policy: publicationDraft.policy_snapshot,
+        warnings: publicationDraft.warnings,
+        rule: scheduleCoveragePolicy(policy.rule || {}, sheet.city, sheet.sector, month),
       });
-      const blockers = analysis.issues.filter((issue) =>
-        issue.kind === "weekly"
-          ? result.payload.dates.some(
-              (day) =>
-                day.startsWith(month + "-") &&
-                day >= issue.date &&
-                day <=
-                  new Date(Date.parse(issue.date + "T12:00:00Z") + 6 * 86400000)
-                    .toISOString()
-                    .slice(0, 10),
-            )
-          : issue.severity === "high" &&
-            /^(coverage|role):/.test(issue.id) &&
-            (new Date(issue.date + "T12:00:00Z").getUTCDay() === 0 ||
-              issue.kind === "role" ||
-              issue.title !== "Ausência em dia de trabalho"),
-      );
-      if (blockers.length)
+      if (action === "review_publish") return json(200, { ok: true, review, writeActions: 0 });
+      if (publicationException) {
+        if (publicationException.reviewToken !== review.reviewToken)
+          return json(409, {
+            code: "SHEET_PUBLICATION_REVIEW_CHANGED",
+            error:
+              "A escala ou a versão mudou após sua revisão. Confira novamente as pendências antes de publicar.",
+          });
+        if (!review.issues.length)
+          return json(409, { error: "Não há pendências nesta revisão. Use a publicação normal." });
+        acceptedException = {
+          ...publicationException,
+          issues: review.issues,
+          draftPayload: publicationDraft.payload,
+          draftWarnings: publicationDraft.warnings,
+          draftPolicy: publicationDraft.policy_snapshot,
+        };
+      } else if (review.issues.length) {
         return json(409, {
           code: "SHEET_PUBLICATION_BLOCKED",
           error:
             "O Sheets atual ainda tem pendências; nenhuma publicação ou troca de vínculo foi feita. " +
-            blockers
+            review.issues
               .slice(0, 5)
-              .map((issue) => issue.date + ": " + issue.detail)
+              .map((issue) => (issue.date || "Versão salva") + ": " + issue.detail)
               .join(" "),
         });
+      }
     }
     const functionChangeCount =
       "functionChanges" in result && Array.isArray(result.functionChanges)
@@ -667,7 +712,11 @@ Deno.serve(async (req) => {
       // Explicit admin action: one RPC applies the Google snapshot, audits
       // its changes and approves/publishes atomically with optimistic locking.
       const { data: officialId, error: publishError } = await admin.rpc(
-        publicationDraft ? "schedule_operational_publish_revision" : "schedule_operational_publish",
+        acceptedException
+          ? "schedule_operational_publish_revision_with_exception"
+          : publicationDraft
+            ? "schedule_operational_publish_revision"
+            : "schedule_operational_publish",
         {
           ...(publicationDraft
             ? {
@@ -680,13 +729,16 @@ Deno.serve(async (req) => {
           p_expected_updated_at: sheet.updated_at,
           p_payload: result.payload,
           p_changes: result.changes,
+          ...(acceptedException ? { p_exception: acceptedException } : {}),
         },
       );
       if (publishError)
         return json(publishError.code === "42501" ? 403 : 409, {
           error:
             publishError.code === "PGRST202"
-              ? "Aplique a migration 20261030153159_schedule_publish_saved_revision.sql antes de publicar esta versão."
+              ? acceptedException
+                ? "Aplique a migration 20261116192215_schedule_publication_exception.sql antes de publicar com ressalva."
+                : "Aplique a migration 20261030153159_schedule_publish_saved_revision.sql antes de publicar esta versão."
               : publishError.message,
         });
       if (!officialId) throw Error("O banco não confirmou a publicação da escala.");
@@ -700,6 +752,7 @@ Deno.serve(async (req) => {
         addedPeople: addedPeopleCount,
         syncedAt: new Date().toISOString(),
         published: true,
+        publishedWithException: !!acceptedException,
       });
     }
     // Even without changed cells, validate the official link and record the check.
@@ -723,6 +776,7 @@ Deno.serve(async (req) => {
       auditLogged: changeCount > 0,
     });
   } catch (error) {
+    if (error instanceof InvalidPublicationException) return json(400, { error: error.message });
     if (error instanceof ScheduleScopeForbidden) return json(403, { error: error.message });
     if (error instanceof ScheduleDeletionError)
       return json(error.status, { error: error.message, code: error.code });

@@ -3,11 +3,12 @@ import type { ScheduleGenerationRule } from "./schedule-generator-rules";
 import { normalizeScheduleEmployeeName } from "./schedule-generator-rules";
 import { scheduleCodeKind } from "./schedule-import";
 import { scheduleMonthDates } from "./schedule-view";
+import { fixedRestDeclaration } from "../../supabase/functions/_shared/schedule-fixed-rest-value";
 export type FixedRestEvidence = {
   personKey: string;
   day: number | null;
   week: string[];
-  method: "normal-week" | "marked-week" | "unknown";
+  method: "sheet-column" | "normal-week" | "marked-week" | "unknown";
 };
 const weekday = (d: string) => new Date(d + "T12:00:00Z").getUTCDay();
 const plus = (d: string, n: number) =>
@@ -47,6 +48,14 @@ export function learnFixedRest(
   month: string,
   rule: ScheduleGenerationRule,
 ): FixedRestEvidence {
+  const declared = fixedRestDeclaration(person);
+  if (declared.declared)
+    return {
+      personKey: schedulePersonKey(person),
+      day: declared.day,
+      week: [],
+      method: "sheet-column",
+    };
   const source = scheduleMonthDates(month);
   const firstSource = source[0]!;
   // A aba semanal também pode conter o domingo anterior ao dia 1.
@@ -100,9 +109,10 @@ export function learnMissingCoverage(source: ScheduleUpload, catalog: ScheduleGe
   const rule = { ...catalog };
   const learned: string[] = [];
   if (
-    !source.payload.people.some(
-      (p) => learnFixedRest(p, source.schedule_month.slice(0, 7), rule).method === "normal-week",
-    )
+    !source.payload.people.some((p) => {
+      const evidence = learnFixedRest(p, source.schedule_month.slice(0, 7), rule);
+      return evidence.day !== null && ["normal-week", "sheet-column"].includes(evidence.method);
+    })
   )
     return { rule, learned };
   const dates = scheduleMonthDates(source.schedule_month.slice(0, 7));

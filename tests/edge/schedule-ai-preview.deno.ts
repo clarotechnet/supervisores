@@ -91,6 +91,38 @@ async function run(
     );
   }
 }
+Deno.test(
+  "Natal Adesão applies the scoped 3-person quota to an older preview without writes",
+  async () => {
+    const preview = input();
+    preview.city = "natal";
+    preview.sector = "adesao-servico";
+    preview.rule = { sundayDutyCount: 5, holidayDutyCount: 5 };
+    const people = Array.from({ length: 5 }, (_, index) => ({
+      name: "PERSON " + index,
+      login: "Z" + index,
+      jobTitle: "TECNICO",
+      fixedRest: "Terça",
+      assignments: Object.fromEntries(
+        dates.map((day, i) => [day, [2, 4].includes(i) ? "Folga" : "M. 1"]),
+      ),
+    }));
+    preview.planned.people = people;
+    preview.current.people = people.map((person, index) => ({
+      ...person,
+      assignments: { ...person.assignments, [dates[0]!]: index < 3 ? "M. 1" : "Folga" },
+    }));
+    const result = await run({ preview });
+    assert(result.response.status === 200, "preview rejected");
+    assert(
+      !result.data.analysis.issues.some(
+        (issue: { id: string }) => issue.id === "coverage:" + dates[0],
+      ),
+      "old 5-person quota survived",
+    );
+    assert(mock.mutationCalls.length === 0 && mock.rpcCalls.length === 0, "analysis wrote data");
+  },
+);
 Deno.test("unsaved preview is analyzed without database or Sheets writes", async () => {
   const result = await run({ preview: input() });
   assert(

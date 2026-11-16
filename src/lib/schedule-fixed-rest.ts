@@ -4,6 +4,7 @@ import { scheduleCodeKind } from "./schedule-import.ts";
 import { isExcludedFromDuty } from "./schedule-generator-rules";
 import type { ScheduleGenerationRule } from "./schedule-generator-rules";
 import { inheritedSchedulePerson } from "./schedule-continuity";
+import { fixedRestDeclaration } from "../../supabase/functions/_shared/schedule-fixed-rest-value";
 
 type RestConfiguration = Pick<
   ScheduleGenerationRule,
@@ -44,6 +45,8 @@ function protectedMonth(person: SchedulePerson, dates: string[]) {
   );
 }
 function fixedDay(person: SchedulePerson, dates: string[]) {
+  const declared = fixedRestDeclaration(person);
+  if (declared.declared) return declared.day;
   const counts = [1, 2, 3, 4, 5, 6].map((day) => ({
     day,
     count: dates.filter((d) => dayOf(d) === day && kind(person.assignments[d]) === "off").length,
@@ -156,22 +159,37 @@ export function balanceFixedRests(
   const outside = people.map((_, i) => ({ ...originalOutside[i] }));
   if (!hasFixedRestDistribution(rule)) return { people: result, outsideAssignments: outside };
   const assigned = new Map<number, number>();
+  // A target distribution never overrides an explicitly declared individual weekday.
+  for (const [index, person] of people.entries()) {
+    const declared = fixedRestDeclaration(person);
+    if (declared.day !== null) assigned.set(index, declared.day);
+  }
   for (const group of distributionGroups(people, month, rule)) {
     const targetDays = Object.keys(group.targets)
       .map(Number)
       .sort((a, b) => a - b);
     for (const day of targetDays)
       group.people
-        .filter((p) => p.old === day)
-        .slice(0, group.targets[day] || 0)
+        .filter(
+          (p) =>
+            !assigned.has(p.index) && p.old === day && !fixedRestDeclaration(p.person).declared,
+        )
+        .slice(
+          0,
+          Math.max(
+            0,
+            (group.targets[day] || 0) -
+              group.people.filter((p) => assigned.get(p.index) === day).length,
+          ),
+        )
         .forEach((p) => assigned.set(p.index, day));
     for (const day of targetDays) {
       const need =
         (group.targets[day] || 0) -
         group.people.filter((p) => assigned.get(p.index) === day).length;
       group.people
-        .filter((p) => !assigned.has(p.index))
-        .slice(0, need)
+        .filter((p) => !assigned.has(p.index) && !fixedRestDeclaration(p.person).declared)
+        .slice(0, Math.max(0, need))
         .forEach((p) => assigned.set(p.index, day));
     }
   }

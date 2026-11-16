@@ -1,3 +1,4 @@
+import { controlFullName } from "../src/lib/schedule-control-names";
 import { describe, it, expect } from "vitest";
 import { createHash } from "node:crypto";
 import {
@@ -79,9 +80,11 @@ describe("Novo Excel 12-2026 (2): transcrição integral e segurança", () => {
   it("férias não geram falso bloqueio de 5x2 nem são convertidas em Folga", () => {
     const p = generateInitialControlDecemberPreview(source());
     expect(p.blockingIssues.filter((x) => x.includes("confirmar exceção 5x2"))).toHaveLength(0);
-    const antonia = p.payload.people.find((x) => x.name === "ANTONIA ELIZIENE")!;
+    const antonia = p.payload.people.find((x) => x.name === controlFullName("ANTONIA ELIZIENE"))!;
     expect(antonia.assignments["2026-12-20"]).toBe("Férias");
-    expect(p.warnings.some((x) => x.startsWith("ANTONIA ELIZIENE: semana"))).toBe(true);
+    expect(
+      p.warnings.some((x) => x.startsWith(controlFullName("ANTONIA ELIZIENE") + ": semana")),
+    ).toBe(true);
     expect(p.rule.excludedFromDuty).toContain("ANTONIA ELIZIENE");
   });
 });

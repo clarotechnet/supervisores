@@ -4,6 +4,7 @@ import type { ScheduleUpload } from "@/lib/types";
 import type { ScheduleGeneratedPreview } from "@/lib/schedule-generator";
 import type { ScheduleGenerationRule } from "@/lib/schedule-generator-rules";
 import { applyVacationContinuationPolicy } from "../lib/schedule-preview-policy";
+import { scheduleRuleForMonth } from "../lib/schedule-generator-rules";
 
 export type GenerationDraft = Database["public"]["Tables"]["schedule_generation_drafts"]["Row"];
 export type GenerationPolicy = Database["public"]["Tables"]["schedule_generation_policies"]["Row"];
@@ -178,7 +179,10 @@ export function restoreGenerationPreview(
     : [];
   return applyVacationContinuationPolicy({
     payload: draft.payload as unknown as ScheduleGeneratedPreview["payload"],
-    rule: (snap["rule"] as unknown as ScheduleGenerationRule) ?? fallbackRule,
+    rule: scheduleRuleForMonth(
+      (snap["rule"] as unknown as ScheduleGenerationRule) ?? fallbackRule,
+      draft.schedule_month,
+    ),
     eventCoverage: Array.isArray(snap["eventCoverage"])
       ? (snap["eventCoverage"] as unknown as ScheduleGeneratedPreview["eventCoverage"])
       : [],

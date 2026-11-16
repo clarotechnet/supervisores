@@ -1,3 +1,5 @@
+import { controlFullName } from "../src/lib/schedule-control-names";
+import { isExcludedFromDuty } from "../src/lib/schedule-generator-rules";
 import { describe, expect, it } from "vitest";
 import { scheduleCodeKind } from "../src/lib/schedule-import";
 import type { ScheduleUpload } from "../src/lib/types";
@@ -39,7 +41,9 @@ const preview = () => generateInitialControlDecemberPreview(base);
 describe("modelo de dezembro editável sem sobrescrever referência", () => {
   it("permite consertar uma semana 6x1 escolhendo qualquer folga, sem tocar no Excel", () => {
     const original = preview();
-    const index = original.payload.people.findIndex((p) => p.name === "RENAN PAIVA");
+    const index = original.payload.people.findIndex(
+      (p) => p.name === controlFullName("RENAN PAIVA"),
+    );
     const person = original.payload.people[index]!;
     const day = "2026-12-09"; // Folga fixa adicional na semana do plantão 06/12
     expect(person.assignments[day]).toBe("Folga");
@@ -76,7 +80,7 @@ describe("modelo de dezembro editável sem sobrescrever referência", () => {
   });
   it("edita dia 04/01, mas não modifica 30/11/2026 histórico 6x1", () => {
     const p = preview(),
-      i = p.payload.people.findIndex((x) => x.name === "ROSA FERNANDA");
+      i = p.payload.people.findIndex((x) => x.name === controlFullName("ROSA FERNANDA"));
     const changed = editControlPreviewCode(p, i, "2027-01-04", "AT");
     expect(changed.outsideAssignments[i]?.["2027-01-04"]).toBe("AT");
     expect(p.outsideAssignments[i]?.["2027-01-04"]).toBe("T. 1");
@@ -103,13 +107,14 @@ describe("modelo de dezembro editável sem sobrescrever referência", () => {
   });
   it("permite editar a elegibilidade de plantão dos colaboradores verdes sem alterar referência", () => {
     const p = preview();
-    const index = p.payload.people.findIndex((x) => x.name === "ANTONIA ELIZIENE");
+    const index = p.payload.people.findIndex((x) => x.name === controlFullName("ANTONIA ELIZIENE"));
     expect(p.rule.excludedFromDuty).toContain("ANTONIA ELIZIENE");
     let changed = editControlPreviewDutyEligibility(p, index, true);
     expect(changed.rule.excludedFromDuty).not.toContain("ANTONIA ELIZIENE");
+    expect(isExcludedFromDuty(controlFullName("ANTONIA ELIZIENE"), changed.rule)).toBe(false);
     expect(p.rule.excludedFromDuty).toContain("ANTONIA ELIZIENE");
     changed = editControlPreviewDutyEligibility(changed, index, false);
-    expect(changed.rule.excludedFromDuty).toContain("ANTONIA ELIZIENE");
+    expect(changed.rule.excludedFromDuty).toContain(controlFullName("ANTONIA ELIZIENE"));
     const renamed = editControlPreviewPerson(changed, index, "name", "ANTONIA TESTE");
     expect(renamed.rule.excludedFromDuty).toContain("ANTONIA TESTE");
     expect(renamed.rule.excludedFromDuty).not.toContain("ANTONIA ELIZIENE");

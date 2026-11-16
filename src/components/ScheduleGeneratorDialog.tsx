@@ -1,3 +1,4 @@
+import { SchedulePublicationReviewDialog } from "@/components/SchedulePublicationReviewDialog";
 import { ScheduleOfficialEditDialog } from "@/components/ScheduleOfficialEditDialog";
 import { SchedulePreviewAssistant } from "@/components/SchedulePreviewAssistant";
 import { ScheduleAssistantDialog } from "@/components/ScheduleAssistantDialog";
@@ -37,6 +38,9 @@ import {
   createOperationalSheet,
   listOperationalSheets,
   publishOperationalSheet,
+  reviewOperationalPublication,
+  type PublicationReview,
+  type PublicationExceptionInput,
   publicationSheetForDraft,
   draftHasPublicationBlockers,
   type OperationalSheet,
@@ -115,6 +119,11 @@ export function ScheduleGeneratorDialog({
   const [loadingSheets, setLoadingSheets] = useState(false);
   const [sheetLoadError, setSheetLoadError] = useState("");
   const [publishingId, setPublishingId] = useState<string | null>(null);
+  const [publicationReview, setPublicationReview] = useState<{
+    draft: GenerationDraft;
+    sheet: OperationalSheet;
+    review: PublicationReview;
+  } | null>(null);
   const [sheetLink, setSheetLink] = useState("");
   const [editingCell, setEditingCell] = useState<{ index: number; date: string } | null>(null);
   const [cellValue, setCellValue] = useState("");
@@ -132,7 +141,12 @@ export function ScheduleGeneratorDialog({
   const selectedSheet = selectedDraft
     ? publicationSheetForDraft(selectedDraft, linkedSheets)
     : null;
-  const publicationBusy = publishingId !== null || creatingSheet || saving || archivingId !== null;
+  const publicationBusy =
+    publicationReview !== null ||
+    publishingId !== null ||
+    creatingSheet ||
+    saving ||
+    archivingId !== null;
   const sourceSummaryId = sourceSummary?.id;
   const firstControl5x2 = isInitialControlDecember(city, sector, month);
   const firstRn5x2 = isInitialRnDecember(city, sector, month);
@@ -155,6 +169,7 @@ export function ScheduleGeneratorDialog({
       : preview.calendarWeeks[weekIndex] || []
     : [];
   useEffect(() => {
+    setPublicationReview(null);
     if (!open) return;
     setPreview(null);
     setBaseline(null);
@@ -251,53 +266,68 @@ export function ScheduleGeneratorDialog({
       active = false;
     };
   }, [open, city, sector, month]);
-  async function approveOfficial(draft: GenerationDraft) {
-    if (!isAdmin || publicationBusy || draft.status !== "draft") return;
-    if (draftHasPublicationBlockers(draft)) {
-      toast.error("Esta versão salva ainda tem pendências. Revise e salve uma nova versão.");
-      return;
-    }
-    const linked = publicationSheetForDraft(draft, linkedSheets);
-    if (!linked) {
-      toast.error("Primeiro crie a aba mensal e vincule esta versão ao Google Sheets.");
-      return;
-    }
-    if (linked.sheet_tab === "ATUALIZADA") {
-      toast.error(
-        "Esta versão usa uma planilha separada antiga. Use a aba do Sheets oficial para esta competência.",
-      );
-      return;
-    }
-    if (
-      !window.confirm(
-        "Aprovar oficialmente a versão " +
-          draft.revision +
-          " de " +
-          month +
-          "? A aba " +
-          linked.sheet_tab +
-          (linked.draft_id === draft.id
-            ? " será sincronizada antes da publicação e passará a alimentar o painel "
-            : " já existe e será vinculada a esta versão, preservando a versão anterior e seu histórico. O conteúdo atual do Sheets será validado e passará a alimentar o painel ") +
-          "oficial. Alterações posteriores em Atualizar via API serão refletidas na escala oficial.",
-      )
-    )
-      return;
+  async function finishPublication(
+    draft: GenerationDraft,
+    linked: OperationalSheet,
+    exception?: PublicationExceptionInput,
+  ) {
+    if (!isAdmin || draft.status !== "draft") return;
     setPublishingId(draft.id);
     try {
-      const result = await publishOperationalSheet(linked.id, draft.id);
+      const result = await publishOperationalSheet(linked.id, draft.id, exception);
       if (!result.published) throw Error("O servidor não confirmou a publicação.");
+      setPublicationReview(null);
       setDrafts(await listGenerationDrafts(city, sector, month));
       setSavedRevision(draft.revision);
       await onPublished();
       toast.success(
         "Versão " +
           draft.revision +
-          " aprovada! Escala oficial publicada e vinculada ao Google Sheets.",
+          (result.publishedWithException
+            ? " publicada com ressalva. Justificativa e pendências registradas no histórico."
+            : " aprovada! Escala oficial publicada e vinculada ao Google Sheets."),
       );
       onOpenChange(false);
     } catch (error) {
+      // Qualquer nova tentativa exige leitura e confirmação atualizadas.
+      setPublicationReview(null);
       toast.error(error instanceof Error ? error.message : "Não foi possível publicar a escala.");
+    } finally {
+      setPublishingId(null);
+    }
+  }
+  async function approveOfficial(draft: GenerationDraft) {
+    if (!isAdmin || publicationBusy || draft.status !== "draft") return;
+    const linked = publicationSheetForDraft(draft, linkedSheets);
+    if (!linked) {
+      toast.error("Primeiro crie a aba mensal e vincule esta versão ao Google Sheets.");
+      return;
+    }
+    setPublishingId(draft.id);
+    try {
+      const review = await reviewOperationalPublication(linked.id, draft.id);
+      if (review.issues.length) {
+        setPublicationReview({ draft, sheet: linked, review });
+        return;
+      }
+      if (
+        !window.confirm(
+          "Aprovar oficialmente a versão " +
+            draft.revision +
+            " de " +
+            month +
+            "? A aba " +
+            linked.sheet_tab +
+            " será validada e vinculada a esta versão, preservando o histórico. " +
+            "O conteúdo atual do Sheets passará a alimentar o painel oficial. Alterações posteriores em Atualizar via API serão refletidas na escala oficial.",
+        )
+      )
+        return;
+      await finishPublication(draft, linked);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Não foi possível revisar a publicação.",
+      );
     } finally {
       setPublishingId(null);
     }
@@ -735,13 +765,16 @@ export function ScheduleGeneratorDialog({
                         <div>
                           <strong>Versão {draft.revision}</strong> ·{" "}
                           {draft.status === "approved"
-                            ? "OFICIAL"
+                            ? hasPublicationException(draft)
+                              ? "OFICIAL COM RESSALVA"
+                              : "OFICIAL"
                             : draft.status === "draft"
                               ? "Rascunho"
                               : draft.status === "rejected"
                                 ? "Rejeitado"
                                 : draft.status}{" "}
                           · {new Date(draft.created_at).toLocaleString("pt-BR")}
+                          <PublicationReceipt draft={draft} />
                         </div>
                         <div className="flex items-center gap-2">
                           <Button variant="outline" size="sm" onClick={() => void openDraft(draft)}>
@@ -756,12 +789,11 @@ export function ScheduleGeneratorDialog({
                               disabled={
                                 publicationBusy ||
                                 loadingSheets ||
-                                !publicationSheetForDraft(draft, linkedSheets) ||
-                                draftHasPublicationBlockers(draft)
+                                !publicationSheetForDraft(draft, linkedSheets)
                               }
                               title={
                                 draftHasPublicationBlockers(draft)
-                                  ? "Resolva as pendências e salve uma nova versão."
+                                  ? "Revisar pendências e informar justificativa antes de publicar com ressalva."
                                   : publicationSheetForDraft(draft, linkedSheets)
                                     ? "Validar o Sheets e publicar esta versão após sua confirmação."
                                     : "Crie a aba mensal antes de publicar."
@@ -771,7 +803,9 @@ export function ScheduleGeneratorDialog({
                               {publishingId === draft.id && (
                                 <Loader2 className="size-3.5 animate-spin" />
                               )}
-                              Aprovar e publicar
+                              {draftHasPublicationBlockers(draft)
+                                ? "Publicar com ressalva"
+                                : "Aprovar e publicar"}
                             </Button>
                           )}
                           {(draft.status === "draft" ||
@@ -1279,15 +1313,13 @@ export function ScheduleGeneratorDialog({
             {isAdmin && selectedDraft?.status === "draft" && (
               <Button
                 onClick={() => void approveOfficial(selectedDraft)}
-                disabled={
-                  publicationBusy ||
-                  loadingSheets ||
-                  !selectedSheet ||
-                  draftHasPublicationBlockers(selectedDraft)
-                }
+                disabled={publicationBusy || loadingSheets || !selectedSheet}
               >
                 {publishingId === selectedDraft.id && <Loader2 className="size-4 animate-spin" />}
-                Aprovar e publicar versão {selectedDraft.revision}
+                {draftHasPublicationBlockers(selectedDraft)
+                  ? "Publicar com ressalva"
+                  : "Aprovar e publicar"}{" "}
+                versão {selectedDraft.revision}
               </Button>
             )}
             {preview && (
@@ -1319,6 +1351,18 @@ export function ScheduleGeneratorDialog({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {publicationReview && open && (
+        <SchedulePublicationReviewDialog
+          key={publicationReview.review.reviewToken}
+          review={publicationReview.review}
+          context={`Versão ${publicationReview.draft.revision} · ${city} / ${sector} · ${month} · ${publicationReview.sheet.sheet_tab}`}
+          busy={publishingId !== null}
+          onCancel={() => setPublicationReview(null)}
+          onConfirm={(exception) => {
+            void finishPublication(publicationReview.draft, publicationReview.sheet, exception);
+          }}
+        />
+      )}
       <ScheduleAssistantDialog
         open={open && savedAssistantOpen}
         onOpenChange={setSavedAssistantOpen}
@@ -1327,5 +1371,39 @@ export function ScheduleGeneratorDialog({
         month={month}
       />
     </>
+  );
+}
+
+function hasPublicationException(draft: GenerationDraft): boolean {
+  const policy = draft.policy_snapshot as { publicationException?: unknown } | null;
+  return draft.status === "approved" && !!policy?.publicationException;
+}
+function PublicationReceipt({ draft }: { draft: GenerationDraft }) {
+  if (!hasPublicationException(draft)) return null;
+  const receipt = (
+    draft.policy_snapshot as {
+      publicationException?: {
+        reason?: string;
+        acceptedAt?: string;
+        issues?: { id: string; title: string; detail: string }[];
+      };
+    }
+  )?.publicationException;
+  if (!receipt) return null;
+  return (
+    <details className="mt-1 max-w-xl whitespace-pre-wrap">
+      <summary className="cursor-pointer text-primary">Ver ressalva registrada</summary>
+      <p>{receipt.reason}</p>
+      {receipt.acceptedAt && (
+        <p>Aceita em {new Date(receipt.acceptedAt).toLocaleString("pt-BR")}</p>
+      )}
+      <ul className="list-disc pl-4">
+        {receipt.issues?.map((issue) => (
+          <li key={issue.id}>
+            {issue.title}: {issue.detail}
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }

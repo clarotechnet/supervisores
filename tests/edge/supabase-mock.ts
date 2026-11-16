@@ -80,7 +80,8 @@ export function createClient(..._args: unknown[]): any {
       return Promise.resolve({
         data:
           name === "schedule_operational_publish" ||
-          name === "schedule_operational_publish_revision"
+          name === "schedule_operational_publish_revision" ||
+          name === "schedule_operational_publish_revision_with_exception"
             ? "official-id"
             : name === "schedule_operational_metadata_audit_ready"
               ? mock.metadataAuditReady

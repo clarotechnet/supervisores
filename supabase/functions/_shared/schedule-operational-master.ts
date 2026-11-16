@@ -3,6 +3,7 @@
  * Uma aba por mês, duas linhas de cabeçalho e NOME/FUNÇÃO nas colunas A/B.
  * As abas anteriores não são modificadas.
  */
+import { fixedRestColumn, readFixedRest } from "./schedule-fixed-rest-value.ts";
 import {
   displayDateHeader,
   parseUpdatedSheet,
@@ -120,6 +121,7 @@ export function controlTemplateTab(month: string): string {
   return controlMonthTabName(previous);
 }
 export function controlMonthValues(payload: Payload, month: string): string[][] {
+  const fixed = payload.people.some((p) => p.fixedRest !== undefined);
   const monthName = MONTHS[Number(month.slice(5, 7)) - 1];
   if (!monthName) throw Error("Competência inválida.");
   return [
@@ -127,12 +129,19 @@ export function controlMonthValues(payload: Payload, month: string): string[][] 
       "Mês-ano:",
       monthName + " " + month.slice(2, 4),
       ...payload.dates.map((day) => DOW[new Date(day + "T12:00:00Z").getUTCDay()]!),
+      ...(fixed ? [""] : []),
     ],
-    ["Nome", "Função", ...payload.dates.map((day) => day.slice(8, 10) + "/" + day.slice(5, 7))],
+    [
+      "Nome",
+      "Função",
+      ...payload.dates.map((day) => day.slice(8, 10) + "/" + day.slice(5, 7)),
+      ...(fixed ? ["Folga fixa"] : []),
+    ],
     ...payload.people.map((person) => [
       person.name,
       person.jobTitle,
       ...payload.dates.map((date) => person.assignments[date] ?? ""),
+      ...(fixed ? [person.fixedRest || ""] : []),
     ]),
   ];
 }
@@ -152,6 +161,7 @@ export function parseControlMonthTab(
   }>;
 } {
   const expected = controlMonthValues(planned, month);
+  const fixedColumn = fixedRestColumn(rows[1] || []);
   if (rows.length < expected.length)
     throw Error("Quantidade de colaboradores alterada na aba de Controle.");
   if (headerText(rows[0]?.[0]) !== headerText(expected[0]![0]))
@@ -263,6 +273,10 @@ export function parseControlMonthTab(
         ]
       : [];
   });
+  result.payload.people = result.payload.people.map((person) => ({
+    ...person,
+    ...readFixedRest(byName.get(person.name) || [], fixedColumn),
+  }));
   return {
     ...result,
     functionChanges,

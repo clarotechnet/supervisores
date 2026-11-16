@@ -61,3 +61,16 @@ describe("publicação de nova versão na aba mensal existente", () => {
     });
   });
 });
+
+it("envia a aceitação explícita sem alterar a publicação normal", async () => {
+  call.mockClear();
+  const exception = {
+    reason: "Equipe de apoio confirmada para cobrir o plantão.",
+    acknowledged: true as const,
+    reviewToken: "a".repeat(64),
+  };
+  await publishOperationalSheet(sheet.id, draft.id, exception);
+  expect(call).toHaveBeenCalledExactlyOnceWith("schedule-operational", {
+    body: { action: "publish", sheetId: sheet.id, draftId: draft.id, exception },
+  });
+});
