@@ -2,6 +2,7 @@
 export type Person = {
   name: string;
   login?: string;
+  fixedRest?: string;
   jobTitle: string;
   assignments: Record<string, string>;
 };

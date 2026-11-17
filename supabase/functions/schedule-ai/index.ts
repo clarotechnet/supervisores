@@ -10,6 +10,7 @@ import {
 } from "../_shared/schedule-scope-access.ts";
 import { operationalFromDraft, type Payload } from "../_shared/schedule-operational.ts";
 import { analyzeSchedule, type ScheduleAnalysis } from "../_shared/schedule-ai-analysis.ts";
+import { scheduleCoveragePolicy } from "../_shared/schedule-coverage-policy.ts";
 import { inheritedDatesByName } from "../_shared/schedule-inherited.ts";
 import {
   validatePreviewAnalysisInput,
@@ -315,6 +316,7 @@ Deno.serve(async (req) => {
       rule.transitionStart = "2026-12-06";
     }
     rule.analysisMonth = scope?.schedule_month.slice(0, 7);
+    if (scope) rule = scheduleCoveragePolicy(rule, scope.city, scope.sector, scope.schedule_month);
     const analysis = analyzeSchedule(planned, current, rule);
     const ai = await explanationByAI(analysis);
     return json(200, {

@@ -1,4 +1,8 @@
 import type { SchedulePayload } from "@/lib/types";
+import {
+  fixedRestColumn,
+  readFixedRest,
+} from "../../supabase/functions/_shared/schedule-fixed-rest-value";
 
 export interface ParsedScheduleSheet {
   sheetName: string;
@@ -47,18 +51,32 @@ function monthAnchor(sheetName: string, fileName: string): { year: number; month
   const raw = sheetName.trim();
   const direct = raw.match(/^(0?[1-9]|1[0-2])[-/]([12]\d{3})$/);
   if (direct) return { month: Number(direct[1]), year: Number(direct[2]) };
-  const full = (sheetName + " " + fileName).normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "").toLowerCase();
-  const named = full.match(/(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)[ _-]*([12]\d{3})/);
+  const full = (sheetName + " " + fileName)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  const named = full.match(
+    /(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)[ _-]*([12]\d{3})/,
+  );
   if (!named) return null;
-  const months = ["janeiro","fevereiro","marco","abril","maio","junho",
-    "julho","agosto","setembro","outubro","novembro","dezembro"];
+  const months = [
+    "janeiro",
+    "fevereiro",
+    "marco",
+    "abril",
+    "maio",
+    "junho",
+    "julho",
+    "agosto",
+    "setembro",
+    "outubro",
+    "novembro",
+    "dezembro",
+  ];
   return { month: months.indexOf(named[1]!) + 1, year: Number(named[2]) };
 }
 
-function excelDate(
-  value: unknown, anchor?: { year: number; month: number } | null,
-): string | null {
+function excelDate(value: unknown, anchor?: { year: number; month: number } | null): string | null {
   if (value && typeof value === "object" && "result" in value) {
     return excelDate(value.result, anchor);
   }
@@ -83,10 +101,12 @@ function excelDate(
   const compact = raw.match(/^(\d{1,2})[/-](\d{1,2})$/);
   if (compact && anchor) {
     const month = Number(compact[2]);
-    const year = month < anchor.month && anchor.month - month >= 6
-      ? anchor.year + 1
-      : month > anchor.month && month - anchor.month >= 6
-        ? anchor.year - 1 : anchor.year;
+    const year =
+      month < anchor.month && anchor.month - month >= 6
+        ? anchor.year + 1
+        : month > anchor.month && month - anchor.month >= 6
+          ? anchor.year - 1
+          : anchor.year;
     return isoDate(year, month, Number(compact[1]));
   }
   let match = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2}|\d{4})$/);
@@ -115,7 +135,11 @@ function mainMonth(dates: string[]): string {
   );
 }
 
-function parseMatrix(rows: unknown[][], sheetName: string, fileName = ""): ParsedScheduleSheet | null {
+function parseMatrix(
+  rows: unknown[][],
+  sheetName: string,
+  fileName = "",
+): ParsedScheduleSheet | null {
   const anchor = monthAnchor(sheetName, fileName);
   if (rows.length < 3) return null;
 
@@ -136,6 +160,7 @@ function parseMatrix(rows: unknown[][], sheetName: string, fileName = ""): Parse
     break;
   }
   if (headerRow < 0 || nameColumn < 0) return null;
+  const fixedColumn = fixedRestColumn(rows[headerRow] || []);
 
   let dateRow = -1;
   let dateColumns: Array<{ column: number; date: string }> = [];
@@ -166,16 +191,20 @@ function parseMatrix(rows: unknown[][], sheetName: string, fileName = ""): Parse
   const seenNames = new Set<string>();
   const warnings: string[] = [];
   if (anchor && anchor.month >= 10 && rows[dateRow]) {
-    const staleJanuary = dateColumns.some(({column, date}) => {
+    const staleJanuary = dateColumns.some(({ column, date }) => {
       const original = rows[dateRow]?.[column];
       if (typeof original !== "number") return false;
       const raw = new Date(Date.UTC(1899, 11, 30) + Math.round(original) * 86_400_000);
-      return raw.getUTCFullYear() === anchor.year &&
+      return (
+        raw.getUTCFullYear() === anchor.year &&
         raw.getUTCMonth() + 1 <= 3 &&
-        date.startsWith(String(anchor.year + 1));
+        date.startsWith(String(anchor.year + 1))
+      );
     });
     if (staleJanuary) {
-      warnings.push("As datas numéricas de janeiro estavam gravadas com o ano anterior no Excel; a virada para janeiro do próximo ano foi interpretada conforme a competência da aba.");
+      warnings.push(
+        "As datas numéricas de janeiro estavam gravadas com o ano anterior no Excel; a virada para janeiro do próximo ano foi interpretada conforme a competência da aba.",
+      );
     }
   }
   let entryCount = 0;
@@ -205,6 +234,7 @@ function parseMatrix(rows: unknown[][], sheetName: string, fileName = ""): Parse
     people.push({
       name,
       ...(login ? { login } : {}),
+      ...readFixedRest(row, fixedColumn),
       jobTitle: roleColumn >= 0 ? text(row[roleColumn]) : "",
       assignments,
     });

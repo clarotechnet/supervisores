@@ -6,6 +6,9 @@ import { editControlPreviewCode } from "./schedule-preview-editor";
 import { normalizeScheduleEmployeeName } from "./schedule-generator-rules";
 import { schedulePersonKey } from "./schedule-history-memory";
 import { inheritedSchedulePerson } from "./schedule-continuity";
+import { scheduleCoveragePolicy } from "../../supabase/functions/_shared/schedule-coverage-policy";
+import { fixedRestDeclaration } from "../../supabase/functions/_shared/schedule-fixed-rest-value";
+import { controlDutyNameAliases } from "./schedule-control-names";
 
 export function previewAnalysisInput(
   preview: ScheduleGeneratedPreview,
@@ -18,7 +21,8 @@ export function previewAnalysisInput(
   );
   const fixedOffByName = Object.fromEntries(
     preview.payload.people.flatMap((person) => {
-      const day = evidence.get(schedulePersonKey(person));
+      const declared = fixedRestDeclaration(person);
+      const day = declared.declared ? declared.day : evidence.get(schedulePersonKey(person));
       return typeof day === "number" && day >= 1 && day <= 6
         ? [[normalizeScheduleEmployeeName(person.name), day]]
         : [];
@@ -31,14 +35,25 @@ export function previewAnalysisInput(
     planned: build(baseline),
     current: build(preview),
     rule: {
-      ...preview.rule,
+      ...scheduleCoveragePolicy(
+        preview.rule,
+        preview.rule.city,
+        preview.rule.sector,
+        preview.targetMonth,
+      ),
       excludedFromDuty: [
-        ...new Set([
-          ...preview.rule.excludedFromDuty,
-          ...(preview.rule.dutyRequiresLogin
-            ? preview.payload.people.filter((p) => !p.login?.trim()).map((p) => p.name)
-            : []),
-        ]),
+        ...new Set(
+          [
+            ...preview.rule.excludedFromDuty,
+            ...(preview.rule.dutyRequiresLogin
+              ? preview.payload.people.filter((p) => !p.login?.trim()).map((p) => p.name)
+              : []),
+          ].flatMap((name) =>
+            preview.rule.city === "natal" && preview.rule.sector === "controle-operacional"
+              ? controlDutyNameAliases(name)
+              : [name],
+          ),
+        ),
       ],
       additionalHolidays: [...(preview.rule.additionalHolidays || [])],
       analysisMonth: preview.targetMonth,

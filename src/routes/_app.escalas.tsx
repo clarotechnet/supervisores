@@ -101,6 +101,7 @@ import {
   SCHEDULE_KIND_STYLE,
 } from "@/lib/schedule-view";
 import { downloadScheduleReport } from "@/lib/schedule-report";
+import { reconcileScheduleSelection } from "@/lib/schedule-selection";
 
 export const Route = createFileRoute("/_app/escalas")({
   head: () => ({
@@ -155,7 +156,7 @@ function SchedulesPage() {
     },
     [],
   );
-  const loadedScheduleId = useRef<string | null>(null);
+  const loadedSchedule = useRef<ScheduleUpload | null>(null);
   const [dutyScope, setDutyScope] = useState<"day" | "month" | null>(null);
   const onDutyOnly = dutyScope !== null;
   const [dutyDateChoice, setDutyDateChoice] = useState("");
@@ -260,13 +261,9 @@ function SchedulesPage() {
         if (!active) return;
         setSchedule(data);
         setDateNotes(notes);
-        const changed = loadedScheduleId.current !== data?.id;
-        loadedScheduleId.current = data?.id || null;
-        setSelectedPersonNames((current) =>
-          changed
-            ? data?.payload.people.map((person) => person.name) || []
-            : current.filter((name) => data?.payload.people.some((person) => person.name === name)),
-        );
+        const previous = loadedSchedule.current;
+        loadedSchedule.current = data;
+        setSelectedPersonNames((current) => reconcileScheduleSelection(current, previous, data));
       })
       .catch(() => toast.error("Não foi possível abrir esta escala."))
       .finally(() => {

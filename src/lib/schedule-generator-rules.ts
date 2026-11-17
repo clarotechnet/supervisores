@@ -1,4 +1,9 @@
 import { CONTROL_DECEMBER_NO_DUTY } from "./schedule-control-december-reference";
+import { controlFullName } from "./schedule-control-names";
+import {
+  NATAL_ADESAO_COVERAGE,
+  scheduleCoveragePolicy,
+} from "../../supabase/functions/_shared/schedule-coverage-policy";
 
 /**
  * Políticas operacionais informadas pela gestão.
@@ -11,6 +16,7 @@ export type ScheduleGenerationRule = {
   label: string;
   sundayDutyCount: number | null;
   holidayDutyCount: number | null;
+  exactCoverage?: boolean;
   holidayWeekdaysOnly?: boolean;
   saturdayShift: "M. 1" | "M. 2" | "T. 1";
   defaultShift: "M. 1" | "T. 1";
@@ -51,16 +57,14 @@ export const scheduleGenerationRules: readonly ScheduleGenerationRule[] = [
     fixedOffStrategy: "login-duty-eligible",
     fixedOffSaturdayShare: 0.25,
     dutyRequiresLogin: true,
-    lastSundayDutyCount: 10,
-    sundayDutyCount: 3,
-    holidayDutyCount: 5,
+    ...NATAL_ADESAO_COVERAGE,
     saturdayShift: "M. 1",
     defaultShift: "M. 1",
     minimumIntermediateDuties: 0,
     excludedFromDuty: excludedAdesaoNatal,
     additionalHolidays: ["11-21"],
     notes:
-      "Adesão: 25% dos técnicos com login, disponíveis e elegíveis a plantão têm folga fixa no sábado; os demais se dividem entre segunda e sexta. Domingo: 3; último domingo: 10; feriado: 5.",
+      "Adesão Natal: respeitar a coluna Folga fixa individual. Domingo regular: 3; feriado: 3; último domingo do mês: 10. Distribuição inicial é exclusiva das referências legadas sem coluna.",
   },
   {
     city: "natal",
@@ -231,14 +235,20 @@ export function getScheduleGenerationRule(
 }
 
 export function isExcludedFromDuty(name: string, policy: ScheduleGenerationRule): boolean {
-  const normalized = normalizeScheduleEmployeeName(name);
-  return policy.excludedFromDuty.some((s) => normalizeScheduleEmployeeName(s) === normalized);
+  const identity = (value: string) =>
+    normalizeScheduleEmployeeName(
+      policy.city === "natal" && policy.sector === "controle-operacional"
+        ? controlFullName(value)
+        : value,
+    );
+  return policy.excludedFromDuty.some((s) => identity(s) === identity(name));
 }
 /** Quota do último domingo resolvida para a competência, inclusive na análise IA. */
 export function scheduleRuleForMonth(
   rule: ScheduleGenerationRule,
   month: string,
 ): ScheduleGenerationRule {
+  rule = scheduleCoveragePolicy(rule, rule.city, rule.sector, month);
   if (rule.lastSundayDutyCount === undefined) return rule;
   const [year, m] = month.slice(0, 7).split("-").map(Number);
   const last = new Date(Date.UTC(year!, m!, 0, 12));

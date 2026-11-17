@@ -1,4 +1,9 @@
 import { parseUpdatedSheet, type Payload } from "./schedule-operational.ts";
+import {
+  fixedRestColumn,
+  readFixedRest,
+  fixedRestDeclaration,
+} from "./schedule-fixed-rest-value.ts";
 type JsonRecord = Record<string, unknown>;
 
 type SourceConfig = {
@@ -13,6 +18,7 @@ type ParsedSheet = {
   people: Array<{
     name: string;
     login?: string;
+    fixedRest?: string;
     jobTitle: string;
     assignments: Record<string, string>;
   }>;
@@ -223,6 +229,66 @@ async function sheetRows(spreadsheetId: string, sheetTitle: string, token: strin
   return payload.values ?? [];
 }
 
+function sourceDateColumns(
+  rows: unknown[][],
+  headerRow: number,
+  firstDateColumn: number,
+  expectedPeriod: string,
+) {
+  const [yearText, monthText] = expectedPeriod.split("-");
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const dateRow = rows[headerRow - 1] ?? [];
+  const seenDates = new Set<string>();
+  const dateColumns: Array<{ column: number; date: string }> = [];
+  const headings = rows[headerRow] ?? [];
+  const first = headings.findIndex(
+    (value, column) => column >= firstDateColumn && /^\d{1,2}(?:[/.-]\d{1,2})?$/.test(text(value)),
+  );
+  if (first < 0) return [];
+  // Weekly PE tabs start on 29/11 and numeric 1/2 repeat after 31/12.
+  // Resolve full dates in sequence, rather than treating both occurrences as December.
+  const beginsInPreviousMonth =
+    Number(headings[first]) > 7 &&
+    headings.slice(first, first + 7).some((value) => text(value) === "1" || text(value) === "01");
+  let calendar = new Date(Date.UTC(year, month - 1 - Number(beginsInPreviousMonth), 1, 12));
+  const lower = Date.UTC(year, month - 1, 1, 12) - 7 * 86400000;
+  const upper = Date.UTC(year, month, 0, 12) + 7 * 86400000;
+  let priorDay = 0;
+  for (let column = first; column < headings.length; column += 1) {
+    const label = text(headings[column]);
+    const compact = label.match(/^(\d{1,2})[/.-](\d{1,2})$/);
+    if (!compact && !/^\d{1,2}$/.test(label)) break;
+    const day = Number(compact?.[1] ?? label);
+    if (day < 1 || day > 31) throw Error("Dia inválido no cabeçalho da escala.");
+    let iso = parseDateValue(dateRow[column]);
+    if (!iso) {
+      if (compact) {
+        const numberedMonth = Number(compact[2]);
+        if (numberedMonth < 1 || numberedMonth > 12)
+          throw Error("Mês inválido no cabeçalho da escala.");
+        const adjustedYear =
+          year + (month - numberedMonth >= 6 ? 1 : numberedMonth - month >= 6 ? -1 : 0);
+        calendar = new Date(Date.UTC(adjustedYear, numberedMonth - 1, 1, 12));
+      } else if (priorDay >= 28 && day < priorDay) {
+        calendar = new Date(Date.UTC(calendar.getUTCFullYear(), calendar.getUTCMonth() + 1, 1, 12));
+      }
+      const candidate = new Date(
+        Date.UTC(calendar.getUTCFullYear(), calendar.getUTCMonth(), day, 12),
+      );
+      if (candidate.getUTCDate() !== day) throw Error("Data inválida na escala.");
+      iso = candidate.toISOString().slice(0, 10);
+    } else calendar = new Date(iso + "T12:00:00Z");
+    const timestamp = Date.parse(iso + "T12:00:00Z");
+    if (timestamp < lower || timestamp > upper || seenDates.has(iso))
+      throw Error("Datas fora da competência ou duplicadas na escala.");
+    seenDates.add(iso);
+    priorDay = day;
+    dateColumns.push({ column, date: iso });
+  }
+  return dateColumns;
+}
+
 export function parseSheet(
   rows: unknown[][],
   title: string,
@@ -245,6 +311,7 @@ export function parseSheet(
 
   const header = (rows[headerRow] ?? []).map(normalized);
   const loginColumn = header.indexOf("LOGIN");
+  const fixedColumn = fixedRestColumn(rows[headerRow] || []);
   let auxColumn = -1;
   for (const label of ["AREA", "FUNCAO", "PLANTOES"]) {
     const index = header.indexOf(label);
@@ -254,24 +321,12 @@ export function parseSheet(
     }
   }
 
-  const [yearText, monthText] = expectedPeriod.split("-");
-  const year = Number(yearText);
-  const month = Number(monthText);
-  const maxDay = new Date(year, month, 0).getDate();
-  const dateRow = rows[headerRow - 1] ?? [];
-  const seenDays = new Set<number>();
-  const dateColumns: Array<{ column: number; date: string }> = [];
-
-  for (let column = nameColumn + 1; column < (rows[headerRow]?.length ?? 0); column += 1) {
-    const day = Number(rows[headerRow]?.[column]);
-    if (!Number.isFinite(day) || day < 1 || day > 31 || day > maxDay || seenDays.has(day)) continue;
-    let iso = parseDateValue(dateRow[column]);
-    if (!iso || iso.slice(0, 7) !== expectedPeriod) {
-      iso = `${expectedPeriod}-${String(day).padStart(2, "0")}`;
-    }
-    seenDays.add(day);
-    dateColumns.push({ column, date: iso });
-  }
+  const dateColumns = sourceDateColumns(
+    rows,
+    headerRow,
+    Math.max(nameColumn, loginColumn, auxColumn) + 1,
+    expectedPeriod,
+  );
   if (dateColumns.length === 0) return null;
 
   const firstDateColumn = Math.min(...dateColumns.map((item) => item.column));
@@ -311,6 +366,7 @@ export function parseSheet(
     people.push({
       name,
       login: loginColumn >= 0 ? text(row[loginColumn]) || undefined : undefined,
+      ...readFixedRest(row, fixedColumn),
       jobTitle: auxColumn >= 0 ? text(row[auxColumn]) : "",
       assignments,
     });
@@ -343,6 +399,16 @@ export function mergeSheets(parsed: ParsedSheet[]) {
         continue;
       }
       current.assignments = { ...current.assignments, ...person.assignments };
+      if (person.fixedRest !== undefined) {
+        if (
+          current.fixedRest !== undefined &&
+          fixedRestDeclaration(current).day !== fixedRestDeclaration(person).day
+        )
+          throw Error(
+            "Folga fixa divergente entre abas para " + person.name + ". Confira a origem.",
+          );
+        current.fixedRest = person.fixedRest;
+      }
       if (!current.jobTitle && person.jobTitle) current.jobTitle = person.jobTitle;
     }
   }
@@ -447,19 +513,9 @@ export function findScheduleCell(
     firstDateColumn = Math.max(nameColumn, loginColumn, functionColumn) + 1;
   // B1 pode ser a data do mês acima de Função. Só os dias após as
   // colunas de identificação podem ser alvos da edição.
-  const columns = header.flatMap((value, column) => {
-    const explicit = parseDateValue(rows[headerRow - 1]?.[column]);
-    const label = text(value);
-    const day = Number(value);
-    const iso =
-      explicit ||
-      (label === date.slice(8) + "/" + date.slice(5, 7)
-        ? date
-        : Number.isInteger(day) && day >= 1 && day <= 31
-          ? period + "-" + String(day).padStart(2, "0")
-          : "");
-    return column >= firstDateColumn && iso === date ? [column] : [];
-  });
+  const columns = sourceDateColumns(rows, headerRow, firstDateColumn, period)
+    .filter((item) => item.date === date)
+    .map((item) => item.column);
   if (columns.length !== 1) throw Error("Data ausente ou ambígua na aba oficial.");
   const candidates: number[] = [];
   for (let row = headerRow + 1; row < rows.length; row++) {
@@ -478,14 +534,22 @@ export function findScheduleCell(
 }
 
 export function officialMonthValues(payload: Payload, month: string): string[][] {
+  const fixed = payload.people.some((p) => p.fixedRest !== undefined);
   return [
-    ["Mês-ano:", month.slice(0, 7) + "-01", "", ...payload.dates],
-    ["Login", "Nome", "Função", ...payload.dates.map((day) => String(Number(day.slice(-2))))],
+    ["Mês-ano:", month.slice(0, 7) + "-01", "", ...payload.dates, ...(fixed ? [""] : [])],
+    [
+      "Login",
+      "Nome",
+      "Função",
+      ...payload.dates.map((day) => String(Number(day.slice(-2)))),
+      ...(fixed ? ["Folga fixa"] : []),
+    ],
     ...payload.people.map((p) => [
       p.login || "",
       p.name,
       p.jobTitle,
       ...payload.dates.map((day) => p.assignments[day] || ""),
+      ...(fixed ? [p.fixedRest || ""] : []),
     ]),
   ];
 }
@@ -513,11 +577,18 @@ export function parseOfficialMonthTab(
       ...planned.dates.map((day) => actual.assignments[day] || ""),
     ];
   });
-  return parseUpdatedSheet(
+  const result = parseUpdatedSheet(
     [["COLABORADOR", "LOGIN", "FUNÇÃO", ...planned.dates], ...converted],
     planned,
     previous,
   );
+  result.payload.people = result.payload.people.map((person) => ({
+    ...person,
+    ...(byName.get(normalized(person.name))?.fixedRest !== undefined
+      ? { fixedRest: byName.get(normalized(person.name))!.fixedRest }
+      : {}),
+  }));
+  return result;
 }
 export function sourceSpreadsheet(city: string, sector: string) {
   if (!CITY_FRONTS[city]?.includes(sector)) return undefined;

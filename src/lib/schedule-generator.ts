@@ -9,6 +9,8 @@ import {
 } from "./schedule-history-memory";
 import { scheduleMonthDates } from "./schedule-view";
 import type { InheritedSchedulePerson } from "./schedule-continuity";
+import { fixedRestDeclaration } from "../../supabase/functions/_shared/schedule-fixed-rest-value";
+import { controlFullName } from "./schedule-control-names";
 import {
   CONTROL_DECEMBER_REFERENCE_ID,
   controlDecemberReference,
@@ -94,7 +96,9 @@ function historicalFixedDay(
   const evidence = learnFixedRest(person, month, rule);
   const allowed = rule.fixedOffWeekdays?.length ? rule.fixedOffWeekdays : [1, 2, 3, 4, 5, 6];
   return {
-    day: evidence.day ?? allowed[position % allowed.length]!,
+    day:
+      evidence.day ??
+      (fixedRestDeclaration(person).declared ? -1 : allowed[position % allowed.length]!),
     confident: evidence.day !== null,
   };
 }
@@ -152,12 +156,19 @@ export function generateInitialControlDecemberPreview(
   ];
   const blockingIssues: string[] = [];
   const inputByName = new Map(
-    source.payload.people.map((p) => [normalizeScheduleEmployeeName(p.name), p]),
+    source.payload.people.map((p) => [normalizeScheduleEmployeeName(controlFullName(p.name)), p]),
   );
+  if (inputByName.size !== source.payload.people.length) {
+    throw new Error(
+      "Identificação ambígua no cadastro de Controle: confira nomes antigos e completos duplicados.",
+    );
+  }
   const data = controlDecemberReference();
-  const expectedNames = new Set(data.map((p) => normalizeScheduleEmployeeName(p.name)));
+  const expectedNames = new Set(
+    data.map((p) => normalizeScheduleEmployeeName(controlFullName(p.name))),
+  );
   for (const prev of source.payload.people) {
-    if (!expectedNames.has(normalizeScheduleEmployeeName(prev.name))) {
+    if (!expectedNames.has(normalizeScheduleEmployeeName(controlFullName(prev.name)))) {
       warnings.push(
         prev.name +
           ": está em novembro, mas não consta no modelo de dezembro; confirmar movimentação de pessoal.",
@@ -167,7 +178,9 @@ export function generateInitialControlDecemberPreview(
   const outPeople: SchedulePerson[] = [];
   const outsideAssignments: Record<string, string>[] = [];
   for (const reference of data) {
-    const previous = inputByName.get(normalizeScheduleEmployeeName(reference.name));
+    const previous = inputByName.get(
+      normalizeScheduleEmployeeName(controlFullName(reference.name)),
+    );
     if (!previous) {
       blockingIssues.push(
         reference.name +
@@ -178,7 +191,7 @@ export function generateInitialControlDecemberPreview(
       dates.map((day) => [day, reference.assignments[day] || ""]),
     );
     outPeople.push({
-      name: reference.name,
+      name: controlFullName(reference.name),
       login: previous?.login ?? "",
       jobTitle: reference.jobTitle,
       assignments: december,
@@ -423,7 +436,9 @@ export function generateSchedulePreview(
     if (!inferred.confident && !protectedStatus) {
       blockingIssues.push(
         person.name +
-          ": folga fixa não identificada no mês anterior; confirmar dia antes de aprovar.",
+          (fixedRestDeclaration(person).declared
+            ? ": coluna Folga fixa vazia ou inválida; informe um dia de segunda a sábado na origem."
+            : ": folga fixa não identificada no mês anterior; confirmar dia antes de aprovar."),
       );
     }
     const inheritedDays = new Set(

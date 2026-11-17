@@ -1,5 +1,6 @@
 /** Deterministic guardrails for an optional AI reviewer. No external services, no writes. */
 import type { Payload, Person } from "./schedule-operational.ts";
+import { fixedRestDeclaration } from "./schedule-fixed-rest-value.ts";
 export type Candidate = {
   key: string;
   name: string;
@@ -73,6 +74,7 @@ function keyOf(person: Person, index: number) {
 export type AnalysisRule = {
   sundayDutyCount?: number | null;
   holidayDutyCount?: number | null;
+  exactCoverage?: boolean;
   additionalHolidays?: string[];
   dateDutyOverrides?: Record<string, number>;
   minimumSupervisorDuty?: number;
@@ -150,7 +152,10 @@ function candidates(
         return reject("Semana com dados incompletos");
       if (week.some((d) => ["protected", "absence"].includes(kind(person.assignments[d] || ""))))
         return reject("Semana com afastamento ou ausência a revisar");
-      const fixed = rule?.fixedOffByName?.[norm(person.name)];
+      const declared = fixedRestDeclaration(person);
+      if (declared.declared && declared.day === null)
+        return reject("Coluna Folga fixa vazia ou inválida; conferir a referência");
+      const fixed = declared.day ?? rule?.fixedOffByName?.[norm(person.name)];
       const sameWeekday = Object.keys(person.assignments).filter(
         (d) => d !== date && weekdays(d) === weekdays(date),
       );
@@ -265,6 +270,18 @@ export function analyzeSchedule(
   const fullWeeks = weeks(dates);
   const issues: ScheduleIssue[] = [];
   const notes: string[] = [];
+  for (const person of current.people) {
+    const declared = fixedRestDeclaration(person);
+    if (
+      declared.declared &&
+      declared.day === null &&
+      Object.values(person.assignments).some((code) => kind(code) === "work")
+    )
+      notes.push(
+        person.name +
+          ": coluna Folga fixa vazia ou inválida; informe um dia de segunda a sábado na origem.",
+      );
+  }
   const plannedMap = new Map(planned.people.map((p) => [norm(p.name), p]));
   const holiday = new Set([
     "01-01",
@@ -305,8 +322,36 @@ export function analyzeSchedule(
         : isHoliday
           ? rule?.holidayDutyCount
           : null);
-    const need = event ? Math.max(plannedCount, requestedQuota ?? 0) : 0;
+    // Only a scope with an explicit exact policy supersedes an older snapshot.
+    const need = event
+      ? rule?.exactCoverage
+        ? (requestedQuota ?? plannedCount)
+        : Math.max(plannedCount, requestedQuota ?? 0)
+      : 0;
     const shortage = event ? Math.max(0, need - currentOnDuty.length) : missing.length;
+    if (
+      event &&
+      rule?.exactCoverage &&
+      requestedQuota !== null &&
+      requestedQuota !== undefined &&
+      currentOnDuty.length > need
+    ) {
+      issues.push({
+        id: "coverage:" + date,
+        date,
+        kind: "coverage",
+        severity: "high",
+        title: "Plantão acima do quantitativo definido",
+        detail:
+          "Quantidade definida: " +
+          need +
+          "; atual: " +
+          currentOnDuty.length +
+          ". Confira o rodízio antes de retirar pessoas.",
+        affected: currentOnDuty.map((person) => person.name),
+        candidates: [],
+      });
+    }
     if (shortage > 0 && missing.length > 0) {
       issues.push({
         id: "coverage:" + date,

@@ -57,7 +57,8 @@ function payload(value: unknown, month: string): Payload {
       !safeText(p["name"], 120) ||
       !p["name"].trim() ||
       !safeText(p["jobTitle"], 160) ||
-      (p["login"] !== undefined && !safeText(p["login"], 120))
+      (p["login"] !== undefined && !safeText(p["login"], 120)) ||
+      (p["fixedRest"] !== undefined && !safeText(p["fixedRest"], 80))
     )
       return invalid();
     const codes = record(p["assignments"]);
@@ -69,6 +70,7 @@ function payload(value: unknown, month: string): Payload {
     return {
       name: p["name"],
       jobTitle: p["jobTitle"],
+      ...(p["fixedRest"] !== undefined ? { fixedRest: p["fixedRest"] as string } : {}),
       assignments: Object.fromEntries(dates.map((day) => [day, String(codes[day] || "")])),
     };
   });

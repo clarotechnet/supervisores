@@ -67,7 +67,7 @@ describe("distribuição percentual e cobertura de Adesão", () => {
       expect(original).toEqual(snapshot);
     }
   });
-  it("usa 57 no denominador e mantém os 4 AT e os 17 demais ativos no modelo", () => {
+  it("mantém os cadastros do modelo legado e aponta o quantitativo antigo de Natal para revisão", () => {
     const p = generateInitialRnDecemberPreview(source());
     const summary = fixedRestSummary(p.payload.people, p.targetMonth, p.rule);
     expect(summary).toMatchObject({
@@ -78,7 +78,9 @@ describe("distribuição percentual e cobertura de Adesão", () => {
       issues: [],
     });
     expect(p.payload.people).toHaveLength(78);
-    expect(p.blockingIssues).toEqual([]);
+    expect(p.blockingIssues).toEqual([
+      "2026-12-25: cobertura de plantão 5/3 após revisão; conferir substituições.",
+    ]);
     for (const person of p.payload.people.filter((x) => !x.login?.trim()))
       for (const d of p.eventCoverage) expect(person.assignments[d.date]).toBe("Folga");
   });
@@ -97,13 +99,13 @@ describe("distribuição percentual e cobertura de Adesão", () => {
     expect(scheduleRuleForMonth(rule, "2027-02").dateDutyOverrides?.["2027-02-28"]).toBe(10);
     expect(JSON.stringify(rule)).toBe(original);
   });
-  it("gera janeiro com 3 por domingo, 10 no último e 5 no feriado; preserva dezembro e os dias explícitos", () => {
+  it("gera janeiro com 3 por domingo, 10 no último e 3 no feriado; preserva dezembro e os dias explícitos", () => {
     const s = source("2026-12"),
       snapshot = structuredClone(s);
     const p = generateSchedulePreview(s, "2027-01");
     expect(s).toEqual(snapshot);
     expect(p.eventCoverage.map((e) => [e.date, e.planned, e.assigned])).toEqual([
-      ["2027-01-01", 5, 0],
+      ["2027-01-01", 3, 0],
       ["2027-01-03", 3, 3],
       ["2027-01-10", 3, 3],
       ["2027-01-17", 3, 3],

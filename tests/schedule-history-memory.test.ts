@@ -143,8 +143,8 @@ describe("geração a partir da escala sincronizada", () => {
     const result = generateSchedulePreview(s, "2027-01");
     expect(result.eventCoverage.find((e) => e.date === "2027-01-01")).toEqual({
       date: "2027-01-01",
-      planned: 5,
-      assigned: 5,
+      planned: 3,
+      assigned: 3,
     });
     for (const p of result.payload.people.slice(0, 8))
       expect(p.assignments["2027-01-01"]).toBe("Folga");
