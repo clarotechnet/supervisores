@@ -140,14 +140,12 @@ try {
     const city = (name) => root.locator(`#presentationCityStrip [data-city="${name}"]`);
     const read = () =>
       page.evaluate(() =>
-        window.tcMossoro
-          .getProjectState()
-          .result.map((a) => ({
-            login: a.loginText,
-            status: a.status,
-            fails: a.fails,
-            prod: a.prod,
-          })),
+        window.tcMossoro.getProjectState().result.map((a) => ({
+          login: a.loginText,
+          status: a.status,
+          fails: a.fails,
+          prod: a.prod,
+        })),
       );
     const target = technicalVisit ? 175 : 100;
     await city("Mossoró").waitFor();
@@ -233,6 +231,50 @@ try {
       ),
       true,
     );
+    // In VT, sorting by name must cross the certification groups. QQ keeps those groups.
+    const tableRows = () =>
+      root.locator("#tbody tr").evaluateAll((elements) =>
+        elements.map((el) => ({
+          name: el.querySelector(".tc-person-name").textContent,
+          status: el.querySelector(".tc-fixed-status").dataset.currentState,
+        })),
+      );
+    const initial = await tableRows();
+    const byName = (a, b) => a.name.localeCompare(b.name, "pt-BR", { numeric: true });
+    const alphabetical = [...initial].sort(byName);
+    const groups = [...new Set(initial.map((row) => row.status))];
+    assert.ok(groups.includes("offender") && groups.includes("certified"));
+    assert.notDeepEqual(
+      initial.map((row) => row.status),
+      alphabetical.map((row) => row.status),
+    );
+    const groupedNames = (dir) =>
+      groups.flatMap((status) =>
+        initial.filter((row) => row.status === status).sort((a, b) => dir * byName(a, b)),
+      );
+    const nameHeader = root.locator('#tcHead [data-sort="name"]');
+    const statusHeader = root.locator('#tcHead [data-sort="status"]');
+    await nameHeader.click();
+    assert.deepEqual(await tableRows(), technicalVisit ? alphabetical : groupedNames(1));
+    assert.match(await nameHeader.innerText(), /▲/);
+    if (technicalVisit) {
+      assert.doesNotMatch(await statusHeader.innerText(), /▲|Ofensores primeiro/);
+      assert.match(await root.locator("#tcCurrentReferenceNote").innerText(), /ordem alfabética/);
+      await page.evaluate(() => window.tcMossoro.redraw());
+      assert.deepEqual(await tableRows(), alphabetical);
+    } else {
+      assert.match(await statusHeader.innerText(), /▲/);
+      assert.match(await statusHeader.getAttribute("title"), /Ordenação fixa/);
+    }
+    await nameHeader.click();
+    assert.deepEqual(
+      await tableRows(),
+      technicalVisit ? [...alphabetical].reverse() : groupedNames(-1),
+    );
+    assert.match(await nameHeader.innerText(), /▼/);
+    await statusHeader.click();
+    assert.deepEqual(await tableRows(), initial);
+    assert.match(await statusHeader.innerText(), /Ofensores primeiro/);
     await page.close();
   }
   assert.deepEqual(errors, []);
@@ -250,6 +292,7 @@ try {
         metricColorsAndHeaders: true,
         contractsAndProjections: true,
         dailyMatrixAndSupervisorView: true,
+        globalAlphabeticalOrderOnlyVT: true,
         immutableSource: true,
         externalRequests,
         writes,

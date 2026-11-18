@@ -252,8 +252,24 @@ for (const [kind, id, name] of [
       'title="Competência de referência do filtro de meses"',
     );
     adapt(
-      'title="Ordenação fixa: ofensores do último mês primeiro"',
-      'title="Ordenação fixa: ofensores da competência de referência primeiro"',
+      "  const rank=tcCurrentRank(a)-tcCurrentRank(b);if(rank)return rank;",
+      "  // In VT, an explicit name sort spans all certification groups.\n  if(!environment.technicalVisit||key!=='name'){const rank=tcCurrentRank(a)-tcCurrentRank(b);if(rank)return rank;}",
+    );
+    adapt(
+      " const currentLabel=state.currentMonth?monthLabel(state.currentMonth):'Sem mês na base';",
+      " const alphabetical=environment.technicalVisit&&state.sort.key==='name';\n const statusTitle=environment.technicalVisit?'Clique para colocar os ofensores primeiro':'Ordenação fixa: ofensores da competência de referência primeiro';\n const currentLabel=state.currentMonth?monthLabel(state.currentMonth):'Sem mês na base';",
+    );
+    adapt(
+      " · ofensores primeiro · clique na certificação para ver os contratos.",
+      " · '+(alphabetical?'ordem alfabética':'ofensores primeiro')+' · clique na certificação para ver os contratos.",
+    );
+    adapt(
+      "data-sort=\"name\">TÉCNICO${marks('name')}",
+      "data-sort=\"name\"${alphabetical?' aria-sort=\"'+(state.sort.dir>0?'ascending':'descending')+'\"':''}>TÉCNICO${marks('name')}",
+    );
+    adapt(
+      'title="Ordenação fixa: ofensores do último mês primeiro">CERTIFICAÇÃO ▲<small>${esc(currentLabel)}</small><small class="tc-current-priority">Ofensores primeiro</small>',
+      "title=\"${statusTitle}\">CERTIFICAÇÃO${alphabetical?'':' ▲'}<small>${esc(currentLabel)}</small>${alphabetical?'':'<small class=\"tc-current-priority\">Ofensores primeiro</small>'}",
     );
     adapt(
       "\n    const $ = s => document.querySelector(s)",

@@ -50,6 +50,7 @@ try {
           "Mudanca de Pacote",
           "INST GPON - INST CABO",
           "Troca de Equipamento Streaming",
+          "Adequacao MDU GPON",
         ];
         const make = (login, service, wo, day = "05", points = "175", extra = {}) => ({
           login,
@@ -85,7 +86,18 @@ try {
           make("VT-B", "Vistoria de Instalacao", "SIMILAR"),
           make("VT-C", "", "EMPTY"),
           ...services.map((service, i) =>
-            make("VT-A", service, `BLOCK-${i}`, "06", "9000", { qr: "1", tnum: "0", tden: "1000" }),
+            service === "Adequacao MDU GPON"
+              ? make("VT-A", service, "BLOCK-MDU", "16", "80", {
+                  group: "MANUTENCAO",
+                  noteAt: "26/11/2026",
+                  tnum: "0",
+                  tden: "3",
+                })
+              : make("VT-A", service, `BLOCK-${i}`, "06", "9000", {
+                  qr: "1",
+                  tnum: "0",
+                  tden: "1000",
+                }),
           ),
           ...services.map((service, i) => make("EXCLUDED", service, `EXCLUDED-${i}`, "06")),
           ...services.map((service, i) => make("QQ", service, `QQ-${i}`, "06", "200")),
@@ -143,20 +155,18 @@ try {
     const root = page.locator("#host");
     const state = await page.evaluate(() => ({
       rows: window.vtEngine.getProjectState().rows.map((r) => ({ wo: r.wo, service: r.service })),
-      results: window.vtEngine
-        .getProjectState()
-        .result.map((r) => ({
-          login: r.loginText,
-          os: r.os,
-          points: r.points,
-          days: [...r.days],
-          prod: r.prod,
-          tnum: r.tnum,
-          tden: r.tden,
-          revisit: r.revisit,
-          tec1: r.tec1,
-          status: r.status,
-        })),
+      results: window.vtEngine.getProjectState().result.map((r) => ({
+        login: r.loginText,
+        os: r.os,
+        points: r.points,
+        days: [...r.days],
+        prod: r.prod,
+        tnum: r.tnum,
+        tden: r.tden,
+        revisit: r.revisit,
+        tec1: r.tec1,
+        status: r.status,
+      })),
       slides: window.vtEngine.technetSlides.list(),
     }));
     if (technicalVisit) {
@@ -212,14 +222,14 @@ try {
       assert.doesNotMatch(await root.locator("#tcSupervisorTable").innerText(), /Equipe excluída/);
       await root.locator('#tcSupervisorControls [data-sv-mode="technician"]').click();
     } else {
-      assert.equal(state.rows.length, 5);
+      assert.equal(state.rows.length, 6);
       assert.equal(state.results[0].login, "QQ");
-      assert.equal(state.results[0].points, 1000);
-      assert.equal(state.results[0].os, 5);
+      assert.equal(state.results[0].points, 1200);
+      assert.equal(state.results[0].os, 6);
       assert.equal(
         new Set(state.rows.map((r) => r.service)).size,
-        5,
-        "QQ retains all five services",
+        6,
+        "QQ retains all six services",
       );
     }
     assert.equal(
@@ -240,7 +250,7 @@ try {
     JSON.stringify(
       {
         ok: true,
-        vtExcludedServices: 5,
+        vtExcludedServices: 6,
         sourcePreserved: true,
         qqUnchanged: true,
         totalsAndDailyProductivity: true,
