@@ -19,6 +19,8 @@ const EXCLUDED_TECHNICAL_VISIT_SERVICES = new Set(
     "INST GPON - INST CABO",
     "TROCA DE EQUIPAMENTO STREAMING",
     "Adequacao MDU GPON",
+    "Retorno Credenciada",
+    "Mudanca de Local",
   ].map(technicalVisitServiceKey),
 );
 
