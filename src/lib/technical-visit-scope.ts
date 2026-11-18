@@ -5,21 +5,26 @@ export function isTechnicalVisitSector(sector: unknown): boolean {
   return nameKey(sector) === "VISITA TECNICA";
 }
 
+function technicalVisitServiceKey(service: unknown): string {
+  return nameKey(service)
+    .replace(/[‐‑‒–—−]/g, "-")
+    .replace(/\s*-\s*/g, " - ");
+}
 
-const EXCLUDED_TECHNICAL_VISIT_SERVICES = new Set([
-  "MUDANCA DE ENDERECO",
-  "INSTALACAO",
-  "MUDANCA DE PACOTE",
-  "INST GPON - INST CABO",
-  "TROCA DE EQUIPAMENTO STREAMING",
-]);
+const EXCLUDED_TECHNICAL_VISIT_SERVICES = new Set(
+  [
+    "MUDANCA DE ENDERECO",
+    "INSTALACAO",
+    "MUDANCA DE PACOTE",
+    "INST GPON - INST CABO",
+    "TROCA DE EQUIPAMENTO STREAMING",
+    "Adequacao MDU GPON",
+  ].map(technicalVisitServiceKey),
+);
 
 /** Exact TIPO_SERVICO exclusions, independent of the login's registered VT sector. */
 export function isExcludedTechnicalVisitService(service: unknown): boolean {
-  const key = nameKey(service)
-    .replace(/[‐‑‒–—−]/g, "-")
-    .replace(/\s*-\s*/g, " - ");
-  return EXCLUDED_TECHNICAL_VISIT_SERVICES.has(key);
+  return EXCLUDED_TECHNICAL_VISIT_SERVICES.has(technicalVisitServiceKey(service));
 }
 
 /** View-only selection. Imports/cache retain the complete, original dataset. */

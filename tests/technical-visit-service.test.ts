@@ -17,6 +17,7 @@ const excluded = [
   "Mudanca de Pacote",
   "INST GPON - INST CABO",
   "Troca de Equipamento Streaming",
+  "Adequacao MDU GPON",
 ];
 const directory = [
   {
@@ -142,6 +143,8 @@ describe("exclusões de TIPO_SERVICO somente no Técnico Certificado da VT", () 
     "inst gpon-inst cabo",
     "INST GPON – INST CABO",
     " troca de equipamento streaming ",
+    "Adequação MDU GPON",
+    "  adequação  mdu gpon  ",
   ])("normaliza apenas caixa, acentos, espaços e hífen: %s", (service) => {
     expect(isExcludedTechnicalVisitService(service)).toBe(true);
   });
@@ -152,6 +155,7 @@ describe("exclusões de TIPO_SERVICO somente no Técnico Certificado da VT", () 
     "INSTALACAO ADICIONAL",
     "Troca de Equipamento",
     "Mudanca de Endereco - Vistoria",
+    "Adequacao MDU GPON - Vistoria",
     "",
     null,
     undefined,
@@ -199,7 +203,7 @@ describe("exclusões de TIPO_SERVICO somente no Técnico Certificado da VT", () 
     expect(scoped.datasets.certification).toBe(state.datasets.certification);
     expect(scoped.datasets.quebra).toBe(state.datasets.quebra);
     expect(JSON.stringify(state)).toBe(before);
-    expect(state.datasets.technical_visit!.records).toHaveLength(13);
+    expect(state.datasets.technical_visit!.records).toHaveLength(3 + 2 * excluded.length);
   });
   it("não altera a regra de QQ e Certificação para os mesmos serviços", () => {
     const state = stateFor();

@@ -400,7 +400,8 @@ function tcQuarterSort(arr){
  const {key,dir,month}=state.sort;
  const val=a=>{const x=key==='status'?tcCurrentResult(a):month?tcMonthlyResult(a,month):a;return x==null?null:key==='days'?x.days.size:key==='status'?+x.status:x[key];};
  return arr.sort((a,b)=>{
-  const rank=tcCurrentRank(a)-tcCurrentRank(b);if(rank)return rank;
+  // In VT, an explicit name sort spans all certification groups.
+  if(!environment.technicalVisit||key!=='name'){const rank=tcCurrentRank(a)-tcCurrentRank(b);if(rank)return rank;}
   if(key==='status')return (tcCurrentResult(b)?.fails.length||0)-(tcCurrentResult(a)?.fails.length||0)||a.name.localeCompare(b.name,'pt-BR');
   const A=val(a),B=val(b);if(typeof A==='string'||typeof B==='string')return dir*String(A??'').localeCompare(String(B??''),'pt-BR',{numeric:true})||a.name.localeCompare(b.name,'pt-BR');
   if(A==null&&B!=null)return 1;if(B==null&&A!=null)return -1;
@@ -504,13 +505,15 @@ function renderTable(){
  document.body.classList.toggle('tc-single-month',months.length===1);table.setAttribute('data-month-count',String(months.length));
  table.style.setProperty('--tc-table-min',(months.length===1?1040:220+months.length*3*82+300+76+130)+'px');
  $('#tcPanelContext').textContent=R.length+' técnicos · '+months.length+(months.length===1?' mês':' meses')+(months.length===1?' · '+monthLabel(months[0]):' · comparação mensal');
- const currentLabel=state.currentMonth?monthLabel(state.currentMonth):'Sem mês na base';table.setAttribute('data-current-month',state.currentMonth);$('#tcCurrentReferenceNote').textContent='Volume e certificação: '+currentLabel+' · ofensores primeiro · clique na certificação para ver os contratos.';
+ const alphabetical=environment.technicalVisit&&state.sort.key==='name';
+ const statusTitle=environment.technicalVisit?'Clique para colocar os ofensores primeiro':'Ordenação fixa: ofensores da competência de referência primeiro';
+ const currentLabel=state.currentMonth?monthLabel(state.currentMonth):'Sem mês na base';table.setAttribute('data-current-month',state.currentMonth);$('#tcCurrentReferenceNote').textContent='Volume e certificação: '+currentLabel+' · '+(alphabetical?'ordem alfabética':'ofensores primeiro')+' · clique na certificação para ver os contratos.';
  const marks=(key,month=null)=>state.sort.key===key&&(state.sort.month||null)===month?(state.sort.dir>0?' ▲':' ▼'):'';
  $('#tcColumns').innerHTML='<col class="tc-name-col">'+months.map(()=>'<col class="tc-month-col"><col class="tc-month-col"><col class="tc-month-col">').join('')+'<col class="tc-projection-col"><col class="tc-volume-col"><col class="tc-status-col">';
- head.innerHTML=`<tr class="tc-groups"><th rowspan="2" class="tc-identity-head" data-sort="name">TÉCNICO${marks('name')}</th>${months.map((m,i)=>{
+ head.innerHTML=`<tr class="tc-groups"><th rowspan="2" class="tc-identity-head" data-sort="name"${alphabetical?' aria-sort="'+(state.sort.dir>0?'ascending':'descending')+'"':''}>TÉCNICO${marks('name')}</th>${months.map((m,i)=>{
   const data=[...(state.monthly.get(m)?.values()||[])],n=data.filter(a=>a.prod!=null).length,c=data.filter(a=>a.status).length;
   return `<th colspan="3" class="tc-month-head month-${i%2}" title="${esc(n?c+' certificados de '+n+' avaliados no mês':'Sem dados neste mês e recorte')}">${esc(monthLabel(m))}${n?'':'<small>Sem dados</small>'}</th>`;
- }).join('')}<th rowspan="2" class="tc-projection-head" title="Produção adicional por dia de trabalho previsto para fechar o TC dentro de cada meta">PROJEÇÃO NECESSÁRIA / DIA<small>${esc(currentLabel)} · ${state.projectionContext.workDays} dias previstos</small></th><th rowspan="2" class="tc-volume-head tc-fixed-volume" title="Competência de referência do filtro de meses">VOLUME<small>${esc(currentLabel)}</small></th><th rowspan="2" class="tc-status-head tc-fixed-status" data-sort="status" title="Ordenação fixa: ofensores da competência de referência primeiro">CERTIFICAÇÃO ▲<small>${esc(currentLabel)}</small><small class="tc-current-priority">Ofensores primeiro</small></th></tr>
+ }).join('')}<th rowspan="2" class="tc-projection-head" title="Produção adicional por dia de trabalho previsto para fechar o TC dentro de cada meta">PROJEÇÃO NECESSÁRIA / DIA<small>${esc(currentLabel)} · ${state.projectionContext.workDays} dias previstos</small></th><th rowspan="2" class="tc-volume-head tc-fixed-volume" title="Competência de referência do filtro de meses">VOLUME<small>${esc(currentLabel)}</small></th><th rowspan="2" class="tc-status-head tc-fixed-status" data-sort="status" title="${statusTitle}">CERTIFICAÇÃO${alphabetical?'':' ▲'}<small>${esc(currentLabel)}</small>${alphabetical?'':'<small class="tc-current-priority">Ofensores primeiro</small>'}</th></tr>
  <tr class="tc-columns">${months.map(m=>['revisit','tec1','prod'].map((k,i)=>`<th data-sort="${k}" data-month="${m}" class="${i===0?'tc-month-start':''}">${k==='revisit'?'REVISITA':k==='tec1'?'TEC1':'PONTOS/DIA'}${marks(k,m)}<small>${esc(tcMetricTarget(k))}</small></th>`).join('')).join('')}</tr>`;
  head.querySelectorAll('[data-sort]').forEach(h=>h.onclick=()=>{const key=h.dataset.sort,month=h.dataset.month||null,current=state.sort.key===key&&(state.sort.month||null)===month;state.sort=key==='status'?{key:'status',month:null,dir:1}:{key,month,dir:current?-state.sort.dir:key==='name'?1:-1};render();});
  requestAnimationFrame(tcUpdateCurrentPins);
