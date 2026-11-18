@@ -964,3 +964,125 @@ Deno.test(
     assert(mock.rpcCalls.length === 1, "fell back to another publication path");
   },
 );
+
+Deno.test("Control creation writes typed formulas only to the new monthly tab", async () => {
+  reset();
+  mock.queryError = null;
+  mock.auditError = null;
+  mock.rowsByTable["schedule_operational_sheets"] = null;
+  mock.rowsByTable["schedule_generation_drafts"] = {
+    id: selectedId,
+    city: "natal",
+    sector: "controle-operacional",
+    schedule_month: "2026-12-01",
+    status: "draft",
+    archived_at: null,
+    payload,
+    policy_snapshot: {},
+  };
+  const env = [
+    "SUPABASE_URL",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET",
+    "GOOGLE_REFRESH_TOKEN",
+    "GOOGLE_SHEETS_RN_CONTROL_ID",
+  ];
+  const previousEnv = env.map((key) => Deno.env.get(key));
+  env.forEach((key) =>
+    Deno.env.set(
+      key,
+      key === "GOOGLE_SHEETS_RN_CONTROL_ID" ? CONTROL_EXPECTED_MASTER_ID : "fixture",
+    ),
+  );
+  const previousFetch = globalThis.fetch;
+  const requests: Array<Record<string, unknown>> = [];
+  globalThis.fetch = ((url: string | URL | Request, options?: RequestInit) => {
+    const address = String(url);
+    if (address.includes("oauth2"))
+      return Promise.resolve(Response.json({ access_token: "fixture" }));
+    assert(
+      address.startsWith(
+        "https://sheets.googleapis.com/v4/spreadsheets/" + CONTROL_EXPECTED_MASTER_ID,
+      ),
+      "wrong workbook",
+    );
+    if (!options?.method || options.method === "GET")
+      return Promise.resolve(
+        Response.json({
+          sheets: [
+            {
+              properties: {
+                sheetId: 77,
+                title: "Controle NOVEMBRO 26 - ORIGINAL",
+                index: 0,
+                gridProperties: { rowCount: 1001, columnCount: 40 },
+              },
+            },
+          ],
+        }),
+      );
+    const body = JSON.parse(String(options.body)) as { requests?: Array<Record<string, unknown>> };
+    assert(!address.includes("/values"), "formulas written as raw values");
+    requests.push(...(body.requests || []));
+    if (body.requests?.[0]?.duplicateSheet)
+      return Promise.resolve(
+        Response.json({ replies: [{ duplicateSheet: { properties: { sheetId: 88 } } }] }),
+      );
+    return Promise.resolve(Response.json({ replies: [] }));
+  }) as typeof fetch;
+  try {
+    const response = await handler(
+      new Request("https://example.invalid", {
+        method: "POST",
+        headers: { Authorization: "Bearer fixture", "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "create", draftId: selectedId }),
+      }),
+    );
+    const body = await response.json();
+    assert(response.status === 200 && body.existing === false, JSON.stringify(body));
+    const content = requests.find(
+      (item) => (item.updateCells as { rows?: unknown[] })?.rows?.length,
+    );
+    assert(
+      !!content && JSON.stringify(content).includes("formulaValue"),
+      "no formulas in created content",
+    );
+    for (const item of requests.filter((item) => !item.duplicateSheet)) {
+      assert(JSON.stringify(item).includes('"sheetId":88'), "request touched original sheet");
+      assert(!JSON.stringify(item).includes('"sheetId":77'), "original sheet changed");
+    }
+    const stored = mock.mutationCalls.filter(
+      (call) => call.table === "schedule_operational_sheets" && call.operation === "insert",
+    );
+    assert(
+      stored.length === 1 && !mock.rpcCalls.length,
+      "creation published or failed to save link",
+    );
+    const values = stored[0]!.values as { planned_payload: Payload; current_payload: Payload };
+    assert(
+      [values.planned_payload, values.current_payload].every(
+        (snapshot) =>
+          snapshot.dates.join(",") === payload.dates.join(",") &&
+          snapshot.codes.join(",") === "T. 1" &&
+          snapshot.people.length === payload.people.length &&
+          snapshot.people.every(
+            (person, index) =>
+              person.name === payload.people[index]!.name &&
+              person.jobTitle === payload.people[index]!.jobTitle &&
+              payload.dates.every(
+                (date) => person.assignments[date] === payload.people[index]!.assignments[date],
+              ),
+          ),
+      ),
+      "formulas imported into schedule planning",
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+    env.forEach((key, index) =>
+      previousEnv[index] === undefined
+        ? Deno.env.delete(key)
+        : Deno.env.set(key, previousEnv[index]!),
+    );
+  }
+});

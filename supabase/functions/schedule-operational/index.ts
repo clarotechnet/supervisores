@@ -1,3 +1,4 @@
+import { controlMonthCreationRequests } from "../_shared/schedule-control-formulas.ts";
 import {
   reviewSchedulePublication,
   validatePublicationException,
@@ -37,7 +38,6 @@ import {
   controlTemplateTab,
   usesControlMaster,
   controlMonthTabName,
-  controlMonthValues,
   parseControlMonthTab,
   readControlMonthSource,
   controlMonthFormatting,
@@ -273,9 +273,19 @@ Deno.serve(async (req) => {
         const meta = (await googleJson(
           "https://sheets.googleapis.com/v4/spreadsheets/" +
             spreadsheetId +
-            "?fields=spreadsheetId,sheets(properties(sheetId,title,index))",
+            "?fields=spreadsheetId,properties(locale),sheets(properties(sheetId,title,index,gridProperties(rowCount,columnCount)))",
           token,
-        )) as { sheets?: Array<{ properties: { sheetId: number; title: string; index: number } }> };
+        )) as {
+          properties?: { locale?: string };
+          sheets?: Array<{
+            properties: {
+              sheetId: number;
+              title: string;
+              index: number;
+              gridProperties?: { rowCount?: number; columnCount?: number };
+            };
+          }>;
+        };
         const previousTitle = controlTemplateTab(draft.schedule_month);
         const source = meta.sheets?.find((row) => row.properties.title === previousTitle);
         if (!source)
@@ -311,21 +321,20 @@ Deno.serve(async (req) => {
           throw Error(
             "A aba pode ter sido duplicada no Google, mas não foi possível confirmar o ID. Verifique-a antes de tentar novamente.",
           );
-        const range = "'" + tab.replace(/'/g, "''") + "'!A1";
-        // Limpa SOMENTE os valores da cópia, nunca da aba original.
+        // Conteúdo e fórmulas são gravados juntos na cópia, com tipos explícitos.
+        // Mantém nomes, turnos e datas como texto e fórmulas como formulaValue.
         await googleJson(
-          "https://sheets.googleapis.com/v4/spreadsheets/" + spreadsheetId + "/values:batchClear",
-          token,
-          "POST",
-          { ranges: ["'" + tab + "'!A1:AO1001"] },
-        );
-        await googleJson(
-          "https://sheets.googleapis.com/v4/spreadsheets/" + spreadsheetId + "/values:batchUpdate",
+          "https://sheets.googleapis.com/v4/spreadsheets/" + spreadsheetId + ":batchUpdate",
           token,
           "POST",
           {
-            valueInputOption: "RAW",
-            data: [{ range, values: controlMonthValues(baseline, draft.schedule_month) }],
+            requests: controlMonthCreationRequests(
+              sheetGridId,
+              baseline,
+              draft.schedule_month,
+              source.properties.gridProperties,
+              meta.properties?.locale || "pt_BR",
+            ),
           },
         );
         let formatWarning: string | null = null;
