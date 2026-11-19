@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
@@ -45,8 +45,10 @@ const SlaWarrantyPanel = lazy(() =>
 );
 export function QualityDashboard({
   variant = "quality",
+  navigation,
 }: {
   variant?: "quality" | "technical_visit";
+  navigation?: ReactNode;
 }) {
   const technicalVisit = variant === "technical_visit";
   const moduleError = (error: unknown) =>
@@ -301,6 +303,7 @@ export function QualityDashboard({
   );
   return (
     <AppShell presentation={presentation} fullWidth>
+      {!presentation && navigation}
       <input
         ref={input}
         type="file"
