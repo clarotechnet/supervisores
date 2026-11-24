@@ -11,13 +11,23 @@ import {
   SCHEDULE_KIND_STYLE,
   SCHEDULE_T2_STYLE,
 } from "@/lib/schedule-view";
-import { isMarkedScheduleDuty } from "@/lib/schedule-dashboard";
+import { isMarkedScheduleDuty, type SchedulePeopleSort } from "@/lib/schedule-dashboard";
 import { todayKey } from "@/lib/date-utils";
 import { useTheme } from "@/hooks/useTheme";
 import { cn } from "@/lib/utils";
 const WEEKDAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+const sortBadge = (active: boolean) =>
+  cn(
+    "shrink-0 rounded border px-1 py-0.5 text-[9px] leading-none",
+    active ? "border-primary/30 bg-primary/10 text-primary" : "border-border text-muted-foreground",
+  );
+const sortButton =
+  "cursor-pointer rounded hover:text-primary focus-visible:outline-2 focus-visible:outline-primary";
+
 export function ScheduleComparisonTable({
   people,
+  peopleSort,
+  onTogglePeopleSort,
   month,
   city,
   sector,
@@ -33,6 +43,8 @@ export function ScheduleComparisonTable({
   onOpenCell,
 }: {
   people: SchedulePerson[];
+  peopleSort: SchedulePeopleSort | null;
+  onTogglePeopleSort: (sort: SchedulePeopleSort) => void;
   month: string;
   city: string;
   sector: string;
@@ -48,6 +60,7 @@ export function ScheduleComparisonTable({
   onOpenCell?: ((name: string, date: string) => void) | undefined;
 }) {
   const [exporting, setExporting] = useState(false);
+  const roleSorted = peopleSort === "role";
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!compact || !scrollRef.current) return;
@@ -108,7 +121,13 @@ export function ScheduleComparisonTable({
     };
   });
   return (
-    <div className={cn("schedule-map w-full min-w-0 max-w-full", compact && "is-compact")}>
+    <div
+      className={cn(
+        "schedule-map w-full min-w-0 max-w-full",
+        compact && "is-compact",
+        roleSorted && "is-role-sorted",
+      )}
+    >
       {showToolbar && (
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -148,8 +167,8 @@ export function ScheduleComparisonTable({
       >
         <table className="schedule-map-table">
           <caption className="sr-only">
-            Escala de {formattedMonth}. Clique no nome ou no código para ver os detalhes; no
-            cabeçalho, a equipe do dia.
+            Escala de {formattedMonth}. Ordene por nome ou função. Clique no nome ou código para ver
+            os detalhes; no cabeçalho da data, a equipe do dia.
           </caption>
           <colgroup>
             <col className="schedule-name-column" />
@@ -159,8 +178,36 @@ export function ScheduleComparisonTable({
           </colgroup>
           <thead>
             <tr>
-              <th className="schedule-person-cell" scope="col">
-                Colaborador / função
+              <th
+                className="schedule-person-cell"
+                scope="col"
+                aria-sort={peopleSort ? "ascending" : "none"}
+              >
+                <div className="flex flex-wrap items-center gap-1">
+                  <button
+                    type="button"
+                    className={cn(sortButton, "inline-flex items-center gap-1")}
+                    onClick={() => onTogglePeopleSort("name")}
+                    aria-label="Colaborador / função: ordenar de A a Z"
+                    aria-pressed={peopleSort === "name"}
+                    title={peopleSort === "name" ? "Voltar à ordem original" : "Ordenar de A a Z"}
+                  >
+                    Colaborador / função
+                    <span aria-hidden="true" className={sortBadge(peopleSort === "name")}>
+                      A–Z
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className={cn(sortButton, sortBadge(roleSorted))}
+                    onClick={() => onTogglePeopleSort("role")}
+                    aria-label="Ordenar pela função completa"
+                    aria-pressed={roleSorted}
+                    title={roleSorted ? "Voltar à ordem original" : "Ordenar pela função completa"}
+                  >
+                    Função
+                  </button>
+                </div>
               </th>
               {dates.map((date) => {
                 const previous = !date.startsWith(month.slice(0, 7)),
@@ -210,8 +257,13 @@ export function ScheduleComparisonTable({
                     </span>
                     <span className="min-w-0">
                       <b className="block truncate">{person.name}</b>
-                      <small className="schedule-person-role block truncate">
-                        {[person.login, person.jobTitle].filter(Boolean).join(" · ") ||
+                      <small
+                        className="schedule-person-role block truncate"
+                        title={roleSorted ? person.jobTitle : undefined}
+                      >
+                        {(compact && roleSorted
+                          ? person.jobTitle.trim()
+                          : [person.login, person.jobTitle].filter(Boolean).join(" · ")) ||
                           "Função não informada"}
                       </small>
                     </span>

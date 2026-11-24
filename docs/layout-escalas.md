@@ -9,8 +9,9 @@ Atualização local em 28/10/2026, baseada na estrutura de Painel_Escala_Equipe_
 - Seleção manual de colaboradores em janela própria. Busca e filtros não apagam a seleção; sincronização do mesmo registro conserva os nomes ainda existentes e uma seleção vazia explícita.
 - Visões Mapa, Calendário e Pessoas; modos compacto/detalhado e tela cheia.
 - Rolagem da tabela dentro do painel, com nomes e cabeçalhos fixos. Em telas pequenas ou equipes grandes, mantém tamanho mínimo legível e permite rolagem interna.
+- Em **Colaborador / função**, **A–Z** ordena por nome e **Função** ordena pela função completa, com nomes em A–Z dentro da mesma função. Clique novamente no botão ativo para voltar à ordem original, sem alterar a escala salva ou os filtros.
 - Clique no nome ou código abre resumo individual em pop-up, calendário mensal, dia anterior quando já presente no payload, plantões explicitamente marcados, PDF e os indicadores anteriores.
-- Clique no cabeçalho abre a equipe do dia, agrupada por situação. A visão Calendário também mostra o detalhe lateral/abaixo.
+- Clique no cabeçalho de uma data para abrir a equipe do dia, agrupada por situação. A visão Calendário também mostra o detalhe lateral/abaixo.
 - Observações da gestão continuam no fluxo existente. Edição de observações exige administrador.
 - PDF completo no topo; PDF da seleção no rodapé; imagem/ZIP e CSV no menu Exportar. CSV usa apenas a seleção e neutraliza texto que poderia ser interpretado como fórmula.
 

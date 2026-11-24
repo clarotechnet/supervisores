@@ -43,6 +43,9 @@ import {
   schedulePersonStats,
   scheduleVisibleDates,
   scheduleTeamCsv,
+  sortSchedulePeopleByName,
+  sortSchedulePeopleByRole,
+  type SchedulePeopleSort,
 } from "@/lib/schedule-dashboard";
 import { scheduleCodeKind } from "@/lib/schedule-import";
 import { todayKey } from "@/lib/date-utils";
@@ -97,6 +100,7 @@ export function ScheduleTeamWorkspace({
 }) {
   const [view, setView] = useState<"map" | "calendar" | "people">("map"),
     [compact, setCompact] = useState(true);
+  const [peopleSort, setPeopleSort] = useState<SchedulePeopleSort | null>(null);
   const [kind, setKind] = useState(""),
     [area, setArea] = useState(""),
     [base, setBase] = useState("");
@@ -120,6 +124,12 @@ export function ScheduleTeamWorkspace({
     [people, search, kind, area, base],
   );
   const visible = matching.filter((p) => selected.has(p.name));
+  const mapPeople =
+    view !== "map" || !peopleSort
+      ? visible
+      : peopleSort === "name"
+        ? sortSchedulePeopleByName(visible)
+        : sortSchedulePeopleByRole(visible);
   const details = people.map((p) => scheduleRoleDetails(p.jobTitle));
   const options = [
     {
@@ -156,7 +166,7 @@ export function ScheduleTeamWorkspace({
   }
   function showPerson(name: string, date?: string) {
     setDayOpen(false);
-    onShowPerson(name, date, visible);
+    onShowPerson(name, date, mapPeople);
   }
   async function imageExport() {
     setExporting(true);
@@ -442,7 +452,11 @@ export function ScheduleTeamWorkspace({
           </div>
         ) : view === "map" ? (
           <ScheduleComparisonTable
-            people={visible}
+            people={mapPeople}
+            peopleSort={peopleSort}
+            onTogglePeopleSort={(sort) =>
+              setPeopleSort((active) => (active === sort ? null : sort))
+            }
             month={schedule.schedule_month}
             city={city}
             sector={sector}

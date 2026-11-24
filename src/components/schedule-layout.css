@@ -934,6 +934,14 @@
   width: 2px;
   height: 2px;
 }
+.schedule-map.is-compact.is-role-sorted .schedule-person-role {
+  display: block;
+  margin-top: 1px;
+}
+.schedule-map.is-compact.is-role-sorted .schedule-code,
+.schedule-map.is-compact.is-role-sorted tbody .schedule-person-cell > button {
+  min-height: 26px;
+}
 
 .schedule-person-dialog,
 .schedule-day-dialog {

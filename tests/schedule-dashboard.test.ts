@@ -5,6 +5,8 @@ import {
   schedulePersonStats,
   scheduleVisibleDates,
   scheduleTeamCsv,
+  sortSchedulePeopleByName,
+  sortSchedulePeopleByRole,
 } from "../src/lib/schedule-dashboard";
 import type { SchedulePerson } from "../src/lib/types";
 const people: SchedulePerson[] = [
@@ -47,6 +49,48 @@ describe("dados da nova apresentação de escalas", () => {
     ).toEqual(["ANA TESTE"]);
     expect(filterScheduleTeam(people, "z02").map((p) => p.name)).toEqual(["BRUNO TESTE"]);
     expect(JSON.stringify(people)).toBe(before);
+  });
+  it("ordena nomes em português sem mudar a ordem de origem nem as marcações", () => {
+    const assignments = { "2026-12-01": "T. 1" };
+    const names = ["Novato 10", "ÁLVARO TESTE", "Amanda Teste", "Novato 2"];
+    const source = names.map((name) => ({ name, assignments, jobTitle: "" }));
+    const sorted = sortSchedulePeopleByName(source);
+
+    expect(sorted.map((person) => person.name)).toEqual([
+      "ÁLVARO TESTE",
+      "Amanda Teste",
+      "Novato 2",
+      "Novato 10",
+    ]);
+    expect(source.map((person) => person.name)).toEqual(names);
+    expect(sorted[0]).toBe(source[1]);
+  });
+  it("ordena pela função completa, usa o nome para desempatar e deixa as funções ausentes no fim", () => {
+    const assignments = { "2026-12-01": "T. 1" };
+    const source = [
+      { name: "André", jobTitle: "CONTROLADOR (ADESÃO) - NTL", assignments },
+      { name: "Zélia", jobTitle: "CONTROLADOR (ADESÃO) - FTZ", assignments },
+      { name: "Agenor", jobTitle: "  ", assignments },
+      { name: "Cláudio", jobTitle: "controlador (adesão) - ftz", assignments },
+      { name: "Beatriz", jobTitle: "ANALISTA", assignments },
+    ];
+    const sorted = sortSchedulePeopleByRole(source);
+
+    expect(sorted.map((person) => person.name)).toEqual([
+      "Beatriz",
+      "Cláudio",
+      "Zélia",
+      "André",
+      "Agenor",
+    ]);
+    expect(source.map((person) => person.name)).toEqual([
+      "André",
+      "Zélia",
+      "Agenor",
+      "Cláudio",
+      "Beatriz",
+    ]);
+    expect(sorted[1]).toBe(source[3]);
   });
   it("conta o mês exibido sem somar o dia anterior", () => {
     expect(schedulePersonStats(people[0]!, "2026-12")).toMatchObject({
