@@ -1,6 +1,7 @@
 import type { SchedulePerson } from "./types";
 import { scheduleCodeKind } from "./schedule-import";
 import { scheduleMonthDates } from "./schedule-view";
+const nameCollator = new Intl.Collator("pt-BR", { sensitivity: "base", numeric: true });
 const normalize = (value: string) =>
   value
     .normalize("NFD")
@@ -54,6 +55,22 @@ export function filterScheduleTeam(
       (!kind || details.kind === kind) &&
       (!area || details.area === area) &&
       (!base || details.bases.includes(base))
+    );
+  });
+}
+export function sortSchedulePeopleByName(people: readonly SchedulePerson[]): SchedulePerson[] {
+  return [...people].sort((a, b) => nameCollator.compare(a.name, b.name));
+}
+export type SchedulePeopleSort = "name" | "role";
+
+export function sortSchedulePeopleByRole(people: readonly SchedulePerson[]): SchedulePerson[] {
+  return [...people].sort((a, b) => {
+    const aRole = a.jobTitle.trim();
+    const bRole = b.jobTitle.trim();
+    return (
+      Number(!aRole) - Number(!bRole) ||
+      nameCollator.compare(aRole, bRole) ||
+      nameCollator.compare(a.name, b.name)
     );
   });
 }
