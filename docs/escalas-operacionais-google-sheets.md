@@ -181,3 +181,23 @@ A migration 20261028194624_schedule_private_helpers_service_role.sql concede ape
 Validação: o teste SQL agora carrega também a migration real de hardening de 24/09, reproduz a falha antes da correção e executa os cenários de publicação, sincronização e controle de acesso após a correção, somente com dados fictícios em localhost. A migration de correção permanece local, aguardando execução autorizada no projeto remoto.
 
 A função schedule-sync está ativa no remoto, mas sua versão publicada é anterior aos ajustes de outubro. Seu 404 é separado do erro de permissão de publicação. Após aprovar, o botão Atualizar via API do frontend atual seleciona o vínculo exato da escala oficial e usa schedule-operational. Mudanças de códigos dos dias na aba vinculada são lidas na aprovação e nas sincronizações; não é necessário desfazer as edições de férias por causa deste erro.
+
+## Adesão-Serviço de Natal: logins de TOA compartilhados
+
+Ao importar uma escala montada no Sheets, `FORA TOA` indica que a pessoa não tem login.
+Ela é identificada pelo nome. Se houver um login real, a importação usa login **e** nome
+para distinguir os colaboradores e preserva o login de TOA em cada linha. Assim, técnico
+e auxiliar podem ter o mesmo login e as mesmas marcações sem virarem uma única pessoa.
+As folgas e demais marcações são lidas da própria linha; a API não copia uma escala para
+outra. O conflito de folga para a mesma pessoa em abas diferentes continua bloqueado.
+
+A regra vale no `schedule-sync` e na releitura feita pelo `schedule-edit`. Para ativar,
+publique essas duas Edge Functions e use **Atualizar via API**. Não há migration nem
+necessidade de editar o Sheets. As outras frentes mantêm o comportamento anterior.
+
+## Instalação de Fortaleza: rótulos de supervisor
+
+Na coluna `Login` desta frente, `Sup.` e `Sup.VT` são rótulos, não logins individuais.
+A API identifica essas linhas pelo nome e preserva as marcações e a folga fixa de cada
+supervisor. Continua bloqueando folgas fixas incompatíveis quando são da mesma pessoa.
+A correção também vale para a releitura do `schedule-edit`, sem mudar a planilha de origem.

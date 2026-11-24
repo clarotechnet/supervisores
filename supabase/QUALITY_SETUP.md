@@ -120,7 +120,7 @@ apagado. A migration foi validada no banco local de testes; não foi executada e
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `quality_imports`              | Tipo de base, arquivo, autor, contagens, metadados, versão anterior e publicação. Os dicionários de nomes ficam nos metadados protegidos por RLS. |
 | `quality_quebra_data`          | Registros de QQ em blocos JSON de até 250 registros enviados pelo serviço; chave `(import_id, chunk_index)`.                                      |
-| `quality_certification_data`   | Registros de certificação em blocos separados; mesma chave.                                                                                       |
+| `quality_certification_data`   | Blocos legados de TC de QQ e Certificação, incluindo a base original usada na leitura incremental.                                               |
 | `quality_technical_visit_data` | TC exclusivo de Visita técnica, em blocos separados das outras bases.                                                                             |
 | `quality_supervisor_registry`  | Legado preservado para compatibilidade/histórico.                                                                                                 |
 | `quality_technician_directory` | Cadastro nativo por login: nome, cidade, setor, supervisor, autor e datas.                                                                        |
@@ -133,9 +133,36 @@ ao motor nem alteram os resultados. Os arquivos originais anexados permanecem in
 
 Uma importação começa pendente. A publicação confere quantidade de blocos, índices
 contíguos e contagem de registros. Uma falha mantém a última versão publicada disponível.
-Versões publicadas permanecem no histórico. Uma publicação concorrente de outro gestor
-faz a importação desatualizada falhar com instrução para atualizar e reimportar.
+No modelo de snapshots, versões publicadas permanecem no histórico. Uma publicação concorrente
+de outro gestor faz a importação desatualizada falhar com instrução para atualizar e reimportar.
 Não há exclusão automática das versões históricas.
+
+### Gravação incremental do Técnico Certificado em QQ e Certificação
+
+Somente `certification` usa a migration `20261124124711_quality_tc_importacao_incremental.sql`.
+Ela cria estruturas vazias; não copia, apaga nem altera as publicações existentes. Na primeira
+importação incremental, a última base publicada vira a referência. Os meses anteriores continuam
+na consulta e um arquivo parcial não exclui atendimentos ausentes. Quebras e o TC de Visita
+técnica (`technical_visit`) mantêm a gravação anterior.
+
+Para CSV/ZIP e para os dados de TC vindos do histórico HTML, o serviço envia somente os
+atendimentos novos ou com dados alterados, pela chave **WO + login + fim do trabalho**.
+O banco mantém uma versão atual por chave alterada; outra correção substitui essa versão.
+Reenviar o mesmo conteúdo, mesmo com outro nome de arquivo, não grava outra publicação.
+O painel combina os blocos da referência com as alterações da revisão publicada e confere o
+total, sem mudar indicadores nem regras de certificação. O upload usa blocos temporários; uma
+publicação incompleta ou com referência desatualizada não muda a base que está em uso.
+
+Para ativar: aplicar **apenas essa migration** após conferir o histórico do projeto e publicar a
+aplicação atualizada. Até a primeira publicação incremental o leitor legado continua funcionando.
+Depois, mantenha o leitor atualizado; abas antigas não podem publicar outra cópia completa e
+devem ser recarregadas. O espaço ocupado pelos snapshots antigos não é recuperado por esta mudança.
+
+Validação sem produção: `scripts/verify-quality-tc-incremental-db.mjs <pasta-absoluta-do-PGlite>`
+testa preservação, paginação, reenvio, publicação incompleta, concorrência e permissões em
+Postgres em memória. `scripts/verify-quality-incremental.mjs` testa a tela com Supabase simulado.
+A consulta antiga `supabase/verification/check_quality_import_duplicates.sql` verifica os blocos
+legados de TC; depois da ativação, eles representam a referência, não o total atual de TC.
 
 ## Arquivos, campos e regras preservados
 
@@ -299,7 +326,8 @@ as versões, mas não baixa blocos inalterados.
 Na importação, a conferência da versão publicada e a proteção contra publicação concorrente
 permanecem obrigatórias. O caminho de importação não usa cache de disco para decidir a base a
 complementar. Deduplicação, fórmulas, metas, parsers e funções dos renderizadores originais não
-foram alterados para esta otimização. Não é necessária nova migration nem alteração no banco.
+foram alterados para esta otimização de leitura. A gravação incremental do TC de QQ e
+Certificação, descrita acima, tem migration própria.
 
 `tests/quality-loading.test.ts` verifica paralelismo, ordem, cancelamento e falhas.
 `scripts/verify-quality-loading.mjs` testa carregamento independente, slides aguardando TC, cache

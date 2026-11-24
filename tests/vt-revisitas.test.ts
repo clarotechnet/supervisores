@@ -1,19 +1,25 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import type { QualityLogin } from "../src/lib/quality-directory";
 import {
   classifyVtOrders,
   parseVtAttendance,
   parseVtOrders,
   VT_SHEET_RULES,
   vtDate,
+  vtOrderKey,
+  vtOrderMatchesCategory,
   vtPayments,
   vtSeconds,
   vtSummaries,
+  vtTeamPayments,
+  vtTeamScope,
   type VtOrder,
   type VtAttendance,
 } from "../src/lib/vt-revisitas";
 import { readVtWorkbook } from "../src/lib/vt-revisitas-xlsx";
+import { vtMapArea } from "../src/lib/vt-revisitas-geography";
 
 const heading = [
   "Data",
@@ -64,23 +70,148 @@ const loginAttendance = (technician: string, login: string, value: number): VtAt
   login,
   value,
 });
+const registered = (
+  login: string,
+  full_name: string,
+  city = "Fortaleza",
+  sector = "Visita técnica",
+): QualityLogin => ({ login, full_name, city, sector, supervisor: "" });
 
 describe("Revisitas VT", () => {
+  it("só paga logins VT da cidade, mas preserva o retorno feito pela Adesão", () => {
+    const directory = [
+      registered("Z1", "Ana Rodrigues de Almeida"),
+      registered("Z2", "Laís Cunha", "Fortaleza", "Adesão/Serviços"),
+      registered("Z3", "Técnico de Natal", "Natal"),
+    ];
+    const rows = classifyVtOrders([
+      order("A", "2026-11-01", 517, "CONTRATO", { technician: "Ana Almeida" }),
+      order("B", "2026-11-02", 517, "CONTRATO", { technician: "Laís Cunha" }),
+      order("C", "2026-11-03", 517, "C2", { technician: "Z1" }),
+      order("D", "2026-11-03", 517, "C3", { technician: "Técnico de Natal" }),
+      order("E", "2026-11-03", 517, "C4", { technician: "Sem Cadastro" }),
+    ]);
+    const team = vtTeamScope(rows, directory, "fortaleza");
+    expect(team.members.map((r) => r.login)).toEqual(["Z1"]);
+    expect(team.rows.map((r) => [r.os, r.technicianLogin])).toEqual([
+      ["C", "Z1"],
+      ["A", "Z1"],
+    ]);
+    expect(team.rows.find((r) => r.os === "A")).toMatchObject({ revisited: true, returnOs: "B" });
+    const days = [
+      loginAttendance("Ana Rodrigues de Almeida", "Z1", 21),
+      loginAttendance("Laís Cunha", "Z2", 25),
+      loginAttendance("Técnico de Natal", "Z3", 25),
+    ];
+    const entries = days.map((r) => ({ ...r, value: 28500 }));
+    expect(vtTeamPayments(team, days, entries, VT_SHEET_RULES)).toMatchObject([
+      {
+        login: "Z1",
+        technician: "Ana Rodrigues de Almeida",
+        productive: 2,
+        revisits: 1,
+        total: 25200,
+      },
+    ]);
+    expect(vtTeamPayments(team, [], entries, VT_SHEET_RULES)).toMatchObject([
+      { login: "Z1", attendanceIssue: "incomplete", total: null },
+    ]);
+  });
+
+  it("não vincula homônimo da Adesão e só confirma grafia para o login VT correspondente", () => {
+    const directory = [
+      registered("Z1", "Lia Martins Lima"),
+      registered("Z2", "Lia Martins Lima", "Fortaleza", "Adesão/Serviços"),
+      registered("Z3", "Bia Lope dos Santos"),
+      registered("Z4", "Cris Almeida", "Parnamirim"),
+    ];
+    const rows = classifyVtOrders([
+      order("A", "2026-11-01", 517, "C1", { technician: "Lia Martins Lima" }),
+      order("B", "2026-11-01", 517, "C2", { technician: "Bia Lopes" }),
+      order("C", "2026-11-01", 517, "C3", { technician: "Z2" }),
+    ]);
+    const scope = (id: string) =>
+      vtTeamScope(
+        rows,
+        directory,
+        "fortaleza",
+        new Map([
+          ["BIA LOPES", id],
+          ["LIA MARTINS LIMA", "LOGIN:Z1"],
+        ]),
+      );
+    const rejected = scope("LOGIN:Z1");
+    expect(rejected.rows).toEqual([]);
+    expect([...rejected.pending.keys()]).toEqual(["Z3"]);
+    expect(vtTeamPayments(rejected, [], [], VT_SHEET_RULES)).toMatchObject([
+      { login: "Z3", attendanceIssue: "suggested", total: null },
+    ]);
+    const confirmed = scope("LOGIN:Z3");
+    expect(confirmed.rows.map((r) => [r.os, r.technicianLogin])).toEqual([["B", "Z3"]]);
+    expect(confirmed.attendance([loginAttendance("Bia Lope dos Santos", "Z2", 25)])).toEqual([]);
+    expect(vtTeamScope(rows, directory, "natal").members.map((r) => r.login)).toEqual(["Z4"]);
+  });
+
   it("mantém O.S. distintas da mesma WO, elimina repetições idênticas e rejeita conflito", () => {
     const imported = parseVtOrders(
       [heading, line("1"), line("2"), line("1")],
       "fortaleza",
       "2026-11",
     );
-    expect(imported.rows.map((r) => r.id)).toEqual(["OS:1", "OS:2"]);
+    expect(imported.rows.map((r) => r.id)).toEqual([
+      "OS:1|WO:WO1|D:2026-11-18",
+      "OS:2|WO:WO1|D:2026-11-18",
+    ]);
     expect(imported.duplicates).toBe(1);
     expect(() =>
       parseVtOrders(
-        [heading, line("1"), line("1", "Fortaleza", "19/11/2026")],
+        [heading, line("1"), line("1").map((value, i) => (i === 6 ? 555 : value))],
         "fortaleza",
         "2026-11",
       ),
-    ).toThrow(/informações diferentes/);
+    ).toThrow(/Linhas 2 e 3:.*informações diferentes/);
+  });
+  it("preserva a mesma O.S. com outra WO ou em outro dia, escapando separadores da origem", () => {
+    const withWo = (wo: string, day = "18/11/2026") =>
+      line("1", "Fortaleza", day).map((value, index) => (index === 2 ? wo : value));
+    const imported = parseVtOrders(
+      [heading, withWo("A|B"), withWo("A%7CB"), withWo("A|B", "19/11/2026")],
+      "fortaleza",
+      "2026-11",
+    );
+    expect(imported.rows.map(({ id }) => id)).toEqual([
+      "OS:1|WO:A%7CB|D:2026-11-18",
+      "OS:1|WO:A%257CB|D:2026-11-18",
+      "OS:1|WO:A%7CB|D:2026-11-19",
+    ]);
+    expect(imported.duplicates).toBe(0);
+  });
+  it("separa sem baixa de código zero e ainda bloqueia ordens com baixa inválida", () => {
+    const columns = [...heading, "Status", "Data da Baixa", "Data Baixa Sistema"];
+    const item = (os: string, code: number | string, status: string, at: string, system = "") => [
+      ...line(os).map((value, i) => (i === 6 ? code : value)),
+      status,
+      at,
+      system,
+    ];
+    const pending = item("1", "", "1", "");
+    const cancelled = item("2", 0, "3", "18/11/2026");
+    expect(parseVtOrders([columns, pending, cancelled], "fortaleza", "2026-11")).toMatchObject({
+      rows: [{ os: "2", code: 0 }],
+      pendingLines: [2],
+    });
+    expect(() => parseVtOrders([columns, pending], "fortaleza", "2026-11")).toThrow(
+      /Nenhuma ordem com baixa/,
+    );
+    for (const broken of [
+      item("3", "", "2", "18/11/2026"),
+      item("3", "X", "1", ""),
+      item("3", "", "1", "", "18/11/2026"),
+    ]) {
+      expect(() => parseVtOrders([columns, cancelled, broken], "fortaleza", "2026-11")).toThrow(
+        /Linha 3: código de baixa (?:ausente|inválido)/,
+      );
+    }
   });
   it("aceita Natal e Parnamirim juntos, rejeita outra cidade e competência", () => {
     expect(
@@ -129,6 +260,155 @@ describe("Revisitas VT", () => {
     expect(get("7")).toMatchObject({ expunged: true, productive: true });
     expect(get("8")).toMatchObject({ revisited: false });
   });
+  it("separa os códigos 0 e 1 de improdutivas, produtivas e expurgadas", () => {
+    const rows = classifyVtOrders([
+      order("1", "2026-11-01", 517, "CANCELAMENTO"),
+      order("2", "2026-11-02", 0, "CANCELAMENTO", { description: "CANCELAMENTO" }),
+      order("3", "2026-11-01", 555, "REVISITA"),
+      order("4", "2026-11-02", 1, "REVISITA", {
+        description: "REVISITA CANCELADA",
+        expunge: true,
+      }),
+      order("5", "2026-11-02", 400, "IMPRODUTIVA"),
+    ]);
+    const cancelled = rows.filter((r) => vtOrderMatchesCategory(r, "cancelled"));
+    expect(cancelled.map((r) => r.code).sort()).toEqual([0, 1]);
+    for (const row of cancelled) {
+      expect(row).toMatchObject({
+        productive: false,
+        improductive: false,
+        expunged: false,
+        revisited: false,
+        returnOs: "",
+      });
+    }
+    expect(rows.find((r) => r.os === "1")).toMatchObject({ productive: true, revisited: false });
+    expect(rows.find((r) => r.os === "3")).toMatchObject({ expunged: true, revisited: false });
+    expect(
+      rows.filter((r) => vtOrderMatchesCategory(r, "improductive")).map((r) => r.code),
+    ).toEqual([400]);
+    expect(vtSummaries(rows, () => "Total")[0]).toEqual({
+      name: "Total",
+      orders: 5,
+      productive: 2,
+      revisits: 0,
+      improductive: 1,
+      cancelled: 2,
+      expunged: 1,
+    });
+  });
+  it.each([570, 203, 204, 112])(
+    "só expurga automaticamente a baixa %s com próxima O.S. do contrato",
+    (code) => {
+      const initial = order("1", "2026-11-01", code, "C1");
+      const next = order("2", "2026-11-02", 517, "C1");
+      expect(classifyVtOrders([initial])[0]).toMatchObject({
+        expunged: false,
+        improductive: code <= 400,
+      });
+      expect(classifyVtOrders([next, initial]).find((r) => r.os === "1")).toMatchObject({
+        productive: true,
+        improductive: false,
+        expunged: true,
+        revisited: false,
+      });
+    },
+  );
+  it("considera a limpeza de ruído no contrato para o expurgo", () => {
+    const cleaning = { service: "Limpeza de Ruído Indoor" };
+    const rows = classifyVtOrders([
+      order("1", "2026-11-01", 106, "C1", cleaning),
+      order("2", "2026-11-02", 517, "C1"),
+      order("3", "2026-11-01", 517, "C2"),
+      order("4", "2026-11-02", 106, "C2", cleaning),
+    ]);
+    expect(
+      rows
+        .filter((r) => r.expunged)
+        .map((r) => r.os)
+        .sort(),
+    ).toEqual(["1", "3"]);
+  });
+  it("usa Prod, Improd e Expurgadas do Sheets sem recalcular as ordens conferidas", () => {
+    const columns = [...heading, "Mês", "Equipe", "Prod", "Improd", "Expurgadas"];
+    const item = (
+      os: string,
+      day: string,
+      code: number,
+      prod: unknown,
+      improd: number,
+      exp: number,
+      city = "Fortaleza",
+    ) => [
+      day,
+      "C1",
+      `WO${os}`,
+      os,
+      "Técnico 1",
+      city,
+      code,
+      "Centro",
+      "novembro 26",
+      "VT",
+      prod,
+      improd,
+      exp,
+    ];
+    const lines = [
+      item("1", "01/11/2026", 203, 0, 1, 0),
+      item("2", "02/11/2026", 517, 0, 0, 0),
+      item("3", "03/11/2026", 570, 1, 0, 0),
+      item("4", "04/11/2026", 106, 0, 0, 1),
+      item("5", "04/11/2026", 0, 0, 1, 0),
+      item("6", "01/10/2026", 517, null, 0, 0),
+      item("7", "04/11/2026", 517, null, 0, 0, "Natal"),
+    ];
+    const imported = parseVtOrders([columns, ...lines], "fortaleza", "2026-11");
+    expect(imported.fromSheet).toBe(true);
+    const classified = classifyVtOrders(imported.rows);
+    const classifiedByOs = new Map(classified.map((r) => [r.os, r]));
+    expect(classifiedByOs.get("1")).toMatchObject({ productive: false, improductive: true });
+    expect(classifiedByOs.get("2")).toMatchObject({ productive: true, revisited: false });
+    expect(classifiedByOs.get("3")).toMatchObject({
+      productive: true,
+      revisited: true,
+      returnOs: "4",
+      expunged: false,
+    });
+    expect(classifiedByOs.get("4")).toMatchObject({ productive: true, expunged: true });
+    expect(classifiedByOs.get("5")).toMatchObject({ cancelled: true, improductive: false });
+    expect(vtSummaries(classified, () => "Total")[0]).toMatchObject({
+      orders: 5,
+      productive: 3,
+      revisits: 1,
+    });
+    expect(() =>
+      parseVtOrders([columns, item("9", "07/11/2026", 517, null, 0, 0)], "fortaleza", "2026-11"),
+    ).toThrow(/coluna Prod.*resultado calculado/i);
+  });
+  it("prioriza a base classificada no XLSX do Sheets e lê só a competência selecionada", async () => {
+    const { default: ExcelJS } = await import("exceljs");
+    const book = new ExcelJS.Workbook();
+    book.addWorksheet("Detalhe anterior").addRows([heading, line("1", "Fortaleza", "03/10/2026")]);
+    const source = book.addWorksheet("Revisitas Imperium 2.0");
+    source.addRows([
+      [...heading, "Mês", "Equipe", "Prod", "Improd", "Expurgadas"],
+      [...line("2"), "novembro 26", "VT", { formula: "0", result: 0 }, 0, 0],
+    ]);
+    source.getRow(16000).values = [...line("3", "Fortaleza", "03/10/2026"), "outubro 26", "VT"];
+    const bytes = await book.xlsx.writeBuffer();
+    const imported = await readVtWorkbook(
+      new File([new Uint8Array(bytes)], "sheets.xlsx"),
+      "orders",
+      "fortaleza",
+      "2026-11",
+    );
+    expect(imported).toMatchObject({
+      kind: "orders",
+      fromSheet: true,
+      rows: [{ os: "2", sheetClassification: { revisited: false } }],
+    });
+  }, 20_000);
   it("interpreta relatórios acumulados e diferencia ausência de zero", () => {
     const matrix = [
       ["Técnico", "Login", "Dias Trabalhados"],
@@ -261,6 +541,34 @@ describe("Revisitas VT", () => {
   });
 });
 
+const batchDir = process.env["VT_FTZ_BATCH_DIR"];
+it.skipIf(!batchDir)(
+  "carrega os dois novos lotes de Fortaleza sem apagar as visitas do dia 18",
+  async () => {
+    const results = await Promise.all(
+      ["vt-ftz_01_17.xlsx", "revisitas_Fortaleza.xlsx", "Vt-FTZ_19_22.xlsx"].map(async (name) => {
+        const bytes = await readFile(join(batchDir!, name));
+        const result = await readVtWorkbook(
+          new File([Uint8Array.from(bytes)], name),
+          "orders",
+          "fortaleza",
+          "2026-11",
+        );
+        if (result.kind !== "orders") throw Error("Esperado arquivo de O.S.");
+        return result;
+      }),
+    );
+    expect(results.map((result) => result.rows.length)).toEqual([1072, 63, 184]);
+    expect(results.map((result) => result.pendingLines)).toEqual([[770, 1075], [], [11]]);
+    const orders = results.flatMap(({ rows }) => rows);
+    const merged = new Map(orders.map((row) => [vtOrderKey(row), row]));
+    expect(merged.size).toBe(1319);
+    expect(new Set(orders.map((row) => row.os)).size).toBeLessThan(merged.size);
+    for (const row of orders) expect(row.id).toBe(vtOrderKey(row));
+  },
+  20000,
+);
+
 const samples = process.env["VT_XLSX_SAMPLE_DIR"];
 describe.skipIf(!samples)("XLSX fornecidos (leitura, sem copiar dados para o repositório)", () => {
   it.each([
@@ -277,6 +585,11 @@ describe.skipIf(!samples)("XLSX fornecidos (leitura, sem copiar dados para o rep
         "2026-11",
       );
       expect(result.rows).toHaveLength(count);
+      const unmapped = (result.rows as VtOrder[]).filter((row) => !vtMapArea(row)?.point);
+      // "B VISTA" could stand for either Bela Vista or Boa Vista / Castelão.
+      expect([...new Set(unmapped.map((row) => row.neighborhood))]).toEqual(
+        city === "fortaleza" ? ["B VISTA"] : [],
+      );
       expect(classifyVtOrders(result.rows as VtOrder[]).filter((r) => r.productive)).toHaveLength(
         productive,
       );

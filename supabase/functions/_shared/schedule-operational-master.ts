@@ -53,6 +53,22 @@ const summaryNumber = (value: unknown) =>
   (typeof value === "number" && Number.isFinite(value)) ||
   (typeof value === "string" && /^\d+(?:[.,]\d+)?$/.test(value.trim()));
 
+type ControlRosterOptions = {
+  removedRosterNames?: readonly string[];
+  allowFutureRemoval?: boolean;
+  now?: Date;
+};
+const localMonth = new Intl.DateTimeFormat("sv-SE", {
+  timeZone: "America/Sao_Paulo",
+  year: "numeric",
+  month: "2-digit",
+});
+
+export function isFutureControlMonth(month: string, now = new Date()): boolean {
+  const competence = month.slice(0, 7);
+  return /^\d{4}-(0[1-9]|1[0-2])$/.test(competence) && competence > localMonth.format(now);
+}
+
 /** Totais e critérios de CONT.SE não são colaboradores. Só aceita abaixo da
  * lista: contagens sem Nome/Função ou uma legenda isolada de código conhecido.
  * Demais linhas precisam passar pela validação de Nome/Função como pessoas.
@@ -150,10 +166,12 @@ export function parseControlMonthTab(
   planned: Payload,
   previous: Payload,
   month: string,
+  options: ControlRosterOptions = {},
 ): {
   payload: Payload;
   changes: OperationalChange[];
   addedPeople: Person[];
+  removedPeople: Person[];
   functionChanges: Array<{
     employee_name: string;
     previous_function: string;
@@ -162,8 +180,6 @@ export function parseControlMonthTab(
 } {
   const expected = controlMonthValues(planned, month);
   const fixedColumn = fixedRestColumn(rows[1] || []);
-  if (rows.length < expected.length)
-    throw Error("Quantidade de colaboradores alterada na aba de Controle.");
   if (headerText(rows[0]?.[0]) !== headerText(expected[0]![0]))
     throw Error("Cabeçalho A1 inválido. Restaure o texto Mês-ano:.");
   if (!monthHeaderMatches(rows[0]?.[1], month))
@@ -183,33 +199,40 @@ export function parseControlMonthTab(
     );
   // A ordem visual pode mudar no Sheets. Vincula a linha inteira pelo nome
   // exato, preservando a identidade e a ordem do planejamento no payload/auditoria.
-  const expectedNames = new Set(planned.people.map((person) => person.name));
-  if (expectedNames.size !== planned.people.length || expectedNames.has(""))
+  const plannedNames = new Set(planned.people.map((person) => person.name));
+  if (plannedNames.size !== planned.people.length || plannedNames.has(""))
     throw Error("Identificação duplicada ou ausente no planejamento de Controle.");
   const legends = new Set([...CONTROL_CODES, ...planned.codes].map(headerText));
-  // O planejamento original é imutável. Pessoas adicionadas numa sincronização
-  // anterior continuam obrigatórias no snapshot atual, sem duplicar inclusões.
-  const people = [...planned.people];
-  for (const person of previous.people)
-    if (!expectedNames.has(person.name)) {
-      people.push(person);
-      expectedNames.add(person.name);
-    }
-  const requiredPeople = [...people];
+  const removedNames = new Set(options.removedRosterNames);
+  const previousByName = new Map(previous.people.map((person) => [person.name, person]));
+  const plannedByName = new Map(planned.people.map((person) => [person.name, person]));
+  // Saídas já registradas não voltam pelo planejamento antigo, nem quando o mês começa.
+  const requiredPeople = [
+    ...planned.people.filter(
+      (person) => !removedNames.has(person.name) || previousByName.has(person.name),
+    ),
+    ...previous.people.filter((person) => !plannedNames.has(person.name)),
+  ];
+  const expectedNames = new Set(requiredPeople.map((person) => person.name));
+  const future = isFutureControlMonth(month, options.now);
+  const allowRemoval = options.allowFutureRemoval && future;
+  if (!allowRemoval && rows.length < requiredPeople.length + 2)
+    throw Error("Quantidade de colaboradores alterada na aba de Controle.");
+  const summaryLayout = { ...planned, people: requiredPeople };
   const addedPeople: Person[] = [];
   const byName = new Map<string, unknown[]>();
   const keys = new Set<string>();
   let firstNewLine: number | undefined;
   for (let index = 2; index < rows.length; index++) {
     const row = rows[index] ?? [];
-    if (controlSummaryRow(row, { ...planned, people: requiredPeople }, legends)) continue;
-    const name = row[0];
+    if (controlSummaryRow(row, summaryLayout, legends)) continue;
+    const rawName = row[0];
+    const name = typeof rawName === "string" ? rawName.trim() : "";
     if (
-      typeof name !== "string" ||
-      !name.trim() ||
-      name !== name.trim() ||
+      typeof rawName !== "string" ||
+      !name ||
       name.length > 160 ||
-      /[<>\p{Cc}]/u.test(name) ||
+      /[<>\p{Cc}]/u.test(rawName) ||
       name.startsWith("=") ||
       legends.has(headerText(name))
     )
@@ -231,22 +254,31 @@ export function parseControlMonthTab(
       firstNewLine ??= index + 1;
       if (typeof row[1] !== "string" || !row[1].trim())
         throw Error("Novo colaborador na linha " + (index + 1) + " precisa de Nome e Função.");
-      const person = { name, login: "", jobTitle: row[1].trim(), assignments: {} };
-      people.push(person);
-      addedPeople.push(person);
-      if (people.length > 500) throw Error("Quantidade de colaboradores excede o limite de 500.");
+      addedPeople.push(
+        plannedByName.get(name) ?? {
+          name,
+          login: "",
+          jobTitle: row[1].trim(),
+          assignments: {},
+        },
+      );
     }
     byName.set(name, row);
   }
-  for (const person of requiredPeople)
-    if (!byName.has(person.name))
-      throw Error(
-        "Identificação alterada na linha " +
-          (firstNewLine ?? rows.length) +
-          ": colaborador ausente ou renomeado: " +
-          person.name +
-          ". A atualização não remove pessoas já cadastradas.",
-      );
+  const absent = requiredPeople.filter((person) => !byName.has(person.name));
+  if (!allowRemoval && absent.length)
+    throw Error(
+      "Identificação alterada na linha " +
+        (firstNewLine ?? rows.length) +
+        ": colaborador ausente ou renomeado: " +
+        absent[0]!.name +
+        (future
+          ? ". Esta ação não remove pessoas. Use Atualizar via API para sincronizar a equipe."
+          : ". A API não remove pessoas de uma competência já iniciada."),
+    );
+  if (byName.size === 0 || byName.size > 500)
+    throw Error("Quantidade de colaboradores inválida. A escala deve ter de 1 a 500 pessoas.");
+  const people = [...requiredPeople.filter((person) => byName.has(person.name)), ...addedPeople];
   // Reconstitui a entrada do parser consolidado: LOGIN continua interno,
   // não é gravado nem precisa ser editado no Google Sheets.
   const oldHeader = ["COLABORADOR", "LOGIN", "FUNÇÃO", ...planned.dates];
@@ -258,11 +290,17 @@ export function parseControlMonthTab(
   const result = parseUpdatedSheet(
     [oldHeader, ...legacyRows],
     { ...planned, people },
-    { ...previous, people: [...previous.people, ...addedPeople] },
+    {
+      ...previous,
+      people: [
+        ...previous.people,
+        ...addedPeople.map((person) => ({ ...person, assignments: {} })),
+      ],
+    },
     true,
   );
   const functionChanges = result.payload.people.flatMap((person) => {
-    const before = previous.people.find((p) => p.name === person.name);
+    const before = previousByName.get(person.name);
     return before && before.jobTitle !== person.jobTitle
       ? [
           {
@@ -280,6 +318,7 @@ export function parseControlMonthTab(
   return {
     ...result,
     functionChanges,
+    removedPeople: absent.map((person) => previousByName.get(person.name) ?? person),
     addedPeople: result.payload.people.filter((person) =>
       addedPeople.some((added) => added.name === person.name),
     ),
@@ -295,6 +334,7 @@ export function readControlMonthSource(
   planned: Payload,
   previous: Payload,
   month: string,
+  options: Pick<ControlRosterOptions, "removedRosterNames"> = {},
 ) {
   const dates = [...planned.dates];
   const width = Math.max(rows[0]?.length || 0, rows[1]?.length || 0);
@@ -325,7 +365,7 @@ export function readControlMonthSource(
       );
     dates.push(next);
   }
-  return parseControlMonthTab(rows, { ...planned, dates }, previous, month);
+  return parseControlMonthTab(rows, { ...planned, dates }, previous, month, options);
 }
 /** Formatação visual somente da nova ABA, nunca do arquivo inteiro. */
 export function controlMonthFormatting(

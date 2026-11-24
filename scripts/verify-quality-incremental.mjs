@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
+import { tcRowKey } from "../src/lib/quality-math.js";
 const require = createRequire(
   "C:/Users/Usuario/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/",
 );
@@ -21,23 +22,35 @@ try {
     blocks = [],
     writes = 0,
     blockReads = 0;
+  let version = null,
+    staleReadOnce = false,
+    patchReads = 0,
+    uploadAttempts = 0,
+    missingMigration = false;
+  const uploads = new Map(),
+    patches = new Map(),
+    patchUploads = [];
   await page.routeWebSocket("**/realtime/**", (ws) => ws.close());
   await page.route("https://*.supabase.co/**", async (route) => {
     const request = route.request(),
       url = new URL(request.url()),
       table = url.pathname.split("/").at(-1);
     const body = request.postData() ? request.postDataJSON() : null;
-    let output = [];
+    let output = [],
+      status = 200;
     if (table === "profiles")
-      output = {
-        id: actor,
-        role,
-        status: "active",
-        full_name: "Teste incremental",
-        email: "teste@example.invalid",
-        sector_id: null,
-        sectors: null,
-      };
+      output =
+        url.searchParams.get("role") === "eq.supervisor"
+          ? []
+          : {
+              id: actor,
+              role,
+              status: "active",
+              full_name: "Teste incremental",
+              email: "teste@example.invalid",
+              sector_id: null,
+              sectors: null,
+            };
     if (table === "quality_supervisor_registry") output = null;
     if (technicalVisit && table === "quality_technician_directory")
       output = [
@@ -102,8 +115,66 @@ try {
       imports.find((row) => row.id === body.p_import_id).published_at = new Date().toISOString();
       output = null;
     }
+    if (table === "quality_tc_incremental_manifest") output = version;
+    if (table === "quality_tc_incremental_page") {
+      patchReads++;
+      if (staleReadOnce) {
+        staleReadOnce = false;
+        status = 400;
+        output = { code: "40001", message: "A base mudou durante a leitura." };
+      } else {
+        assert.equal(url.searchParams.get("p_import_id"), version.manifest.id);
+        const after = Number(url.searchParams.get("p_after"));
+        const records = [...patches.values()].slice(after, after + 1000);
+        output = { records, cursor: after + records.length };
+      }
+    }
+    if (table === "quality_tc_incremental_start") {
+      uploadAttempts++;
+      if (missingMigration) {
+        status = 404;
+        output = { code: "PGRST202", message: "Função não encontrada" };
+      } else {
+        assert.equal(technicalVisit, false);
+        const id = randomUUID();
+        uploads.set(id, { ...body, id, chunks: [] });
+        output = id;
+      }
+    }
+    if (table === "quality_tc_incremental_append") {
+      uploads.get(body.p_upload_id).chunks[body.p_chunk_index] = body.p_records;
+      output = null;
+    }
+    if (table === "quality_tc_incremental_finish") {
+      const upload = uploads.get(body.p_upload_id);
+      uploads.delete(body.p_upload_id);
+      if (body.p_cancel) output = null;
+      else {
+        const records = upload.chunks.flat();
+        assert.equal(records.length, upload.p_change_count);
+        const base = imports.find((row) => row.kind === "certification");
+        assert.equal(upload.p_base_import_id, version?.manifest.id ?? base.id);
+        records.forEach((record) => patches.set(tcRowKey(record), record));
+        patchUploads.push(records.length);
+        const stamp = new Date().toISOString();
+        output = {
+          id: upload.id,
+          kind: "certification",
+          source_file: upload.p_source_file,
+          imported_by: actor,
+          created_at: stamp,
+          published_at: stamp,
+          row_count: upload.p_row_count,
+          chunk_count: Math.ceil(upload.p_row_count / 250),
+          metadata: upload.p_metadata,
+          base_import_id: upload.p_base_import_id,
+        };
+        writes++;
+        version = { manifest: output, baseline: base, patch_count: patches.size };
+      }
+    }
     await route.fulfill({
-      status: 200,
+      status,
       contentType: "application/json",
       body: JSON.stringify(output),
     });
@@ -259,7 +330,8 @@ try {
   await upload("parcial.csv", second, "TC · Base atualizada");
   let report = page.getByRole("status", { name: "Resumo da importação TC" });
   await report.getByText("8 adicionados", { exact: false }).waitFor();
-  assert.equal(imports.filter((row) => row.kind === sourceKind).at(-1).row_count, 53);
+  const latest = () => version?.manifest ?? imports.filter((row) => row.kind === sourceKind).at(-1);
+  assert.equal(latest().row_count, 53);
   assert.equal(writes, 1);
   await upload("parcial.csv", second, "TC · Sem alterações");
   await report.getByText("23 já existentes sem alteração", { exact: false }).waitFor();
@@ -270,11 +342,20 @@ try {
   await upload("parcial.csv", csv("2026-09-21", "2026-10-20", true), "TC · Base atualizada");
   await report.getByText("7 adicionados", { exact: false }).waitFor();
   assert.equal(writes, 2);
-  assert.equal(imports.filter((row) => row.kind === sourceKind).at(-1).row_count, 60);
+  assert.equal(latest().row_count, 60);
   assert.equal(blockReads, baselineReads, "Unchanged bases were unnecessarily re-downloaded");
-  const finalRows = blocks
-    .filter((row) => row.import_id === imports.filter((item) => item.kind === sourceKind).at(-1).id)
-    .flatMap((row) => row.records);
+  if (!technicalVisit) {
+    assert.deepEqual(patchUploads, [9, 7]);
+    assert.equal(uploadAttempts, 2, "An unchanged file should not even open an upload");
+    assert.equal(imports.filter((row) => row.kind === "certification").length, 1);
+    assert.deepEqual(blocks.find((row) => row.table === sourceTable).records, seed);
+    staleReadOnce = true;
+  }
+  const finalRows = await page.evaluate(async (kind) => {
+    const { fetchQualityDataset } = await import("/src/services/quality.ts");
+    return (await fetchQualityDataset(kind)).snapshot.records;
+  }, sourceKind);
+  if (!technicalVisit) assert.equal(patchReads, 2, "A changed version should retry the read");
   assert.equal(finalRows.filter((row) => row.day === "2026-09-25").length, 1);
   assert.equal(finalRows.find((row) => row.day === "2026-09-25").points, "140");
   assert.equal(finalRows[0].day, "2026-08-22");
@@ -285,6 +366,21 @@ try {
     .locator("#referenceTC #fileMeta")
     .getByText("60 registros", { exact: false })
     .waitFor({ state: "attached" });
+  if (!technicalVisit) {
+    missingMigration = true;
+    await page.locator("#referenceTC #fileInput").setInputFiles({
+      name: "mais-uma-os.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(csv("2026-10-21", "2026-10-21")),
+    });
+    await page
+      .getByText(
+        "A importação incremental de Técnico Certificado ainda não foi instalada no banco.",
+      )
+      .first()
+      .waitFor();
+    assert.equal(writes, 2, "No full-copy fallback when the migration is missing");
+  }
   if (technicalVisit) {
     assert.equal(
       JSON.stringify(blocks.find((row) => row.table === "quality_certification_data").records),
@@ -327,6 +423,7 @@ try {
       total: 60,
       coverage: "22/08/2026–20/10/2026",
       publishedUpdates: writes,
+      sentRecordCounts: patchUploads,
       reload: true,
     }),
   );

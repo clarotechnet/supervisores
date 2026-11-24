@@ -35,6 +35,7 @@ async function run(
     inherited?: boolean;
     summaries?: boolean;
     newEmployee?: boolean;
+    sharedAdesao?: boolean;
   } = {},
 ) {
   mock.role = options.role || "supervisor";
@@ -47,12 +48,20 @@ async function run(
   mock.rowsByTable = {};
   mock.metadataAuditReady = options.auditReady ?? true;
   const control = options.officialControl === true;
-  const sector = control ? "controle-operacional" : options.sector || "vt",
+  const sector = control
+      ? "controle-operacional"
+      : options.sharedAdesao
+        ? "adesao-servico"
+        : options.sector || "vt",
     name = "FIXTURE USER",
     date = "2026-12-01";
   const baseCode = control ? "T. 1" : "M. 1";
-  const tab = control ? "Controle DEZEMBRO 26 - 5X2" : "VT 2026-12";
-  const target = control ? "'Controle DEZEMBRO 26 - 5X2'!C4" : "'VT 2026-12'!D3";
+  const tab = control
+    ? "Controle DEZEMBRO 26 - 5X2"
+    : options.sharedAdesao
+      ? "Dezembro 26 Adesão-Serviço"
+      : "VT 2026-12";
+  const target = `'${tab}'!${control ? "C4" : "D3"}`;
   const controlPayload: Payload = {
     dates: [date],
     codes: [baseCode],
@@ -68,6 +77,15 @@ async function run(
         ["Login", "Nome", "Função", "1"],
         ["ZFIXTURE", name, "TÉCNICO", "M. 1"],
       ];
+  if (options.sharedAdesao) {
+    rows[1]!.push("Folga fixa");
+    rows[2]!.push("Quarta");
+    rows.push(
+      ["ZFIXTURE", "AUXILIAR FIXTURE", "AUXILIAR", "M. 1", "Quarta"],
+      ["FORA TOA", "PESSOA A", "TÉCNICO", "M. 1", "Terça"],
+      ["FORA TOA", "PESSOA B", "TÉCNICO", "M. 1", "Quinta"],
+    );
+  }
   if (control) {
     rows[0]![1] = 46357;
     rows[2]![1] = "CONTROLADOR (ADESÃO) - FTZ - APOIO";
@@ -87,7 +105,7 @@ async function run(
     sector,
     schedule_month: "2026-12-01",
     source_file: "Google Sheets · TEST",
-    source_sheet: "VT 2026-12",
+    source_sheet: tab,
     payload: {
       dates: [date],
       codes: ["M. 1"],
@@ -159,7 +177,7 @@ async function run(
     if (address.includes("/values/")) return Response.json({ values: rows });
     return Response.json({
       properties: { title: "TEST" },
-      sheets: [{ properties: { title: "VT 2026-12", sheetId: 71 } }],
+      sheets: [{ properties: { title: tab, sheetId: 71 } }],
     });
   }) as typeof globalThis.fetch;
   try {
@@ -185,6 +203,22 @@ async function run(
     mock.queryError = null;
   }
 }
+
+Deno.test("editar Adesão RN relê a escala sem juntar pessoas de login compartilhado", async () => {
+  const { response, body } = await run({ sharedAdesao: true });
+  assert(response.status === 200 && body.sheetWritten === true, "falhou ao editar Adesão");
+  const saved = mock.mutationCalls.find((call) => call.table === "schedule_uploads");
+  const next = (saved?.values as { payload?: Payload } | undefined)?.payload;
+  assert(next?.people.length === 4, "leitura após edição misturou pessoas");
+  assert(
+    next.people.filter((person) => person.login === "ZFIXTURE").length === 2,
+    "dupla foi perdida",
+  );
+  assert(
+    next.people.find((person) => person.name === "PESSOA A")?.fixedRest === "Terça",
+    "folga de outra pessoa mudou",
+  );
+});
 Deno.test(
   "edição grava uma única célula RAW no Sheets oficial e atualiza o cache existente",
   async () => {

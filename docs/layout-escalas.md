@@ -24,6 +24,16 @@ O link editável do Sheets permanece condicionado a administrador no componente 
 
 Os estilos usam classes próprias da aba Escalas. AppShell, outras páginas, Edge Functions e migrations não foram alterados por esta mudança de layout. O componente base Dialog ganhou apenas uma propriedade opcional para o fundo desfocado; seu comportamento padrão permanece igual.
 
+## Compilado TOA
+
+Em **Ações → Gerar compilado TOA**, o XLSX usa toda a equipe da escala selecionada. A aba `COMPILADO` agrupa três linhas por técnico, com turno, área e CEP por dia. Não exporta telefone, coluna de skill nem linha diária de skill. Exibe as datas da competência e o dia 1º do mês seguinte quando ele estiver na escala.
+
+O cadastro ou compilado TOA anterior é opcional e serve para preencher bucket, área, CEP e escala padrão. O campo opcional **Nome do Bucket** preenche apenas quem não tem bucket no cadastro. A vinculação usa o login; sem login na escala, só usa um nome exato e sem ambiguidade. Use o cadastro da mesma cidade e frente. A escala selecionada é sempre a fonte das marcações. Não são reaproveitados dias do arquivo anterior e não há gravação no banco.
+
+Nas frentes **Adesão** (incluindo **Adesão-Serviço**) e **Desconexão**, a coluna `ESCALA` começa com **0800-1720 ALMOÇO 13-14** para técnicos sem horário definido no cadastro. Nas demais frentes, não há preenchimento automático desse horário. O campo continua editável no diálogo antes do download.
+
+A aba `escala` contém as marcações de origem. A aba `Turnos TOA` converte os códigos; o arquivo sugere os horários que constavam nos modelos de Natal nas frentes correspondentes. Código sem conversão é mantido no compilado para revisão. As fórmulas atualizam a saída ao preencher o cadastro ou editar o de/para. Um arquivo com dados faltantes, código sem conversão ou login repetido é baixado com o sufixo `-revisao.xlsx`.
+
 ## Validação
 
 - 316 testes Vitest aprovados, incluindo busca/filtros, identificação de funções/bases, totais mensais sem somar o histórico, plantões explícitos, CSV e regressões de geração/publicação.

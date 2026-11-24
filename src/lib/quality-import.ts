@@ -1,5 +1,5 @@
 import type { Json } from "@/integrations/supabase/types";
-import type { CertificationKind, QualitySnapshot } from "./quality";
+import type { CertificationKind, QualityRecord, QualitySnapshot } from "./quality";
 import { assertQualityRecords } from "./quality";
 import {
   qqReadWorkbook,
@@ -96,11 +96,17 @@ export async function importTC(
   progress?.("validating");
   const incoming = parseTC(text, file.name, current ?? {});
   progress?.("merging");
+  const changedRecords: QualityRecord[] = [];
   const { records, report } = mergeQualityRecords(
     kind,
     (current?.records ?? []) as TCRecord[],
     incoming,
+    kind === "certification" ? (record) => changedRecords.push(record) : undefined,
   );
   const files = [...new Set([...((current?.["files"] as string[]) ?? []), file.name])];
-  return { snapshot: { ...current, records, files }, report };
+  return {
+    snapshot: { ...current, records, files },
+    report,
+    ...(kind === "certification" && { changedRecords }),
+  };
 }

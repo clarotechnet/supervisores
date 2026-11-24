@@ -519,6 +519,9 @@ Deno.serve(async (req) => {
     requireScheduleManagement(profile.role, sheet.sector);
 
     const controlMaster = usesControlMaster(sheet.city, sheet.sector);
+    const rosterOptions = {
+      removedRosterNames: sheet.removed_roster_names as string[] | undefined,
+    };
     if (action === "delete" || action === "inspect_delete") {
       const token = await googleToken();
       const deletionInput = {
@@ -543,6 +546,7 @@ Deno.serve(async (req) => {
             sheet.planned_payload as Payload,
             sheet.current_payload as Payload,
             sheet.schedule_month,
+            rosterOptions,
           );
         },
       };
@@ -628,6 +632,13 @@ Deno.serve(async (req) => {
                 publicationBaseline,
                 sheet.current_payload as Payload,
                 sheet.schedule_month,
+                {
+                  ...rosterOptions,
+                  allowFutureRemoval:
+                    action === "sync" &&
+                    sheet.spreadsheet_id === CONTROL_EXPECTED_MASTER_ID &&
+                    sheet.sheet_tab === controlMonthTabName(sheet.schedule_month),
+                },
               )
             : parseUpdatedSheet(
                 arrays(response.values),
@@ -699,8 +710,13 @@ Deno.serve(async (req) => {
         : 0;
     const addedPeopleCount =
       "addedPeople" in result && Array.isArray(result.addedPeople) ? result.addedPeople.length : 0;
-    const changeCount = result.changes.length + functionChangeCount + addedPeopleCount;
-    if (addedPeopleCount) {
+    const removedNames =
+      "removedPeople" in result && Array.isArray(result.removedPeople)
+        ? result.removedPeople.map((person) => person.name)
+        : [];
+    const changeCount =
+      result.changes.length + functionChangeCount + addedPeopleCount + removedNames.length;
+    if (addedPeopleCount && !removedNames.length) {
       const ready = await admin.rpc("schedule_operational_roster_sync_ready");
       if (ready.error || ready.data !== true)
         return json(409, {
@@ -765,13 +781,25 @@ Deno.serve(async (req) => {
       });
     }
     // Even without changed cells, validate the official link and record the check.
-    const { error: applyError } = await admin.rpc("schedule_operational_apply_sync", {
-      p_sheet_id: sheet.id,
-      p_expected_updated_at: sheet.updated_at,
-      p_actor_id: user.id,
-      p_payload: result.payload,
-      p_changes: result.changes,
-    });
+    const { error: applyError } = await admin.rpc(
+      removedNames.length
+        ? "schedule_operational_apply_roster_sync"
+        : "schedule_operational_apply_sync",
+      {
+        p_sheet_id: sheet.id,
+        p_expected_updated_at: sheet.updated_at,
+        p_actor_id: user.id,
+        p_payload: result.payload,
+        p_changes: result.changes,
+        ...(removedNames.length ? { p_removed_names: removedNames } : {}),
+      },
+    );
+    if (removedNames.length && applyError?.code === "PGRST202")
+      return json(409, {
+        code: "FUTURE_ROSTER_MIGRATION_REQUIRED",
+        error:
+          "Há saídas nesta escala futura. Instale a migration 20261124143651_schedule_controle_equipe_competencia_futura.sql antes de atualizar. Nenhum dado foi alterado.",
+      });
     if (applyError)
       return json(applyError.code === "42501" ? 403 : 409, { error: applyError.message });
     return json(200, {
@@ -780,6 +808,7 @@ Deno.serve(async (req) => {
       cellChanges: result.changes.length,
       functionChanges: functionChangeCount,
       addedPeople: addedPeopleCount,
+      removedPeople: removedNames.length,
       sheetId: sheet.id,
       syncedAt: new Date().toISOString(),
       auditLogged: changeCount > 0,

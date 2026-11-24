@@ -3,6 +3,7 @@ import { officialMonthValues } from "../../supabase/functions/_shared/schedule-g
 import { mock } from "./supabase-mock.ts";
 import {
   controlMonthValues,
+  controlMonthTabName,
   CONTROL_EXPECTED_MASTER_ID,
 } from "../../supabase/functions/_shared/schedule-operational-master.ts";
 import type { Payload } from "../../supabase/functions/_shared/schedule-operational.ts";
@@ -56,7 +57,7 @@ async function run(
     googleCalls.push({ url: address, method: options?.method ?? "GET" });
     const control = mock.sheet["sector"] === "controle-operacional";
     const rows = control
-      ? controlMonthValues(sourcePayload, "2026-12-01")
+      ? controlMonthValues(sourcePayload, String(mock.sheet["schedule_month"]))
       : officialMonthValues(sourcePayload, "2026-12-01");
     rows[2]![control ? 2 : 3] = "FALTA";
     changeRows?.(rows);
@@ -259,6 +260,95 @@ Deno.test("no-op synchronization still validates official linkage", async () => 
   assert(result.response.status === 200 && result.body.changes === 0, "unexpected change");
   assert(mock.rpcCalls.length === 1, "no-op skipped link validation");
 });
+
+function rosterFixture(month: string): Payload {
+  const [year, number] = month.split("-").map(Number);
+  const days = payload.dates
+    .slice(0, new Date(Date.UTC(year!, number!, 0)).getUTCDate())
+    .map((date) => month.slice(0, 7) + date.slice(7));
+  const source: Payload = {
+    dates: days,
+    codes: ["T. 1"],
+    people: [
+      {
+        name: "PESSOA DESLIGADA",
+        login: "LOGIN-ANTIGO",
+        jobTitle: "CONTROLADOR",
+        assignments: { [days[0]!]: "T. 1" },
+      },
+      { name: "PESSOA QUE FICA", jobTitle: "ANALISTA", assignments: {} },
+    ],
+  };
+  mock.sheet["schedule_month"] = month;
+  mock.sheet["sheet_tab"] = controlMonthTabName(month);
+  mock.sheet["planned_payload"] = source;
+  mock.sheet["current_payload"] = source;
+  return source;
+}
+
+Deno.test(
+  "explicit future Control update replaces the roster atomically, without writing Google",
+  async () => {
+    reset();
+    const source = rosterFixture(`${new Date().getUTCFullYear() + 1}-01-01`);
+    const replacement = (rows: unknown[][]) => {
+      rows[2] = ["NOVATO 1 ", "CONTROLADOR", "Folga"];
+    };
+    const beforeSync = await run("read", replacement, source);
+    assert(
+      beforeSync.response.status === 409 && mock.rpcCalls.length === 0,
+      "read removed a person",
+    );
+    const { response, body, googleCalls } = await run("sync", replacement, source);
+    assert(
+      response.status === 200 && body.addedPeople === 1 && body.removedPeople === 1,
+      "roster change missing",
+    );
+    assert(mock.rpcCalls.slice().length === 1, "expected one transactional RPC");
+    const call = mock.rpcCalls[0]!;
+    assert(call.name === "schedule_operational_apply_roster_sync", "wrong RPC for removal");
+    assert(
+      JSON.stringify(call.args["p_removed_names"]) === '["PESSOA DESLIGADA"]',
+      "wrong removal",
+    );
+    const next = call.args["p_payload"] as Payload;
+    assert(
+      next.people[1]!.name === "NOVATO 1" && next.people[1]!.login === "",
+      "replacement inherited identity",
+    );
+    assert(
+      googleCalls.every((call) => call.method === "GET" || call.url.includes("oauth2")),
+      "Google changed",
+    );
+  },
+);
+
+Deno.test(
+  "an existing month is protected, and an older database cannot partially apply a future swap",
+  async () => {
+    reset();
+    const replacement = (rows: unknown[][]) => {
+      rows[2] = ["NOVATO 1", "CONTROLADOR", "Folga"];
+    };
+    const old = await run("sync", replacement, rosterFixture("2025-11-01"));
+    assert(
+      old.response.status === 409 && mock.rpcCalls.length === 0,
+      "past roster wasn't protected",
+    );
+    reset();
+    const source = rosterFixture(`${new Date().getUTCFullYear() + 1}-01-01`);
+    mock.rpcError = { code: "PGRST202", message: "Missing future-roster RPC" };
+    const { response, body } = await run("sync", replacement, source);
+    assert(
+      response.status === 409 && body.code === "FUTURE_ROSTER_MIGRATION_REQUIRED",
+      "migration gate missing",
+    );
+    assert(
+      mock.rpcCalls.slice().length === 1 && mock.mutationCalls.length === 0,
+      "unsafe legacy fallback",
+    );
+  },
+);
 Deno.test("conflict error remains visible and publication is not confirmed", async () => {
   reset();
   mock.rpcError = { code: "40001", message: "Conflito: recarregue" };
@@ -498,32 +588,38 @@ Deno.test(
     );
   },
 );
-Deno.test("Control duplicate or unknown name returns 409 before database writes", async () => {
-  for (const name of ["ANTONIA ELIZIENE", "UNKNOWN EMPLOYEE"]) {
-    reset();
-    const source: Payload = {
-      ...payload,
-      people: [
-        { ...structuredClone(payload.people[0]!), name: "ANTONIA ELIZIENE" },
-        { ...structuredClone(payload.people[0]!), name: "MATHEUS FREITAS" },
-      ],
-    };
-    mock.sheet["planned_payload"] = source;
-    mock.sheet["current_payload"] = source;
-    const { response, body } = await run(
-      "sync",
-      (rows) => {
-        rows[3]![0] = name;
-      },
-      source,
-    );
-    assert(
-      response.status === 409 && body.code === "SHEET_STRUCTURE_CHANGED",
-      "invalid employee structure accepted",
-    );
-    assert(mock.rpcCalls.length === 0, "invalid names reached database writes");
-  }
-});
+Deno.test(
+  "Control rejects duplicate names and blocks replacements after the month starts",
+  async () => {
+    for (const name of ["ANTONIA ELIZIENE", "UNKNOWN EMPLOYEE"]) {
+      reset();
+      const month =
+        name === "UNKNOWN EMPLOYEE" ? "2025-12-01" : `${new Date().getUTCFullYear() + 1}-01-01`;
+      const dated = rosterFixture(month);
+      const source: Payload = {
+        ...dated,
+        people: [
+          { ...structuredClone(payload.people[0]!), name: "ANTONIA ELIZIENE" },
+          { ...structuredClone(payload.people[0]!), name: "MATHEUS FREITAS" },
+        ],
+      };
+      mock.sheet["planned_payload"] = source;
+      mock.sheet["current_payload"] = source;
+      const { response, body } = await run(
+        "sync",
+        (rows) => {
+          rows[3]![0] = name;
+        },
+        source,
+      );
+      assert(
+        response.status === 409 && body.code === "SHEET_STRUCTURE_CHANGED",
+        "invalid employee structure accepted",
+      );
+      assert(mock.rpcCalls.length === 0, "invalid names reached database writes");
+    }
+  },
+);
 
 Deno.test(
   "Control function/base changes use the same audited sync, including metadata-only updates",

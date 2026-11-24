@@ -1,18 +1,25 @@
-// Isolated contract test. Requires a NEW, empty local PostgreSQL database ending in _test.
+// Isolated contract test. Use a NEW local database ending in _test or ephemeral PGlite.
 // Never reads .env or connects to the linked Supabase project.
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
+import path from "node:path";
+const pglite = process.argv[2] === "--pglite" ? process.argv[3] : undefined;
+if (process.argv[2] === "--pglite" && (!pglite || !path.isAbsolute(pglite)))
+  throw Error("Provide the absolute PGlite installation directory.");
 const url = process.env["SCHEDULE_PUBLICATION_TEST_URL"];
-if (!url)
-  throw Error("Set SCHEDULE_PUBLICATION_TEST_URL to an empty local database ending in _test.");
-const target = new URL(url);
-if (
-  !["postgres:", "postgresql:"].includes(target.protocol) ||
-  !["127.0.0.1", "localhost", "[::1]"].includes(target.hostname) ||
-  target.search !== "" ||
-  !target.pathname.endsWith("_test")
-)
-  throw Error("Only isolated localhost databases ending in _test are allowed.");
+if (!pglite) {
+  if (!url)
+    throw Error("Set SCHEDULE_PUBLICATION_TEST_URL to an empty local database ending in _test.");
+  const target = new URL(url);
+  if (
+    !["postgres:", "postgresql:"].includes(target.protocol) ||
+    !["127.0.0.1", "localhost", "[::1]"].includes(target.hostname) ||
+    target.search !== "" ||
+    !target.pathname.endsWith("_test")
+  )
+    throw Error("Only isolated localhost databases ending in _test are allowed.");
+}
 const schema = fs.readFileSync(
   "supabase/migrations/20260922124401_create_schedule_uploads.sql",
   "utf8",
@@ -68,6 +75,7 @@ const migrations = [
   "20261030153159_schedule_publish_saved_revision.sql",
   "20261030164120_schedule_confirmed_tab_deletion.sql",
   "20261030191159_schedule_control_roster_sync.sql",
+  "20261124143651_schedule_controle_equipe_competencia_futura.sql",
 ]
   .map((file) => fs.readFileSync("supabase/migrations/" + file, "utf8"))
   .join("\n");
@@ -85,24 +93,46 @@ const sql =
   "\n" +
   fs.readFileSync("tests/schedule-publication-revision.sql", "utf8") +
   "\n" +
-  fs.readFileSync("tests/schedule-control-roster.sql", "utf8");
-const result = spawnSync(
-  process.env["PSQL_PATH"] || "psql",
-  [url, "-X", "-v", "ON_ERROR_STOP=1", "-q"],
-  {
-    input: sql,
-    encoding: "utf8",
-    env: { ...process.env, PGCLIENTENCODING: "UTF8" },
-  },
-);
-if (result.error) throw result.error;
-if (result.status === 0) {
-  process.stdout.write(
-    "Schedule publication/deletion SQL: " +
-      (result.stderr.match(/PASS:/g) || []).length +
-      " checks passed.\n",
-  );
+  fs.readFileSync("tests/schedule-control-roster.sql", "utf8") +
+  "\n" +
+  fs.readFileSync("tests/schedule-control-future-roster.sql", "utf8");
+if (pglite) {
+  const { PGlite } = createRequire(path.join(pglite, "package.json"))("@electric-sql/pglite");
+  const db = new PGlite();
+  let passed = 0;
+  try {
+    await db.exec(sql, {
+      onNotice: (notice) => {
+        if (notice.message?.startsWith("PASS:")) passed++;
+      },
+    });
+    console.log(`Schedule publication/deletion SQL (PGlite): ${passed} checks passed.`);
+  } catch (error) {
+    console.error(error.message);
+    if (error.where) console.error(error.where);
+    process.exitCode = 1;
+  } finally {
+    await db.close();
+  }
 } else {
-  process.stderr.write(result.stderr);
+  const result = spawnSync(
+    process.env["PSQL_PATH"] || "psql",
+    [url, "-X", "-v", "ON_ERROR_STOP=1", "-q"],
+    {
+      input: sql,
+      encoding: "utf8",
+      env: { ...process.env, PGCLIENTENCODING: "UTF8" },
+    },
+  );
+  if (result.error) throw result.error;
+  if (result.status === 0) {
+    process.stdout.write(
+      "Schedule publication/deletion SQL: " +
+        (result.stderr.match(/PASS:/g) || []).length +
+        " checks passed.\n",
+    );
+  } else {
+    process.stderr.write(result.stderr);
+  }
+  process.exitCode = result.status ?? 1;
 }
-process.exitCode = result.status ?? 1;

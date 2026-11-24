@@ -1,4 +1,5 @@
-import { nameKey, normalizeLogin } from "./quality-directory";
+import { nameKey, normalizeLogin, type QualityLogin } from "./quality-directory";
+import { isTechnicalVisitSector } from "./technical-visit-scope";
 
 export const VT_CITIES = { fortaleza: "Fortaleza", natal: "Natal / Parnamirim" } as const;
 export type VtCity = keyof typeof VT_CITIES;
@@ -8,6 +9,12 @@ export const VT_IMPORT_LABELS = {
   entries: "Média de entradas",
 } as const;
 export type VtImportKind = keyof typeof VT_IMPORT_LABELS;
+
+interface VtSheetClassification {
+  improductive: boolean;
+  revisited: boolean;
+  expunged: boolean;
+}
 
 export interface VtOrder {
   id: string;
@@ -24,6 +31,7 @@ export interface VtOrder {
   code: number;
   description: string;
   expunge: boolean;
+  sheetClassification?: VtSheetClassification;
 }
 export interface VtAttendance {
   id: string;
@@ -57,6 +65,7 @@ export const VT_SHEET_RULES: VtRules = {
 };
 export interface VtPayment {
   technician: string;
+  login?: string;
   productive: number;
   revisits: number;
   days: number | null;
@@ -152,33 +161,67 @@ const osHeaders = {
   node: ["NODE"],
   service: ["SERVICO", "TIPOSERVICO"],
   code: ["CODBAIXA", "CODIGOBAIXA", "CD BAIXA"],
+  status: ["STATUS"],
+  closedAt: ["DATADABAIXA", "DATABAIXA"],
+  systemClosedAt: ["DATABAIXASISTEMA"],
   description: ["DESCCODBAIXA", "DESCRICAOCODIGOBAIXA"],
   expunge: ["EXPURGAR", "EXPURGADAS"],
+  sheetMonth: ["MES"],
+  sheetTeam: ["EQUIPE"],
+  sheetRevisit: ["PROD"],
+  sheetImproductive: ["IMPROD"],
+  sheetExpunged: ["EXPURGADAS"],
 } as const;
 
-export function parseVtOrders(matrix: unknown[][], city: VtCity, month: string) {
-  const locate = (row: unknown[]) => {
+/** One report row is an attendance, not the lifetime of its O.S. number. */
+export function vtOrderKey({ os, wo, day }: Pick<VtOrder, "os" | "wo" | "day">) {
+  const escape = (value: string) => value.replace(/%/g, "%25").replace(/\|/g, "%7C");
+  return `OS:${escape(os)}|WO:${escape(wo)}|D:${day}`;
+}
+
+export function vtOrdersLayout(matrix: unknown[][]) {
+  for (const [at, row] of matrix.slice(0, 20).entries()) {
     const keys = row.map(header);
-    return Object.fromEntries(
+    const cols = Object.fromEntries(
       Object.entries(osHeaders).map(([key, options]) => [
         key,
         options.map((label) => keys.indexOf(header(label))).find((i) => i >= 0) ?? -1,
       ]),
     ) as Record<keyof typeof osHeaders, number>;
-  };
-  const at = matrix.slice(0, 20).findIndex((row) => {
-    const c = locate(row);
-    return (
-      (c.os >= 0 || c.wo >= 0) &&
-      [c.contract, c.day, c.technician, c.municipality, c.code].every((i) => i >= 0)
-    );
-  });
-  if (at < 0)
+    if (
+      (cols.os >= 0 || cols.wo >= 0) &&
+      [cols.contract, cols.day, cols.technician, cols.municipality, cols.code].every((i) => i >= 0)
+    ) {
+      const fromSheet = [
+        cols.sheetMonth,
+        cols.sheetTeam,
+        cols.sheetRevisit,
+        cols.sheetImproductive,
+        cols.sheetExpunged,
+      ].every((i) => i >= 0);
+      return { at, cols, fromSheet };
+    }
+  }
+  return undefined;
+}
+
+function vtSheetFlag(cell: unknown, label: string, line: number) {
+  const value = str(cell);
+  if (value === "0" || value === "1") return value === "1";
+  throw Error(
+    `Linha ${line}: a coluna ${label} precisa conter o resultado calculado (0 ou 1) do Sheets.`,
+  );
+}
+
+export function parseVtOrders(matrix: unknown[][], city: VtCity, month: string) {
+  const layout = vtOrdersLayout(matrix);
+  if (!layout)
     throw Error(
       "Cabeçalho de Ordens de Serviço ausente. Confira Data, Contrato, O.S./WO, Instalador, Cidade e Cód. Baixa.",
     );
-  const cols = locate(matrix[at]!);
-  const rows = new Map<string, VtOrder>();
+  const { at, cols, fromSheet } = layout;
+  const rows = new Map<string, { order: VtOrder; line: number }>();
+  const pendingLines: number[] = [];
   let duplicates = 0;
   matrix.slice(at + 1).forEach((row, i) => {
     if (!row.some((value) => value != null && str(value))) return;
@@ -189,18 +232,43 @@ export function parseVtOrders(matrix: unknown[][], city: VtCity, month: string) 
     const day = vtDate(get("day")),
       technician = str(get("technician"));
     const municipality = nameKey(get("municipality"));
-    const codeMatch = /^(\d{1,3})(?:\D|$)/.exec(str(get("code")));
+    const rawCode = str(get("code"));
+    const codeMatch = /^(\d{1,3})(?:\D|$)/.exec(rawCode);
     const rowNumber = at + i + 2;
+    // The original Sheets tab can contain several months and cities.
+    if (
+      fromSheet &&
+      ((day && !day.startsWith(`${month}-`)) || (municipality && vtCity(municipality) !== city))
+    )
+      return;
     if (vtCity(municipality) !== city)
       throw Error(`Linha ${rowNumber}: a cidade não pertence à região selecionada.`);
     if (!day?.startsWith(`${month}-`))
       throw Error(`Linha ${rowNumber}: data inválida ou fora da competência ${month}.`);
-    if ((!os && !wo) || !contract || !technician || !codeMatch)
-      throw Error(
-        `Linha ${rowNumber}: informe O.S./WO, contrato, instalador e código de baixa válido.`,
-      );
+    const missingFields = [
+      !os && !wo && "O.S. ou WO",
+      !contract && "contrato",
+      !technician && "instalador",
+    ].filter(Boolean);
+    if (missingFields.length)
+      throw Error(`Linha ${rowNumber}: falta informar ${missingFields.join(", ")}.`);
+    if (!codeMatch) {
+      const pending =
+        !rawCode &&
+        str(get("status")) === "1" &&
+        (cols.closedAt >= 0 || cols.systemClosedAt >= 0) &&
+        !str(get("closedAt")) &&
+        !str(get("systemClosedAt"));
+      if (pending) {
+        pendingLines.push(rowNumber);
+        return;
+      }
+      throw Error(`Linha ${rowNumber}: código de baixa ${rawCode ? "inválido" : "ausente"}.`);
+    }
     const time = vtSeconds(get("time"));
-    const id = os ? `OS:${os}` : `WO:${wo}`;
+    const id = vtOrderKey({ os, wo, day });
+    if ([...id].length > 180)
+      throw Error(`Linha ${rowNumber}: os identificadores da O.S./WO estão acima do limite.`);
     const order: VtOrder = {
       id,
       os,
@@ -217,14 +285,42 @@ export function parseVtOrders(matrix: unknown[][], city: VtCity, month: string) 
       description: str(get("description")),
       expunge: ["SIM", "1", "TRUE"].includes(nameKey(get("expunge"))),
     };
+    if (fromSheet) {
+      order.sheetClassification = {
+        revisited: vtSheetFlag(get("sheetRevisit"), "Prod", rowNumber),
+        improductive: vtSheetFlag(get("sheetImproductive"), "Improd", rowNumber),
+        expunged: vtSheetFlag(get("sheetExpunged"), "Expurgadas", rowNumber),
+      };
+    }
     const previous = rows.get(id);
-    if (previous && JSON.stringify(previous) !== JSON.stringify(order))
-      throw Error(`Linha ${rowNumber}: a mesma O.S./WO tem informações diferentes no arquivo.`);
-    if (previous) duplicates++;
-    rows.set(id, order);
+    if (previous) {
+      if (JSON.stringify(previous.order) !== JSON.stringify(order))
+        throw Error(
+          `Linhas ${previous.line} e ${rowNumber}: a mesma O.S./WO no mesmo dia tem informações diferentes. Confira qual registro deve ser importado.`,
+        );
+      duplicates++;
+      return;
+    }
+    rows.set(id, { order, line: rowNumber });
   });
-  if (!rows.size) throw Error("A planilha não contém ordens para importar.");
-  return { rows: [...rows.values()], duplicates };
+  if (!rows.size && pendingLines.length)
+    throw Error(
+      `Nenhuma ordem com baixa para importar. ${pendingLines.length} linha(s) ainda estão sem baixa na origem.`,
+    );
+  if (!rows.size)
+    throw Error(
+      fromSheet
+        ? "A aba do Sheets não contém ordens da cidade e competência selecionadas."
+        : "A planilha não contém ordens para importar.",
+    );
+  if (rows.size > 15000)
+    throw Error("A cidade e competência ultrapassam 15.000 ordens no arquivo.");
+  return {
+    rows: [...rows.values()].map(({ order }) => order),
+    duplicates,
+    pendingLines,
+    fromSheet,
+  };
 }
 
 export function parseVtAttendance(
@@ -311,11 +407,35 @@ export function parseVtAttendance(
 }
 
 export interface VtClassified extends VtOrder {
+  technicianLogin?: string;
   productive: boolean;
   improductive: boolean;
+  cancelled: boolean;
   revisited: boolean;
   expunged: boolean;
   returnOs: string;
+}
+
+export const VT_ORDER_CATEGORIES = {
+  all: "Todas",
+  productive: "Produtivas",
+  revisit: "Revisitas produtivas",
+  improductive: "Improdutivas",
+  cancelled: "Canceladas",
+  expunge: "Expurgadas",
+} as const;
+export type VtOrderCategory = keyof typeof VT_ORDER_CATEGORIES;
+
+const orderCategoryFlag = {
+  productive: "productive",
+  revisit: "revisited",
+  improductive: "improductive",
+  cancelled: "cancelled",
+  expunge: "expunged",
+} as const;
+
+export function vtOrderMatchesCategory(order: VtClassified, category: VtOrderCategory) {
+  return category === "all" || order[orderCategoryFlag[category]];
 }
 
 export function vtArea(order: VtOrder): string {
@@ -325,6 +445,9 @@ export function vtArea(order: VtOrder): string {
     ? `${order.neighborhood} · ${order.municipality}`
     : order.neighborhood;
 }
+
+const expungeWithFollowup = new Set([570, 203, 204, 112]);
+const noiseRemoval = (order: VtOrder) => nameKey(order.service) === "LIMPEZA DE RUIDO INDOOR";
 
 /** Preserves the Sheets thresholds, but matches subsequent visits by contract and timestamp. */
 export function classifyVtOrders(orders: readonly VtOrder[]): VtClassified[] {
@@ -341,34 +464,45 @@ export function classifyVtOrders(orders: readonly VtOrder[]): VtClassified[] {
       (a, b) =>
         a.day.localeCompare(b.day) || a.time.localeCompare(b.time) || a.id.localeCompare(b.id),
     );
-    const expunged = list.map(
-      (r, i) =>
-        r.expunge ||
-        (Boolean(list[i + 1]) &&
-          ([570, 204, 203, 112].includes(r.code) || list[i + 1]!.code === 1)),
-    );
-    const improductive = list.map((r, i) => !expunged[i] && r.code <= 400);
+    const outcomes = list.map((order, i) => {
+      const next = list[i + 1];
+      const cancelled = order.code === 0 || order.code === 1;
+      const sheet = order.sheetClassification;
+      // A revisita cancelada (1) continua expurgando a O.S. anterior, não a si mesma.
+      const expunged =
+        !cancelled &&
+        (sheet?.expunged ??
+          (order.expunge ||
+            (!!next &&
+              (expungeWithFollowup.has(order.code) ||
+                noiseRemoval(order) ||
+                noiseRemoval(next) ||
+                next.code === 1))));
+      const improductive = !cancelled && (sheet?.improductive ?? (!expunged && order.code <= 400));
+      return { cancelled, expunged, improductive, productive: !cancelled && !improductive };
+    });
     list.forEach((order, i) => {
+      const outcome = outcomes[i]!;
       const next = list[i + 1];
       const gap = next ? (Date.parse(next.day) - Date.parse(order.day)) / 86400000 : Infinity;
-      const revisit = Boolean(
-        next &&
-        gap > 0 &&
-        gap <= 9 &&
-        next.day.slice(0, 7) === order.day.slice(0, 7) &&
+      const inWindow =
+        !!next && gap > 0 && gap <= 9 && next.day.slice(0, 7) === order.day.slice(0, 7);
+      const automatic = Boolean(
+        order.code >= 400 &&
+        inWindow &&
         nameKey(order.description) !== "CANCELAMENTO" &&
-        !improductive[i + 1] &&
-        !improductive[i + 2],
+        outcomes[i + 1]?.productive &&
+        (outcomes[i + 2]?.productive ?? true),
       );
-      const productive = !improductive[i];
-      const revisited = revisit && productive && !expunged[i] && order.code >= 400;
+      const revisited =
+        outcome.productive &&
+        !outcome.expunged &&
+        (order.sheetClassification?.revisited ?? automatic);
       records.push({
         ...order,
-        productive,
-        improductive: !productive,
+        ...outcome,
         revisited,
-        expunged: !!expunged[i],
-        returnOs: revisited ? next!.os || next!.wo : "",
+        returnOs: revisited && inWindow && next ? next.os || next.wo : "",
       });
     });
   }
@@ -387,6 +521,7 @@ export function vtSummaries(rows: readonly VtClassified[], key: (row: VtClassifi
       productive: number;
       revisits: number;
       improductive: number;
+      cancelled: number;
       expunged: number;
     }
   >();
@@ -399,23 +534,38 @@ export function vtSummaries(rows: readonly VtClassified[], key: (row: VtClassifi
       productive: 0,
       revisits: 0,
       improductive: 0,
+      cancelled: 0,
       expunged: 0,
     };
     a.orders++;
     a.productive += Number(row.productive);
     a.revisits += Number(row.revisited);
     a.improductive += Number(row.improductive);
+    a.cancelled += Number(row.cancelled);
     a.expunged += Number(row.expunged);
     map.set(normalized, a);
   }
   return [...map.values()];
 }
 
-interface AttendanceProfile {
+export function vtTechnicianSummaries(rows: readonly VtClassified[]) {
+  const key = (row: VtClassified) => row.technicianLogin || nameKey(row.technician);
+  const names = new Map(rows.map((row) => [key(row), row.technician]));
+  return vtSummaries(rows, key).map((item) => ({
+    ...item,
+    id: item.name,
+    name: names.get(item.name) ?? item.name,
+  }));
+}
+
+interface NamedProfile {
   id: string;
   name: string;
   login: string;
   names: Set<string>;
+}
+
+interface AttendanceProfile extends NamedProfile {
   days: VtAttendance[];
   entries: VtAttendance[];
 }
@@ -485,13 +635,13 @@ function matchesName(alias: string[], full: string[], variantAt = -1) {
   return false;
 }
 
-type AttendanceMatch = { profile?: AttendanceProfile; issue?: VtPayment["attendanceIssue"] };
+type NameMatch<T extends NamedProfile> = { profile?: T; issue?: VtPayment["attendanceIssue"] };
 
-function matchAttendance(
+function matchProfile<T extends NamedProfile>(
   technician: string,
-  roster: AttendanceProfile[],
+  roster: readonly T[],
   chosenId?: string,
-): AttendanceMatch {
+): NameMatch<T> {
   if (chosenId) {
     const profile = roster.find((item) => item.id === chosenId);
     return profile ? { profile } : { issue: "unmatched" };
@@ -504,7 +654,7 @@ function matchAttendance(
   if (exact.length > 1) return { issue: "ambiguous" };
   const alias = nameTokens(key);
   if (alias.length < 2 || alias.some((token) => token.length < 2)) return { issue: "unmatched" };
-  const candidates = roster.flatMap<AttendanceMatch>((profile) => {
+  const candidates = roster.flatMap<NameMatch<T>>((profile) => {
     const names = [...profile.names].map(nameTokens);
     if (names.some((tokens) => matchesName(alias, tokens))) return [{ profile }];
     if (names.some((tokens) => alias.some((_, index) => matchesName(alias, tokens, index))))
@@ -515,8 +665,172 @@ function matchAttendance(
   return { issue: candidates.length ? "ambiguous" : "unmatched" };
 }
 
+/** Classify the full contract history first; only the registered VT originals enter this scope. */
+export function vtTeamScope(
+  classified: readonly VtClassified[],
+  directory: readonly QualityLogin[],
+  city: VtCity,
+  confirmedLinks?: ReadonlyMap<string, string>,
+) {
+  const people = directory.map((entry) => {
+    const login = normalizeLogin(entry.login);
+    return {
+      id: `LOGIN:${login}`,
+      login,
+      name: entry.full_name,
+      names: new Set([nameKey(entry.full_name)]),
+      city: vtCity(entry.city),
+      vt: isTechnicalVisitSector(entry.sector),
+    };
+  });
+  const directoryByLogin = new Map(people.map((person) => [person.login, person]));
+  // Include other sectors in name matching: an Adhesão homonym must not resolve to a VT login.
+  const regional = people.filter((person) => person.city === city);
+  const members = regional
+    .filter((person) => person.login && person.vt)
+    .sort((a, b) => a.name.localeCompare(b.name, "pt-BR") || a.login.localeCompare(b.login));
+  const membersByLogin = new Map(members.map((person) => [person.login, person]));
+  const regionalNames = new Set(regional.map((person) => nameKey(person.name)));
+  const otherNames = new Set(
+    people.filter((person) => person.city !== city).map((p) => nameKey(p.name)),
+  );
+  const matches = new Map<string, NameMatch<(typeof people)[number]>>();
+
+  function resolve(name: string, explicitLogin?: string): NameMatch<(typeof people)[number]> {
+    const login = normalizeLogin(explicitLogin);
+    const knownLogin = login || directoryByLogin.get(normalizeLogin(name))?.login;
+    if (knownLogin) {
+      const profile = membersByLogin.get(knownLogin);
+      return profile ? { profile } : {};
+    }
+    const key = nameKey(name);
+    if (otherNames.has(key) && !regionalNames.has(key)) return {};
+    let match = matches.get(key);
+    if (!match) {
+      match = matchProfile(name, regional);
+      matches.set(key, match);
+    }
+    return match.profile && membersByLogin.has(match.profile.login) ? match : {};
+  }
+
+  const pending = new Map<string, Map<string, string>>();
+  const confirmed = new Map<string, Map<string, string>>();
+  const rows: VtClassified[] = [];
+  for (const row of classified) {
+    const { profile, issue } = resolve(row.technician);
+    if (!profile) continue;
+    if (issue === "suggested") {
+      const alias = nameKey(row.technician);
+      const approved = confirmedLinks?.get(alias) === profile.id;
+      if (approved || row.productive) {
+        const collection = approved ? confirmed : pending;
+        const aliases = collection.get(profile.login) ?? new Map<string, string>();
+        aliases.set(alias, row.technician);
+        collection.set(profile.login, aliases);
+      }
+      if (!approved) continue;
+    }
+    rows.push({ ...row, technician: profile.name, technicianLogin: profile.login });
+  }
+
+  function attendance(source: readonly VtAttendance[]) {
+    return source.flatMap((row) => {
+      const { profile, issue } = resolve(row.technician, row.login);
+      return profile && (!issue || confirmedLinks?.get(nameKey(row.technician)) === profile.id)
+        ? [{ ...row, login: profile.login }]
+        : [];
+    });
+  }
+  return { rows, members, pending, confirmed, attendance };
+}
+
 function attendanceRow(rows: VtAttendance[]) {
   return rows.length && rows.every((row) => row.value === rows[0]!.value) ? rows[0]! : undefined;
+}
+
+function calculateVtPayment(
+  a: Pick<VtPayment, "productive" | "revisits"> & { name: string },
+  rules: VtRules,
+  profile?: AttendanceProfile,
+  attendanceIssue?: VtPayment["attendanceIssue"],
+): VtPayment {
+  const dayRow = attendanceRow(profile?.days ?? []);
+  const entryRow = attendanceRow(profile?.entries ?? []);
+  const daysWorked = attendanceIssue === "duplicate" ? null : (dayRow?.value ?? null);
+  const entry = attendanceIssue === "duplicate" ? null : (entryRow?.value ?? null);
+  const base =
+    daysWorked === null || attendanceIssue
+      ? null
+      : Math.min(
+          rules.maxBaseCents,
+          Math.round(Math.min(rules.maxDays, daysWorked) * rules.dailyCents),
+        );
+  const discount = a.revisits >= rules.discountFrom ? a.revisits * rules.discountCents : 0;
+  const entryLimit =
+    rules.exception && [nameKey(a.name), profile?.login].includes(nameKey(rules.exception))
+      ? rules.exceptionLimit
+      : rules.entryLimit;
+  const bonus =
+    entry === null || attendanceIssue
+      ? null
+      : a.productive >= rules.bonusOrders && entry <= entryLimit
+        ? rules.bonusCents
+        : 0;
+  const pending =
+    attendanceIssue ?? (daysWorked === null || entry === null ? "incomplete" : undefined);
+  return {
+    technician: a.name,
+    productive: a.productive,
+    revisits: a.revisits,
+    days: daysWorked,
+    entry,
+    base,
+    discount,
+    bonus,
+    total: base === null || bonus === null ? null : Math.max(0, base - discount) + bonus,
+    ...(profile && {
+      attendance: {
+        name: profile.name,
+        login: profile.login,
+        ...(dayRow && { dayId: dayRow.id }),
+        ...(entryRow && { entryId: entryRow.id }),
+      },
+    }),
+    ...(pending && { attendanceIssue: pending }),
+  };
+}
+
+export function vtTeamPayments(
+  team: ReturnType<typeof vtTeamScope>,
+  days: readonly VtAttendance[],
+  entries: readonly VtAttendance[],
+  rules: VtRules,
+) {
+  const roster = new Map(
+    vtAttendanceRoster(team.attendance(days), team.attendance(entries)).map((row) => [
+      row.login,
+      row,
+    ]),
+  );
+  const totals = new Map(vtTechnicianSummaries(team.rows).map((row) => [row.id, row]));
+  return team.members.flatMap<VtPayment>((member) => {
+    const { login, name } = member;
+    const summary = totals.get(login) ?? { productive: 0, revisits: 0 };
+    const needsConfirmation = team.pending.has(login);
+    if (!summary.productive && !needsConfirmation) return [];
+    const attendance = roster.get(login);
+    return [
+      {
+        ...calculateVtPayment(
+          { ...summary, name },
+          rules,
+          { ...member, days: attendance?.days ?? [], entries: attendance?.entries ?? [] },
+          needsConfirmation ? "suggested" : undefined,
+        ),
+        login,
+      },
+    ];
+  });
 }
 
 export function vtPayments(
@@ -531,7 +845,7 @@ export function vtPayments(
     .filter((a) => a.productive > 0)
     .map((summary) => ({
       summary,
-      ...matchAttendance(summary.name, roster, confirmedLinks?.get(nameKey(summary.name))),
+      ...matchProfile(summary.name, roster, confirmedLinks?.get(nameKey(summary.name))),
     }));
   const claims = new Map<string, number>();
   for (const { profile, issue } of matched) {
@@ -540,50 +854,7 @@ export function vtPayments(
   return matched
     .map(({ summary: a, profile, issue }) => {
       const attendanceIssue = profile && (claims.get(profile.id) ?? 0) > 1 ? "duplicate" : issue;
-      const dayRow = attendanceRow(profile?.days ?? []);
-      const entryRow = attendanceRow(profile?.entries ?? []);
-      const daysWorked = attendanceIssue === "duplicate" ? null : (dayRow?.value ?? null);
-      const entry = attendanceIssue === "duplicate" ? null : (entryRow?.value ?? null);
-      const base =
-        daysWorked === null || attendanceIssue
-          ? null
-          : Math.min(
-              rules.maxBaseCents,
-              Math.round(Math.min(rules.maxDays, daysWorked) * rules.dailyCents),
-            );
-      const discount = a.revisits >= rules.discountFrom ? a.revisits * rules.discountCents : 0;
-      const entryLimit =
-        rules.exception && nameKey(rules.exception) === nameKey(a.name)
-          ? rules.exceptionLimit
-          : rules.entryLimit;
-      const bonus =
-        entry === null || attendanceIssue
-          ? null
-          : a.productive >= rules.bonusOrders && entry <= entryLimit
-            ? rules.bonusCents
-            : 0;
-      const pending =
-        attendanceIssue ?? (daysWorked === null || entry === null ? "incomplete" : undefined);
-      return {
-        technician: a.name,
-        productive: a.productive,
-        revisits: a.revisits,
-        days: daysWorked,
-        entry,
-        base,
-        discount,
-        bonus,
-        total: base === null || bonus === null ? null : Math.max(0, base - discount) + bonus,
-        ...(profile && {
-          attendance: {
-            name: profile.name,
-            login: profile.login,
-            ...(dayRow && { dayId: dayRow.id }),
-            ...(entryRow && { entryId: entryRow.id }),
-          },
-        }),
-        ...(pending && { attendanceIssue: pending }),
-      };
+      return calculateVtPayment(a, rules, profile, attendanceIssue);
     })
     .sort((a, b) => a.technician.localeCompare(b.technician, "pt-BR"));
 }

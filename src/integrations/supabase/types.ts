@@ -697,6 +697,7 @@ export type Database = {
         spreadsheet_url: string;
         planned_payload: Json;
         current_payload: Json;
+        removed_roster_names?: string[];
         created_by: string;
         synced_by: string | null;
         last_synced_at: string | null;
@@ -1070,6 +1071,29 @@ export type Database = {
       publish_sla_warranty_import: { Args: { p_import_id: string }; Returns: undefined };
       save_quality_directory: { Args: { p_entries: Json }; Returns: undefined };
       publish_quality_import: { Args: { p_import_id: string }; Returns: undefined };
+      quality_tc_incremental_manifest: { Args: Record<never, never>; Returns: Json };
+      quality_tc_incremental_page: {
+        Args: { p_import_id: string; p_after: number };
+        Returns: Json;
+      };
+      quality_tc_incremental_start: {
+        Args: {
+          p_base_import_id: string | null;
+          p_source_file: string;
+          p_row_count: number;
+          p_change_count: number;
+          p_metadata: Json;
+        };
+        Returns: string;
+      };
+      quality_tc_incremental_append: {
+        Args: { p_upload_id: string; p_chunk_index: number; p_records: Json };
+        Returns: undefined;
+      };
+      quality_tc_incremental_finish: {
+        Args: { p_upload_id: string; p_cancel?: boolean };
+        Returns: Json;
+      };
       can_access_schedules: { Args: { _uid: string }; Returns: boolean };
       can_manage_schedules: { Args: { _uid: string }; Returns: boolean };
       is_active_user: { Args: { _uid: string }; Returns: boolean };
