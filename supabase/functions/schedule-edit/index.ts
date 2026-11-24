@@ -145,6 +145,7 @@ Deno.serve(async (request) => {
           sheet.planned_payload as Payload,
           sheet.current_payload as Payload,
           schedule.schedule_month,
+          { removedRosterNames: sheet.removed_roster_names as string[] | undefined },
         );
         if (validation.addedPeople.length)
           return json(409, {
@@ -275,7 +276,9 @@ Deno.serve(async (request) => {
       const planned = linked.planned_payload as Payload,
         previous = linked.current_payload as Payload;
       const result = usesControlMaster(schedule.city, schedule.sector)
-        ? parseControlMonthTab(rows, planned, previous, schedule.schedule_month)
+        ? parseControlMonthTab(rows, planned, previous, schedule.schedule_month, {
+            removedRosterNames: linked.removed_roster_names as string[] | undefined,
+          })
         : parseOfficialMonthTab(rows, planned, previous, schedule.schedule_month);
       const { error: syncError } = await admin.rpc("schedule_operational_apply_sync", {
         p_sheet_id: linked.id,
@@ -300,7 +303,10 @@ Deno.serve(async (request) => {
           .slice(0, 255) !== schedule.source_sheet
       )
         throw Error("Origem mudou durante a edição. Atualize via API.");
-      const merged = mergeSheets(refreshed.map((s) => s.parsed));
+      const merged = mergeSheets(
+        refreshed.map((s) => s.parsed),
+        { city: schedule.city, sector: schedule.sector },
+      );
       const { error: syncError } = await admin
         .from("schedule_uploads")
         .update({

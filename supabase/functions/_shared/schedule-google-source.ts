@@ -381,21 +381,38 @@ export function parseSheet(
   };
 }
 
-export function mergeSheets(parsed: ParsedSheet[]) {
+export function mergeSheets(parsed: ParsedSheet[], scope?: { city: string; sector: string }) {
   const dates = new Set<string>();
   const codes = new Set<string>();
   const people = new Map<string, ParsedSheet["people"][number]>();
+  const sharedLogins = scope?.city === "natal" && scope.sector === "adesao-servico";
+  const supervisorLabels = scope?.city === "fortaleza" && scope.sector === "instalacao";
 
   for (const sheet of parsed) {
     sheet.dates.forEach((date) => dates.add(date));
     sheet.codes.forEach((code) => codes.add(code));
     for (const person of sheet.people) {
-      const key = person.login
-        ? `LOGIN:${normalized(person.login)}`
-        : `NOME:${normalized(person.name)}`;
+      const login = normalized(person.login);
+      const name = normalized(person.name);
+      // Em Adesão RN, técnico e auxiliar podem usar o mesmo login de TOA.
+      // FORA TOA sinaliza ausência de login e não identifica uma pessoa.
+      // Na Instalação de Fortaleza, Sup. e Sup.VT são rótulos, não logins individuais.
+      const loginIsLabel =
+        (sharedLogins && login === "FORA TOA") ||
+        (supervisorLabels && /^SUP(?:VT)?$/.test(login.replace(/[.\s]/g, "")));
+      const key =
+        !login || loginIsLabel
+          ? `NOME:${name}`
+          : sharedLogins
+            ? JSON.stringify([login, name])
+            : `LOGIN:${login}`;
       const current = people.get(key);
       if (!current) {
-        people.set(key, { ...person, assignments: { ...person.assignments } });
+        people.set(key, {
+          ...person,
+          ...(loginIsLabel ? { login: undefined } : {}),
+          assignments: { ...person.assignments },
+        });
         continue;
       }
       current.assignments = { ...current.assignments, ...person.assignments };

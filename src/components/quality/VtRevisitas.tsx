@@ -25,17 +25,19 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useAuth } from "@/hooks/useAuth";
-import { nameKey } from "@/lib/quality-directory";
+import { qualityKeys } from "@/hooks/useQualityLoading";
+import { useVtAttendanceLinks } from "@/hooks/useVtAttendanceLinks";
+import { nameKey, type QualityLogin } from "@/lib/quality-directory";
 import {
   classifyVtOrders,
   VT_CITIES,
   VT_IMPORT_LABELS,
   VT_SHEET_RULES,
-  vtArea,
-  vtAttendanceRoster,
-  vtPayments,
+  vtOrderKey,
+  vtOrderMatchesCategory,
   vtSeconds,
-  vtSummaries,
+  vtTeamPayments,
+  vtTeamScope,
   vtTime,
   type VtAttendance,
   type VtCity,
@@ -44,7 +46,15 @@ import {
   type VtPayment,
   type VtRules,
 } from "@/lib/vt-revisitas";
+import {
+  vtChartMetrics,
+  vtChartModel,
+  vtMonthEnd,
+  type VtOrderMetric,
+} from "@/lib/vt-revisitas-charts";
+import { vtMapArea, type VtHeatArea } from "@/lib/vt-revisitas-geography";
 import { readVtWorkbook } from "@/lib/vt-revisitas-xlsx";
+import { fetchQualityDirectory } from "@/services/quality";
 import {
   readVtHistory,
   readVtPeriod,
@@ -54,14 +64,10 @@ import {
   writeVtPeriod,
 } from "@/services/vt-revisitas";
 import { VtRevisitasCharts } from "./VtRevisitasCharts";
+import { VtRevisitasOrders } from "./VtRevisitasOrders";
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const number = new Intl.NumberFormat("pt-BR");
-const percentage = new Intl.NumberFormat("pt-BR", {
-  style: "percent",
-  maximumFractionDigits: 2,
-  minimumFractionDigits: 2,
-});
 const formatMoney = (value: number | null) => (value === null ? "—" : money.format(value / 100));
 const formatDay = (value: string) => value.split("-").reverse().join("/");
 const formatMonth = (value: string) => `${value.slice(5, 7)}/${value.slice(0, 4)}`;
@@ -76,12 +82,15 @@ type Preview = {
   file: string;
   rows: VtOrder[] | VtAttendance[];
   duplicates: number;
+  pendingLines: number[];
+  fromSheet: boolean;
   newRows: number;
   revision: number;
 };
 type View = "orders" | "charts" | "days" | "entries" | "payment";
 const EMPTY_ORDERS: VtOrder[] = [];
 const EMPTY_ATTENDANCE: VtAttendance[] = [];
+const EMPTY_DIRECTORY: QualityLogin[] = [];
 const attendanceNotes: Record<NonNullable<VtPayment["attendanceIssue"]>, string> = {
   unmatched: "Sem vínculo com os arquivos importados.",
   ambiguous: "Mais de um técnico corresponde a este nome.",
@@ -92,23 +101,29 @@ const attendanceNotes: Record<NonNullable<VtPayment["attendanceIssue"]>, string>
 const fieldClass = "h-9 min-w-0 rounded-md border border-input bg-background px-3 text-sm";
 const headerClass = "whitespace-nowrap px-3 py-2.5 text-left text-xs font-semibold";
 const cellClass = "whitespace-nowrap px-3 py-2.5 text-xs";
+const kpiClass = "min-w-0 rounded-xl border p-3";
 
 export function VtRevisitas() {
-  const { user, isAdmin } = useAuth();
+  const { user, profile, isAdmin } = useAuth();
   const queryClient = useQueryClient();
   const [city, setCity] = useState<VtCity>("fortaleza");
   const [month, setMonth] = useState(nowMonth);
   const [view, setView] = useState<View>("charts");
   const [tech, setTech] = useState("");
-  const [area, setArea] = useState("");
+  const [area, setArea] = useState<VtHeatArea | null>(null);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [category, setCategory] = useState("all");
+  const [orderMetric, setOrderMetric] = useState<VtOrderMetric>("all");
+  const category = orderMetric === "revisit-rate" ? "revisit" : orderMetric;
   const [search, setSearch] = useState("");
   const [rowLimit, setRowLimit] = useState(75);
   const [rulesByPeriod, setRulesByPeriod] = useState<Record<string, VtRules>>({});
-  const [linksByPeriod, setLinksByPeriod] = useState<Record<string, Map<string, string>>>({});
-  const [reviewedRevision, setReviewedRevision] = useState<number | null>(null);
+  const { links, setLink, hasUnsavedLinks } = useVtAttendanceLinks(user?.id, city, month);
+  const [reviewedRevision, setReviewedRevision] = useState<{
+    revision: number;
+    directoryAt: number;
+    links: ReadonlyMap<string, string>;
+  } | null>(null);
   const [closing, setClosing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -128,43 +143,50 @@ export function VtRevisitas() {
     queryFn: ({ signal }) => readVtHistory(city, signal),
     retry: false,
   });
+  const directoryUser = profile?.id ?? user?.id;
+  const directory = useQuery({
+    queryKey: qualityKeys.directory(directoryUser),
+    enabled: !!directoryUser,
+    queryFn: ({ signal }) => fetchQualityDirectory(signal),
+    refetchOnMount: "always",
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
   const orders = data?.orders ?? EMPTY_ORDERS;
-  const reviewed = reviewedRevision !== null && reviewedRevision === data?.revision;
+  const reviewed =
+    reviewedRevision?.revision === data?.revision &&
+    reviewedRevision?.directoryAt === directory.dataUpdatedAt &&
+    reviewedRevision?.links === links;
   const days = data?.days ?? EMPTY_ATTENDANCE;
   const entries = data?.entries ?? EMPTY_ATTENDANCE;
   const closed = !!data?.closed_at;
   const editable = isAdmin && !closed && !busy && !isPending && !isFetching && !error;
   const scope = `${city}:${month}`;
-  const links = linksByPeriod[scope];
   const rules = data?.snapshot?.rules ?? rulesByPeriod[scope] ?? VT_SHEET_RULES;
   const classified = useMemo(() => classifyVtOrders(orders), [orders]);
-  const technicians = useMemo(
-    () =>
-      vtSummaries(classified, (r) => r.technician)
-        .map((r) => r.name)
-        .sort((a, b) => a.localeCompare(b, "pt-BR")),
-    [classified],
+  const directoryEntries = directory.isSuccess ? directory.data : EMPTY_DIRECTORY;
+  const team = useMemo(
+    () => vtTeamScope(classified, directoryEntries, city, links),
+    [classified, directoryEntries, city, links],
   );
+  const activeTech = team.members.find((person) => person.login === tech);
+  const techLogin = activeTech?.login ?? "";
   const currentRows = useMemo(
     () =>
-      classified.filter(
+      team.rows.filter(
         (r) =>
-          (!tech || nameKey(r.technician) === nameKey(tech)) &&
-          (!area || vtArea(r) === area) &&
+          (!techLogin || r.technicianLogin === techLogin) &&
+          (!area || vtMapArea(r)?.key === area.key) &&
           (!dateFrom || r.day >= dateFrom) &&
           (!dateTo || r.day <= dateTo),
       ),
-    [classified, tech, area, dateFrom, dateTo],
+    [team.rows, techLogin, area, dateFrom, dateTo],
   );
   const detail = useMemo(
     () =>
       currentRows.filter(
         (r) =>
-          (category === "all" ||
-            (category === "productive" && r.productive) ||
-            (category === "improductive" && r.improductive) ||
-            (category === "revisit" && r.revisited) ||
-            (category === "expunge" && r.expunged)) &&
+          vtOrderMatchesCategory(r, category) &&
           (!search ||
             nameKey(`${r.os} ${r.wo} ${r.contract} ${r.neighborhood} ${r.service}`).includes(
               nameKey(search),
@@ -172,27 +194,49 @@ export function VtRevisitas() {
       ),
     [currentRows, category, search],
   );
-  const summary = useMemo(() => vtSummaries(currentRows, () => "Total")[0], [currentRows]);
-  const roster = useMemo(() => vtAttendanceRoster(days, entries), [days, entries]);
+  const chartModel = useMemo(
+    () => vtChartModel(currentRows, classified, month, dateFrom, dateTo),
+    [currentRows, classified, month, dateFrom, dateTo],
+  );
+  const teamAttendance = useMemo(
+    () => ({ days: team.attendance(days), entries: team.attendance(entries) }),
+    [team, days, entries],
+  );
+  const displayedAttendance = {
+    days:
+      closed && !techLogin
+        ? days
+        : teamAttendance.days.filter((r) => !techLogin || r.login === techLogin),
+    entries:
+      closed && !techLogin
+        ? entries
+        : teamAttendance.entries.filter((r) => !techLogin || r.login === techLogin),
+  };
   const payments = useMemo(
-    () => data?.snapshot?.payments ?? vtPayments(classified, days, entries, rules, links),
-    [data?.snapshot, classified, days, entries, rules, links],
+    () => data?.snapshot?.payments ?? vtTeamPayments(team, days, entries, rules),
+    [data?.snapshot, team, days, entries, rules],
   );
-  const visiblePayments = payments.filter(
-    (row) => !tech || nameKey(row.technician) === nameKey(tech),
-  );
+  const visiblePayments = payments.filter((row) => {
+    if (!activeTech) return true;
+    const login = row.login || row.attendance?.login;
+    return login ? login === techLogin : nameKey(row.technician) === nameKey(activeTech.name);
+  });
   const pendingCount = payments.filter((row) => row.total === null).length;
-  const selectedPayment = tech ? visiblePayments[0] : undefined;
-  const ready = payments.length > 0 && pendingCount === 0 && days.length > 0 && entries.length > 0;
+  const selectedPayment = techLogin ? visiblePayments[0] : undefined;
+  const ready =
+    directory.isSuccess && !directory.isFetching && payments.length > 0 && pendingCount === 0;
 
+  function changeOrderMetric(next: VtOrderMetric) {
+    setOrderMetric(next);
+    setRowLimit(75);
+  }
   function clearFilters() {
     setTech("");
-    setArea("");
+    setArea(null);
     setDateFrom("");
     setDateTo("");
-    setCategory("all");
+    changeOrderMetric("all");
     setSearch("");
-    setRowLimit(75);
   }
   function changeScope(nextCity: VtCity, nextMonth: string) {
     if (!/^20\d{2}-(0[1-9]|1[0-2])$/.test(nextMonth)) return;
@@ -208,17 +252,13 @@ export function VtRevisitas() {
     setReviewedRevision(null);
   }
   function setAttendanceLink(technician: string, id: string) {
-    setLinksByPeriod((all) => {
-      const next = new Map(all[scope]);
-      if (id) next.set(nameKey(technician), id);
-      else next.delete(nameKey(technician));
-      return { ...all, [scope]: next };
-    });
+    if (!editable) return;
+    setLink(technician, id);
     setReviewedRevision(null);
   }
   const refresh = async () => {
     setReviewedRevision(null);
-    await Promise.all([refetch(), history.refetch()]);
+    await Promise.all([refetch(), history.refetch(), directory.refetch()]);
   };
   const chooseFile = (kind: VtImportKind) => {
     if (!editable) return;
@@ -231,13 +271,21 @@ export function VtRevisitas() {
     setBusy(true);
     setFeedback(undefined);
     try {
-      const { rows, duplicates } = await readVtWorkbook(file, kind, city, month);
-      const ids = new Set((data?.[kind] ?? []).map((row) => row.id));
+      const imported = await readVtWorkbook(file, kind, city, month);
+      const { rows, duplicates, pendingLines } = imported;
+      // Periods imported before the change can still have the original (O.S.-only) IDs.
+      const ids = new Set(
+        imported.kind === "orders"
+          ? orders.map(vtOrderKey)
+          : (data?.[imported.kind] ?? []).map((row) => row.id),
+      );
       setPreview({
         kind,
         file: file.name,
         rows,
         duplicates,
+        pendingLines,
+        fromSheet: imported.kind === "orders" && imported.fromSheet,
         newRows: rows.filter((r) => !ids.has(r.id)).length,
         revision: data?.revision ?? 0,
       });
@@ -253,11 +301,21 @@ export function VtRevisitas() {
     payload: unknown,
     revision = data?.revision ?? 0,
   ) {
-    if (!editable || opLock.current) return;
+    if (!editable || opLock.current || (kind === "close" && (!ready || !reviewed))) return;
     opLock.current = true;
     setBusy(true);
     setFeedback(undefined);
     try {
+      if (kind === "close") {
+        const fresh = await directory.refetch();
+        if (
+          !fresh.isSuccess ||
+          (fresh.data !== directoryEntries &&
+            JSON.stringify(fresh.data) !== JSON.stringify(directoryEntries))
+        ) {
+          throw Error("O cadastro de VT mudou ou está indisponível. Confira a prévia novamente.");
+        }
+      }
       await writeVtPeriod({ city, period: `${month}-01`, revision }, kind, payload);
       setPreview(null);
       setClosing(false);
@@ -283,18 +341,25 @@ export function VtRevisitas() {
     }
   }
 
-  const counts = [
-    ["O.S. produtivas", summary?.productive],
-    ["Revisitas produtivas", summary?.revisits],
-    [
-      "Taxa de revisita",
-      summary?.productive ? percentage.format(summary.revisits / summary.productive) : "—",
-    ],
-    ["O.S. improdutivas", summary?.improductive],
-    ["Expurgadas", summary?.expunged],
-  ] as const;
+  const counts = vtChartMetrics(chartModel.total);
+  const sheetRows = currentRows.filter((row) => row.sheetClassification).length;
+  const orderDetails = (inCharts = false) => (
+    <VtRevisitasOrders
+      rows={detail}
+      rowLimit={rowLimit}
+      search={search}
+      category={category}
+      inCharts={inCharts}
+      onSearch={(value) => {
+        setSearch(value);
+        setRowLimit(75);
+      }}
+      onCategory={changeOrderMetric}
+      onMore={() => setRowLimit((n) => n + 75)}
+    />
+  );
   return (
-    <section className="space-y-4" aria-label="Revisitas da Visita técnica">
+    <section className="min-w-0 space-y-4" aria-label="Revisitas da Visita técnica">
       <input
         ref={fileInput}
         hidden
@@ -315,7 +380,11 @@ export function VtRevisitas() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" disabled={busy || isFetching} onClick={() => void refresh()}>
+            <Button
+              variant="outline"
+              disabled={busy || isFetching || directory.isFetching}
+              onClick={() => void refresh()}
+            >
               <RefreshCw />
               Atualizar
             </Button>
@@ -375,21 +444,23 @@ export function VtRevisitas() {
               </select>
             </div>
           )}
-          {technicians.length > 0 && (
+          {team.members.length > 0 && (
             <div className="grid min-w-0 gap-1">
               <Label htmlFor="vt-tech">Técnico</Label>
               <select
                 id="vt-tech"
-                className={fieldClass}
-                value={tech}
+                className={`${fieldClass} max-w-full`}
+                value={techLogin}
                 onChange={(e) => {
                   setTech(e.target.value);
                   setRowLimit(75);
                 }}
               >
-                <option value="">Todos os técnicos</option>
-                {technicians.map((name) => (
-                  <option key={nameKey(name)}>{name}</option>
+                <option value="">Todos os técnicos VT</option>
+                {team.members.map(({ login, name }) => (
+                  <option key={login} value={login}>
+                    {name} · {login}
+                  </option>
                 ))}
               </select>
             </div>
@@ -429,6 +500,19 @@ export function VtRevisitas() {
           Carregando a competência selecionada…
         </p>
       )}
+      {!isPending && !error && !directory.isSuccess && (
+        <p role={directory.isError ? "alert" : "status"} className="text-sm text-muted-foreground">
+          {directory.isError
+            ? "Não foi possível consultar o cadastro de Visita técnica. Clique em Atualizar para tentar novamente."
+            : "Carregando os logins VT do cadastro de Supervisores…"}
+        </p>
+      )}
+      {directory.isSuccess && !closed && team.members.length === 0 && (
+        <p role="status" className="text-sm text-muted-foreground">
+          Nenhum login de Visita técnica cadastrado em {VT_CITIES[city]}. Confira o setor e a cidade
+          em Técnico Certificado → Supervisores.
+        </p>
+      )}
       {!error && !isPending && (
         <Tabs value={view} onValueChange={(value) => setView(value as View)}>
           <TabsList className="h-auto max-w-full flex-wrap justify-start gap-1">
@@ -453,7 +537,7 @@ export function VtRevisitas() {
               Pagamentos
             </TabsTrigger>
           </TabsList>
-          {(view === "orders" || view === "charts") && (
+          {directory.isSuccess && (view === "orders" || view === "charts") && (
             <>
               <div className="mt-4 flex flex-wrap items-end gap-3">
                 <div className="grid gap-1">
@@ -462,6 +546,7 @@ export function VtRevisitas() {
                     type="date"
                     id="vt-from"
                     min={`${month}-01`}
+                    max={vtMonthEnd(month)}
                     value={dateFrom}
                     onChange={(e) => {
                       setDateFrom(e.target.value);
@@ -475,6 +560,7 @@ export function VtRevisitas() {
                     type="date"
                     id="vt-to"
                     min={dateFrom || `${month}-01`}
+                    max={vtMonthEnd(month)}
                     value={dateTo}
                     onChange={(e) => {
                       setDateTo(e.target.value);
@@ -486,9 +572,16 @@ export function VtRevisitas() {
                   Limpar filtros
                 </Button>
                 {area && (
-                  <Button size="sm" variant="outline" onClick={() => setArea("")}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setArea(null);
+                      changeOrderMetric("all");
+                    }}
+                  >
                     <MapPin />
-                    {area} · remover
+                    {area.label} · remover
                   </Button>
                 )}
                 {data?.sources.orders && (
@@ -503,145 +596,110 @@ export function VtRevisitas() {
                   A data final deve ser igual ou posterior à inicial.
                 </p>
               )}
-              <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
-                {counts.map(([label, value]) => (
-                  <div className="rounded-xl border border-border bg-card p-4" key={label}>
-                    <p className="text-xs font-medium text-muted-foreground">{label}</p>
-                    <strong className="mt-1 block text-2xl tabular-nums">
-                      {typeof value === "number" ? number.format(value) : (value ?? "—")}
-                    </strong>
-                  </div>
-                ))}
+              <div
+                data-vt-kpis
+                className="mt-4 grid gap-3"
+                style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 8.25rem), 1fr))" }}
+              >
+                {counts.map(([label, value, metric]) => {
+                  const content = (
+                    <>
+                      <span className="block text-xs font-medium text-muted-foreground">
+                        {label}
+                      </span>
+                      <strong className="mt-1 block text-2xl tabular-nums">
+                        {typeof value === "number" ? number.format(value) : (value ?? "—")}
+                      </strong>
+                    </>
+                  );
+                  if (view !== "orders") {
+                    return (
+                      <div className={`${kpiClass} border-border bg-card`} key={metric}>
+                        {content}
+                      </div>
+                    );
+                  }
+                  const active = orderMetric === metric;
+                  return (
+                    <button
+                      key={metric}
+                      type="button"
+                      className={`${kpiClass} text-left transition-colors hover:border-primary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                        active ? "border-primary bg-primary/10" : "border-border bg-card"
+                      }`}
+                      aria-pressed={active}
+                      title={
+                        metric === "revisit-rate"
+                          ? "Filtrar as revisitas produtivas que compõem a taxa"
+                          : undefined
+                      }
+                      onClick={() => changeOrderMetric(active ? "all" : metric)}
+                    >
+                      {content}
+                    </button>
+                  );
+                })}
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
+                {view === "orders" && "Clique em um indicador para filtrar a tabela. "}
                 Taxa = revisitas produtivas ÷ O.S. produtivas. Expurgadas não somam revisita e podem
                 permanecer na base de produtivas, como no Sheets.
               </p>
+              {classified.length > team.rows.length && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Só O.S. vinculadas à equipe VT entram nos indicadores. As demais podem compor o
+                  histórico de retornos do contrato.
+                </p>
+              )}
+              {team.pending.size > 0 && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {team.pending.size} técnico(s) VT com grafia a confirmar ficam fora dos
+                  indicadores até revisar o vínculo em{" "}
+                  <button type="button" onClick={() => setView("payment")} className="underline">
+                    Pagamentos
+                  </button>
+                  .
+                </p>
+              )}
+              {sheetRows > 0 && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {number.format(sheetRows)} O.S. do recorte com classificação importada do Sheets.
+                  {sheetRows < currentRows.length && " As demais seguem o cálculo por contrato."}
+                </p>
+              )}
             </>
           )}
           <TabsContent value="charts" className="mt-4">
-            <VtRevisitasCharts
-              rows={currentRows}
-              onTechnician={(name) => {
-                setTech(name);
-                setArea("");
-                setCategory("all");
-                setSearch("");
-                setRowLimit(75);
-                setView("orders");
-              }}
-              onArea={(name, day) => {
-                setArea(name);
-                setDateFrom(day);
-                setDateTo(day);
-                setCategory("revisit");
-                setSearch("");
-                setRowLimit(75);
-                setView("orders");
-              }}
-            />
+            {directory.isSuccess && (
+              <VtRevisitasCharts
+                model={chartModel}
+                scope={{
+                  city,
+                  month,
+                  technician: activeTech?.name ?? "",
+                  area: area?.label ?? "",
+                  daysWorked:
+                    selectedPayment?.attendanceIssue === "suggested"
+                      ? null
+                      : (selectedPayment?.days ?? null),
+                }}
+                exportingDisabled={busy || isFetching}
+                detail={activeTech || area ? orderDetails(true) : null}
+                onTechnician={(login) => {
+                  setTech(login);
+                  changeOrderMetric(area ? "revisit" : "all");
+                  setSearch("");
+                }}
+                onArea={(selected) => {
+                  setArea(selected);
+                  changeOrderMetric("revisit");
+                  setSearch("");
+                }}
+              />
+            )}
           </TabsContent>
-          <TabsContent value="orders" className="mt-4 rounded-xl border border-border bg-card">
-            <div className="flex flex-wrap items-end gap-3 p-4">
-              <div className="grid gap-1">
-                <Label htmlFor="vt-search">Buscar O.S., WO, contrato ou bairro</Label>
-                <Input
-                  id="vt-search"
-                  value={search}
-                  onChange={(e) => {
-                    setSearch(e.target.value);
-                    setRowLimit(75);
-                  }}
-                />
-              </div>
-              <div className="grid gap-1">
-                <Label htmlFor="vt-category">Classificação</Label>
-                <select
-                  id="vt-category"
-                  className={fieldClass}
-                  value={category}
-                  onChange={(e) => {
-                    setCategory(e.target.value);
-                    setRowLimit(75);
-                  }}
-                >
-                  <option value="all">Todas</option>
-                  <option value="productive">Produtivas</option>
-                  <option value="revisit">Revisitas produtivas</option>
-                  <option value="improductive">Improdutivas</option>
-                  <option value="expunge">Expurgadas</option>
-                </select>
-              </div>
-              <span className="ml-auto text-xs text-muted-foreground">
-                {number.format(detail.length)} registros
-              </span>
-            </div>
-            {detail.length === 0 ? (
-              <p className="px-4 pb-5 text-sm text-muted-foreground">
-                Nenhuma ordem encontrada para os filtros.
-              </p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-muted/60">
-                    <tr>
-                      {[
-                        "Data",
-                        "Técnico",
-                        "O.S. / WO",
-                        "Contrato",
-                        "Bairro / município",
-                        "Serviço",
-                        "Código",
-                        "Classificação",
-                        "O.S. retorno",
-                      ].map((x) => (
-                        <th key={x} scope="col" className={headerClass}>
-                          {x}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {detail.slice(0, rowLimit).map((r) => (
-                      <tr className="border-b border-border/60" key={r.id}>
-                        <td className={cellClass}>{formatDay(r.day)}</td>
-                        <td className={cellClass}>{r.technician}</td>
-                        <td className={cellClass}>{[r.os, r.wo].filter(Boolean).join(" / ")}</td>
-                        <td className={cellClass}>{r.contract}</td>
-                        <td className={cellClass}>
-                          {r.neighborhood || "—"}
-                          <small className="block text-muted-foreground">{r.municipality}</small>
-                        </td>
-                        <td className={`${cellClass} max-w-60 whitespace-normal`}>
-                          {r.service || "—"}
-                        </td>
-                        <td className={cellClass} title={r.description}>
-                          {r.code}
-                        </td>
-                        <td className={cellClass}>
-                          {r.expunged
-                            ? "Expurgada"
-                            : r.revisited
-                              ? "Revisita produtiva"
-                              : r.improductive
-                                ? "Improdutiva"
-                                : "Produtiva"}
-                        </td>
-                        <td className={cellClass}>{r.returnOs || "—"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            {detail.length > rowLimit && (
-              <div className="p-3">
-                <Button variant="outline" onClick={() => setRowLimit((n) => n + 75)}>
-                  Mostrar mais registros
-                </Button>
-              </div>
-            )}
+          <TabsContent value="orders" className="mt-4">
+            {directory.isSuccess && orderDetails()}
           </TabsContent>
           {(["days", "entries"] as const).map((kind) => (
             <TabsContent
@@ -665,7 +723,7 @@ export function VtRevisitas() {
                   </Button>
                 )}
               </div>
-              {data?.[kind].length ? (
+              {displayedAttendance[kind].length ? (
                 <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead className="bg-muted/60">
@@ -678,23 +736,7 @@ export function VtRevisitas() {
                       </tr>
                     </thead>
                     <tbody>
-                      {data[kind]
-                        .filter((r) => {
-                          if (!tech) return true;
-                          const linkedId =
-                            kind === "days"
-                              ? selectedPayment?.attendance?.dayId
-                              : selectedPayment?.attendance?.entryId;
-                          if (
-                            linkedId &&
-                            selectedPayment?.attendanceIssue !== "suggested" &&
-                            selectedPayment?.attendanceIssue !== "duplicate"
-                          )
-                            return r.id === linkedId;
-                          return (
-                            nameKey(r.technician) === nameKey(tech) || r.login === nameKey(tech)
-                          );
-                        })
+                      {[...displayedAttendance[kind]]
                         .sort((a, b) => a.technician.localeCompare(b.technician, "pt-BR"))
                         .map((r) => (
                           <tr className="border-b border-border/60" key={r.id}>
@@ -710,7 +752,9 @@ export function VtRevisitas() {
                 </div>
               ) : (
                 <p className="px-4 pb-5 text-sm text-muted-foreground">
-                  Nenhum arquivo desse tipo foi importado nesta competência.
+                  {data?.[kind].length
+                    ? "Nenhum registro vinculado à equipe VT no recorte."
+                    : "Nenhum arquivo desse tipo foi importado nesta competência."}
                 </p>
               )}
             </TabsContent>
@@ -725,7 +769,7 @@ export function VtRevisitas() {
                   <p className="mt-1 text-xs text-muted-foreground">
                     {closed
                       ? "Histórico congelado. Os valores não são recalculados."
-                      : "Prévia da competência inteira. O filtro de técnico só muda a visualização."}
+                      : "Prévia dos logins de Visita técnica cadastrados nesta cidade. O filtro de técnico só muda a visualização."}
                   </p>
                 </div>
                 {isAdmin && !closed && (
@@ -749,11 +793,19 @@ export function VtRevisitas() {
               )}
               {!closed && (
                 <p className="mt-2 text-xs text-muted-foreground">
-                  {pendingCount
-                    ? `${pendingCount} técnico(s) com pendências de vínculo ou de dados. Confira as indicações na tabela antes de fechar.`
-                    : ready
-                      ? "Dados completos para revisão."
-                      : "Importe as O.S., os dias trabalhados e a média de entradas antes de fechar."}
+                  {!directory.isSuccess
+                    ? "O fechamento exige acesso ao cadastro de Visita técnica."
+                    : pendingCount
+                      ? `${pendingCount} técnico(s) VT com pendências de vínculo ou de dados. Confira as indicações na tabela antes de fechar.`
+                      : ready
+                        ? "Dados completos para revisão."
+                        : "São necessárias O.S. produtivas, dias e média de entrada dos técnicos VT para fechar."}
+                </p>
+              )}
+              {!closed && hasUnsavedLinks && (
+                <p role="alert" className="mt-2 text-xs text-destructive">
+                  Não foi possível salvar os vínculos neste navegador. As alterações só valem
+                  enquanto esta tela estiver aberta.
                 </p>
               )}
               <details className="mt-3 rounded-lg border border-border p-3">
@@ -820,8 +872,15 @@ export function VtRevisitas() {
                       onChange={(e) => editRules("exception", e.target.value)}
                     >
                       <option value="">Nenhum técnico</option>
-                      {technicians.map((name) => (
-                        <option key={nameKey(name)}>{name}</option>
+                      {closed &&
+                        rules.exception &&
+                        !team.members.some((r) => r.login === rules.exception) && (
+                          <option value={rules.exception}>{rules.exception}</option>
+                        )}
+                      {team.members.map(({ login, name }) => (
+                        <option key={login} value={login}>
+                          {name} · {login}
+                        </option>
                       ))}
                     </select>
                   </label>
@@ -845,7 +904,15 @@ export function VtRevisitas() {
                     type="checkbox"
                     checked={reviewed}
                     onChange={(e) =>
-                      setReviewedRevision(e.target.checked ? (data?.revision ?? null) : null)
+                      setReviewedRevision(
+                        e.target.checked && data
+                          ? {
+                              revision: data.revision,
+                              directoryAt: directory.dataUpdatedAt,
+                              links,
+                            }
+                          : null,
+                      )
                     }
                     disabled={!editable || !ready}
                   />
@@ -853,7 +920,7 @@ export function VtRevisitas() {
                 </label>
               )}
             </section>
-            <section className="overflow-x-auto rounded-xl border border-border bg-card">
+            <section className="min-w-0 rounded-xl border border-border bg-card">
               <div className="flex flex-wrap items-center justify-between gap-2 p-4">
                 <h2 className="font-semibold">Pagamento por técnico</h2>
                 <div className="text-xs text-muted-foreground">
@@ -864,94 +931,108 @@ export function VtRevisitas() {
                 </div>
               </div>
               {visiblePayments.length ? (
-                <table className="w-full">
-                  <thead className="bg-muted/60">
-                    <tr>
-                      {[
-                        "Técnico",
-                        "O.S. produtivas",
-                        "Revisitas",
-                        "Dias",
-                        "Média entrada",
-                        "Base",
-                        "Desconto",
-                        "Bônus",
-                        "Pagamento final",
-                      ].map((x) => (
-                        <th key={x} scope="col" className={headerClass}>
-                          {x}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visiblePayments.map((r) => (
-                      <tr key={nameKey(r.technician)} className="border-b border-border/60">
-                        <td className={cellClass}>
-                          <div>{r.technician}</div>
-                          {r.attendance && (
-                            <div className="mt-1 text-muted-foreground">
-                              {r.attendance.name}
-                              {r.attendance.login && ` · ${r.attendance.login}`}
-                            </div>
-                          )}
-                          {!closed && r.attendanceIssue && (
-                            <p className="mt-1 whitespace-normal text-muted-foreground">
-                              {attendanceNotes[r.attendanceIssue]}
-                            </p>
-                          )}
-                          {!closed && isAdmin && r.attendanceIssue && roster.length > 0 && (
-                            <select
-                              className={`${fieldClass} mt-2 w-full max-w-72 text-xs`}
-                              aria-label={`Vincular ${r.technician}`}
-                              disabled={!editable}
-                              value=""
-                              onChange={(event) => {
-                                if (event.target.value)
-                                  setAttendanceLink(r.technician, event.target.value);
-                              }}
-                            >
-                              <option value="" disabled>
-                                {r.attendanceIssue === "suggested"
-                                  ? "Confirmar cadastro…"
-                                  : "Selecionar cadastro…"}
-                              </option>
-                              {roster.map((person) => (
-                                <option key={person.id} value={person.id}>
-                                  {person.name}
-                                  {person.login && ` · ${person.login}`}
-                                </option>
-                              ))}
-                            </select>
-                          )}
-                          {!closed && isAdmin && links?.has(nameKey(r.technician)) && (
-                            <button
-                              type="button"
-                              disabled={!editable}
-                              className="mt-1 block text-muted-foreground underline disabled:opacity-50"
-                              onClick={() => setAttendanceLink(r.technician, "")}
-                            >
-                              Desfazer vínculo manual
-                            </button>
-                          )}
-                        </td>
-                        <td className={cellClass}>{r.productive}</td>
-                        <td className={cellClass}>{r.revisits}</td>
-                        <td className={cellClass}>{r.days ?? "—"}</td>
-                        <td className={cellClass}>{r.entry === null ? "—" : vtTime(r.entry)}</td>
-                        <td className={cellClass}>{formatMoney(r.base)}</td>
-                        <td className={cellClass}>{formatMoney(r.discount)}</td>
-                        <td className={cellClass}>{formatMoney(r.bonus)}</td>
-                        <td className={`${cellClass} font-bold`}>
-                          {r.total === null ? "Pendente" : formatMoney(r.total)}
-                        </td>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-muted/60">
+                      <tr>
+                        {[
+                          "Técnico",
+                          "O.S. produtivas",
+                          "Revisitas",
+                          "Dias",
+                          "Média entrada",
+                          "Base",
+                          "Desconto",
+                          "Bônus",
+                          "Pagamento final",
+                        ].map((x) => (
+                          <th key={x} scope="col" className={headerClass}>
+                            {x}
+                          </th>
+                        ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {visiblePayments.map((r) => (
+                        <tr
+                          key={r.login ?? nameKey(r.technician)}
+                          className="border-b border-border/60"
+                        >
+                          <td className="min-w-48 max-w-[21rem] px-3 py-2.5 text-xs">
+                            <div>{r.technician}</div>
+                            {r.attendance && (
+                              <div className="mt-1 text-muted-foreground">
+                                {r.attendance.name === r.technician
+                                  ? r.attendance.login
+                                  : [r.attendance.name, r.attendance.login]
+                                      .filter(Boolean)
+                                      .join(" · ")}
+                              </div>
+                            )}
+                            {!closed && r.attendanceIssue && (
+                              <p className="mt-1 whitespace-normal text-muted-foreground">
+                                {attendanceNotes[r.attendanceIssue]}
+                              </p>
+                            )}
+                            {!closed && isAdmin && r.login && (
+                              <>
+                                {[...(team.pending.get(r.login)?.values() ?? [])].map((alias) => (
+                                  <label
+                                    key={nameKey(alias)}
+                                    className="mt-2 block text-muted-foreground"
+                                  >
+                                    Nome na O.S.: {alias}
+                                    <select
+                                      className={`${fieldClass} mt-1 block w-full max-w-72 text-xs`}
+                                      aria-label={`Vincular ${alias}`}
+                                      disabled={!editable}
+                                      value=""
+                                      onChange={(event) => {
+                                        if (event.target.value)
+                                          setAttendanceLink(alias, event.target.value);
+                                      }}
+                                    >
+                                      <option value="" disabled>
+                                        Confirmar cadastro VT…
+                                      </option>
+                                      <option value={`LOGIN:${r.login}`}>
+                                        {r.technician} · {r.login}
+                                      </option>
+                                    </select>
+                                  </label>
+                                ))}
+                                {[...(team.confirmed.get(r.login)?.values() ?? [])].map((alias) => (
+                                  <button
+                                    key={nameKey(alias)}
+                                    type="button"
+                                    disabled={!editable}
+                                    className="mt-1 block text-muted-foreground underline disabled:opacity-50"
+                                    onClick={() => setAttendanceLink(alias, "")}
+                                  >
+                                    Desfazer vínculo: {alias}
+                                  </button>
+                                ))}
+                              </>
+                            )}
+                          </td>
+                          <td className={cellClass}>{r.productive}</td>
+                          <td className={cellClass}>{r.revisits}</td>
+                          <td className={cellClass}>{r.days ?? "—"}</td>
+                          <td className={cellClass}>{r.entry === null ? "—" : vtTime(r.entry)}</td>
+                          <td className={cellClass}>{formatMoney(r.base)}</td>
+                          <td className={cellClass}>{formatMoney(r.discount)}</td>
+                          <td className={cellClass}>{formatMoney(r.bonus)}</td>
+                          <td className={`${cellClass} font-bold`}>
+                            {r.total === null ? "Pendente" : formatMoney(r.total)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               ) : (
                 <p className="px-4 pb-5 text-sm text-muted-foreground">
-                  Não há técnicos com O.S. produtivas no recorte.
+                  Não há pagamentos de técnicos VT no recorte.
                 </p>
               )}
             </section>
@@ -976,6 +1057,21 @@ export function VtRevisitas() {
                   {preview.duplicates
                     ? `${preview.duplicates} linha(s) idêntica(s) no arquivo foram ignoradas.`
                     : "As chaves existentes serão atualizadas."}
+                  {preview.fromSheet && (
+                    <span className="mt-2 block font-medium text-foreground">
+                      Vamos usar Prod, Improd e Expurgadas do Sheets somente nas O.S. desta cidade e
+                      competência. Nenhuma O.S. de outro período será alterada.
+                    </span>
+                  )}
+                  {preview.pendingLines.length > 0 && (
+                    <span className="mt-2 block font-medium text-foreground">
+                      Sem baixa: {preview.pendingLines.length} linha(s) não serão importadas. Linhas{" "}
+                      {preview.pendingLines.slice(0, 8).join(", ")}
+                      {preview.pendingLines.length > 8 &&
+                        ` e mais ${preview.pendingLines.length - 8}`}
+                      . Reimporte essas ordens quando tiverem baixa na origem.
+                    </span>
+                  )}
                 </>
               )}
             </AlertDialogDescription>

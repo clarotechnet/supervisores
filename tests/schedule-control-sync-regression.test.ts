@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   controlMonthValues,
+  isFutureControlMonth,
   parseControlMonthTab,
   controlMonthFormatting,
+  readControlMonthSource,
 } from "../supabase/functions/_shared/schedule-operational-master";
 import {
   operationalValues,
@@ -119,7 +121,7 @@ describe("regressão da leitura Controle dezembro/janeiro", () => {
     expect(result.changes).toEqual([]);
     expect(result.functionChanges).toEqual([]);
   });
-  it.each(["OTHER EMPLOYEE", "", null, 123, " ANTONIA ELIZIENE "])(
+  it.each(["OTHER EMPLOYEE", "", null, 123, "\nANTONIA ELIZIENE"])(
     "continua rejeitando pessoa desconhecida ou identificação inválida: %s",
     (name) => {
       const rows = reorderedControlRows();
@@ -275,6 +277,93 @@ describe("regressão da leitura Controle dezembro/janeiro", () => {
         },
       },
     });
+  });
+});
+
+describe("troca de equipe somente em competência futura do Controle", () => {
+  const beforeDecember = new Date("2026-12-01T02:59:59Z"); // 30/11, 23:59 em Natal
+  const inDecember = new Date("2026-12-01T03:00:00Z");
+  const outgoing = reorderedPlan.people[0]!;
+
+  function replacementRows() {
+    const rows = reorderedControlRows();
+    rows[4]![0] = "NOVATO 1 ";
+    rows.splice(3, 0, [" NOVATO 2", "CONTROLADOR", "Folga"]);
+    rows.push(["", "", 3, 0], [], ["T. 1"], ["PLANTÃO"]);
+    return rows;
+  }
+
+  it("compara a competência em São Paulo, não a data de uma coluna nem o mês UTC", () => {
+    expect(isFutureControlMonth("2026-12-01", beforeDecember)).toBe(true);
+    expect(isFutureControlMonth("2026-11-01", beforeDecember)).toBe(false);
+    expect(isFutureControlMonth("2026-12-01", inDecember)).toBe(false);
+    expect(isFutureControlMonth("2027-01-01", inDecember)).toBe(true);
+    expect(isFutureControlMonth("2026-99", inDecember)).toBe(false);
+  });
+
+  it("retira a pessoa só da escala futura e cria os novatos sem herdar identidade ou turnos", () => {
+    const rows = replacementRows();
+    // A linha reaproveitada tem uma marcação própria e uma célula em branco.
+    rows[5]![2] = "Folga";
+    rows[5]![3] = "";
+    const previous = structuredClone(reorderedPlan);
+    previous.people[0]!.login = "LOGIN-ANTIGO";
+    const result = parseControlMonthTab(rows, previous, previous, "2026-12", {
+      allowFutureRemoval: true,
+      now: beforeDecember,
+    });
+    expect(result.removedPeople).toEqual([previous.people[0]]);
+    expect(result.addedPeople.map((person) => person.name)).toEqual(["NOVATO 2", "NOVATO 1"]);
+    expect(result.addedPeople[1]).toMatchObject({
+      login: "",
+      assignments: { "2026-12-01": "Folga", "2026-12-02": "" },
+    });
+    expect(result.changes.filter((change) => change.employee_name === "NOVATO 1")).toEqual([
+      expect.objectContaining({ previous_code: "", planned_code: "", current_code: "Folga" }),
+    ]);
+    expect(result.payload.people.some((person) => person.name === outgoing.name)).toBe(false);
+    expect(previous.people[0]!.assignments["2026-12-02"]).toBe("Folga");
+
+    const persisted = { removedRosterNames: [outgoing.name], now: inDecember };
+    const next = parseControlMonthTab(rows, previous, result.payload, "2026-12", persisted);
+    expect(next.payload).toEqual(result.payload);
+    expect(next.removedPeople).toEqual([]);
+    expect(next.addedPeople).toEqual([]);
+    expect(next.changes).toEqual([]);
+    expect(
+      readControlMonthSource(rows, previous, result.payload, "2026-12", persisted).payload,
+    ).toEqual(result.payload);
+  });
+
+  it("bloqueia a retirada em mês já iniciado e também em leitura sem sincronização explícita", () => {
+    const rows = replacementRows();
+    expect(() =>
+      parseControlMonthTab(rows, reorderedPlan, reorderedPlan, "2026-12", {
+        allowFutureRemoval: true,
+        now: inDecember,
+      }),
+    ).toThrow(outgoing.name);
+    expect(() =>
+      parseControlMonthTab(rows, reorderedPlan, reorderedPlan, "2026-12", {
+        now: beforeDecember,
+      }),
+    ).toThrow(outgoing.name);
+  });
+
+  it("admite retirar sem substituto, mas não aceita apagar todos os nomes nem criar duplicata com espaço", () => {
+    const rows = reorderedControlRows();
+    const options = { allowFutureRemoval: true, now: beforeDecember };
+    expect(
+      parseControlMonthTab(rows.slice(0, -1), reorderedPlan, reorderedPlan, "2026-12", options)
+        .removedPeople,
+    ).toEqual([outgoing]);
+    expect(() =>
+      parseControlMonthTab(rows.slice(0, 2), reorderedPlan, reorderedPlan, "2026-12", options),
+    ).toThrow("Quantidade de colaboradores");
+    rows[4]![0] = " MATHEUS FREITAS ";
+    expect(() =>
+      parseControlMonthTab(rows, reorderedPlan, reorderedPlan, "2026-12", options),
+    ).toThrow("Identificação duplicada");
   });
 });
 

@@ -47,6 +47,10 @@ export function createClient(..._args: unknown[]): any {
           mock.mutationCalls.push({ table, operation: "update", values });
           return builder;
         },
+        upsert: (values: unknown) => {
+          mock.mutationCalls.push({ table, operation: "upsert", values });
+          return builder;
+        },
         single: () => Promise.resolve({ data: { id: "audit-fixture" }, error: mock.auditError }),
         then: (resolve: (value: unknown) => unknown) =>
           Promise.resolve({ data: null, error: mock.queryError }).then(resolve),

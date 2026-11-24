@@ -128,6 +128,7 @@ async function invoke(
     tab?: string;
     changes?: number;
     addedPeople?: number;
+    removedPeople?: number;
     auditedLogged?: boolean;
     auditLogged?: boolean;
     syncedAt?: string;

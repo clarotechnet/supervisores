@@ -8,6 +8,7 @@ import {
   extractQualityHtml,
   qualityErrorMessage,
   type QualityKind,
+  type QualityRecord,
   type QualitySnapshot,
   type CertificationKind,
   type QualityRegistry,
@@ -97,6 +98,7 @@ export function QualityDashboard({
     name: string,
     base: QualityState = saved.current,
     changed?: boolean,
+    changedRecords?: QualityRecord[],
   ) {
     if (!profile || !isAdmin) throw Error("Somente gestores podem importar dados.");
     if (!(changed ?? qualitySnapshotChanged(kind, base.datasets[kind], snapshot))) return false;
@@ -107,7 +109,9 @@ export function QualityDashboard({
       profile.id,
       base.imports[kind]?.id ?? null,
       setProgress,
+      changedRecords,
     );
+    if (manifest.id === base.imports[kind]?.id) return false;
     const next = {
       ...saved.current,
       datasets: { ...saved.current.datasets, [kind]: snapshot },
@@ -188,10 +192,12 @@ export function QualityDashboard({
           saved: await commit("quebra", qq, file.name),
         });
         const oldTC = saved.current.datasets.certification;
+        const changedRecords: QualityRecord[] = [];
         const tMerge = mergeQualityRecords(
           "certification",
           oldTC?.records ?? [],
           parseTC(seed.certificationCsv, file.name, seed.certificationMetadata),
+          (record) => changedRecords.push(record),
         );
         const tc = {
           ...seed.certificationMetadata,
@@ -202,7 +208,14 @@ export function QualityDashboard({
           kind: "certification",
           file: file.name,
           report: tMerge.report,
-          saved: await commit("certification", tc, file.name),
+          saved: await commit(
+            "certification",
+            tc,
+            file.name,
+            saved.current,
+            undefined,
+            changedRecords,
+          ),
         });
         if (loading.directory.isSuccess) {
           const historical = legacyDirectory({
@@ -234,13 +247,18 @@ export function QualityDashboard({
                   }[stage],
                 ),
               );
-        setImportStage("Enviando e publicando os blocos no banco…");
+        setImportStage(
+          kind === "certification"
+            ? "Gravando apenas os atendimentos novos ou alterados…"
+            : "Enviando e publicando os blocos no banco…",
+        );
         const stored = await commit(
           kind,
           result.snapshot,
           file.name,
           fresh,
           "changed" in result ? (result.changed as boolean) : undefined,
+          result.changedRecords,
         );
         if (!stored) loading.cacheState(fresh);
         summaries.push({ kind, file: file.name, report: result.report, saved: stored });

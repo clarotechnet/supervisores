@@ -17,8 +17,8 @@ desempenho; não são a validação que devolve esse 409.
   da escala. Uma extensão real continua exigindo datas consecutivas, até 42 dias.
 - Uma nova linha com Nome e Função válidos é importada no Controle RN. Dias vazios
   ficam vazios; o sistema não inventa marcações. As linhas podem estar reordenadas.
-- Pessoas existentes não são removidas, renomeadas ou duplicadas silenciosamente.
-  Isso inclui pessoas adicionadas em sincronizações anteriores.
+- Uma atualização comum nunca duplica colaboradores nem troca o login de quem permanece.
+  Retiradas de uma competência futura seguem a regra específica abaixo.
 - As inclusões atualizam a escala oficial vinculada e suas contagens na mesma
   transação que registra o histórico. O planejamento e a versão original ficam
   intactos. Repetir a atualização não duplica a inclusão ou seus eventos.
@@ -55,6 +55,29 @@ Nenhuma célula do Sheets ou escala real foi alterada durante os testes.
 
 Apenas ignorar os resumos não exige SQL novo; importar pessoas novas exige a
 migration acima. Sem ela, a API mostra a orientação e não grava parcialmente.
+
+## Mudanças de equipe em competências futuras
+
+No Controle RN, **Atualizar via API** pode retirar da escala futura um colaborador
+ausente da aba e incluir outro com Nome e Função válidos. A competência comparada é a
+selecionada, pelo horário de São Paulo; dias do mês anterior exibidos na borda da
+grade não antecipam o fechamento. No primeiro dia da competência, e daí em diante,
+uma linha ausente não retira ninguém. As inclusões já suportadas continuam válidas.
+
+O novato tem identidade própria e recebe somente as marcações da sua linha. Um
+espaço no início ou fim do nome é ignorado; nomes duplicados continuam bloqueados.
+A saída vale só para a aba da competência sincronizada. Ela não exclui cadastro,
+não transfere histórico e não apaga as escalas anteriores, o planejamento original
+ou a auditoria. Uma nova sincronização não exige a volta de quem já saiu.
+
+Para ativar, aplicar especificamente a migration
+`20261124143651_schedule_controle_equipe_competencia_futura.sql` depois da
+`20261030191159_schedule_control_roster_sync.sql`, e publicar `schedule-operational`
+e `schedule-edit`. O frontend atualizado exibe contagens de entradas e saídas.
+A migration não roda nenhuma sincronização e não escreve no Sheets.
+
+O contrato SQL também pode ser testado em PostgreSQL em memória com
+`node scripts/test-schedule-publication.mjs --pglite <pasta-absoluta-do-PGlite>`.
 
 ## Validação local
 

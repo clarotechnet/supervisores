@@ -13,6 +13,7 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { ScheduleOfficialEditDialog } from "@/components/ScheduleOfficialEditDialog";
+import { ScheduleToaDialog } from "@/components/ScheduleToaDialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import {
@@ -161,6 +162,7 @@ function SchedulesPage() {
   const onDutyOnly = dutyScope !== null;
   const [dutyDateChoice, setDutyDateChoice] = useState("");
   const [importOpen, setImportOpen] = useState(false);
+  const [toaOpen, setToaOpen] = useState(false);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [generatorOpen, setGeneratorOpen] = useState(false);
   const [operationalOpen, setOperationalOpen] = useState(false);
@@ -188,6 +190,7 @@ function SchedulesPage() {
     setOfficialEditOpen(false);
     setDeleteMonthOpen(false);
     setImportOpen(false);
+    setToaOpen(false);
     setSelectedPersonNames([]);
     setDateNotes([]);
   }, [scopeAccess.allowed]);
@@ -348,12 +351,14 @@ function SchedulesPage() {
         setOperationalRefreshKey((x) => x + 1);
         await loadSummaries();
         toast.success(
-          result.addedPeople
-            ? result.addedPeople +
+          result.removedPeople
+            ? `${result.addedPeople ?? 0} incluído(s) e ${result.removedPeople} retirado(s) desta escala. Competências anteriores preservadas.`
+            : result.addedPeople
+              ? result.addedPeople +
                 " novo(s) colaborador(es) incluído(s). Escala atualizada pelo Google Sheets."
-            : result.changes
-              ? result.changes + " alteração(ões) recebida(s) do Google Sheets editável."
-              : "Escala editável já está atualizada. Nenhuma mudança nova.",
+              : result.changes
+                ? result.changes + " alteração(ões) recebida(s) do Google Sheets editável."
+                : "Escala editável já está atualizada. Nenhuma mudança nova.",
         );
         return;
       }
@@ -598,6 +603,18 @@ function SchedulesPage() {
                         {exportingReport ? "Gerando relatório..." : "Relatório Excel"}
                       </DropdownMenuItem>
                       <DropdownMenuItem
+                        disabled={
+                          !scopeAccess.allowed ||
+                          loadingSchedule ||
+                          !schedule ||
+                          schedule.id !== selectedSummaryId
+                        }
+                        onSelect={() => setToaOpen(true)}
+                      >
+                        <FileSpreadsheet className="size-4" />
+                        Gerar compilado TOA
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
                         disabled={syncingSheets || exportingReport}
                         onSelect={() => setImportOpen(true)}
                       >
@@ -757,6 +774,17 @@ function SchedulesPage() {
           onOpenNote={openDateNote}
         />
       )}
+      {canManageSchedules &&
+        scopeAccess.allowed &&
+        schedule &&
+        schedule.id === selectedSummaryId && (
+          <ScheduleToaDialog
+            key={schedule.id}
+            schedule={schedule}
+            open={toaOpen}
+            onOpenChange={setToaOpen}
+          />
+        )}
 
       {isAdmin && (
         <ScheduleMonthDeleteDialog

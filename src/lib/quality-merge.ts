@@ -14,6 +14,7 @@ export interface QualityMergeReport {
 export interface QualityImportResult {
   snapshot: QualitySnapshot;
   report: QualityMergeReport;
+  changedRecords?: QualityRecord[];
 }
 
 function comparable(kind: QualityKind, record: QualityRecord): QualityRecord {
@@ -29,6 +30,7 @@ export function mergeQualityRecords(
   kind: QualityKind,
   current: QualityRecord[],
   incoming: QualityRecord[],
+  onChange?: (record: QualityRecord) => void,
 ): { records: QualityRecord[]; report: QualityMergeReport } {
   const key = (row: QualityRecord) =>
     kind === "quebra" ? qqAgendaKey(row as QQRecord) : tcRowKey(row as TCRecord);
@@ -46,12 +48,14 @@ export function mergeQualityRecords(
     if (!previous) {
       rows.set(id, row);
       added++;
+      onChange?.(row);
     } else {
       const merged = { ...previous, ...row };
       if (qqSameValue(comparable(kind, previous), comparable(kind, merged))) unchanged++;
       else {
         rows.set(id, merged);
         updated++;
+        onChange?.(merged);
       }
     }
   }

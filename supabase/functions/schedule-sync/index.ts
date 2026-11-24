@@ -86,7 +86,7 @@ Deno.serve(async (request) => {
       });
     }
 
-    const merged = mergeSheets(parsedSheets);
+    const merged = mergeSheets(parsedSheets, { city, sector: frontSlug });
     const sourceSheet = parsedSheets
       .map((item) => item.title)
       .join(" | ")
