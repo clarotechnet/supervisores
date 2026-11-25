@@ -35,6 +35,8 @@ Nunca inclua cliente, telefone ou endereço residencial nas bases auxiliares.
 
 Os códigos de baixa 0 (cancelamento) e 1 (revisita cancelada) ficam em O.S. canceladas. Entram no total do recorte, mas não em produtivas, improdutivas, revisitas produtivas ou expurgadas. Nos XLSX sem classificação do Sheets, 570, 203, 204 e 112 entram em expurgo automático apenas quando há uma próxima O.S. do mesmo contrato. O expurgo também considera limpeza de ruído indoor na O.S. ou na próxima e revisita cancelada na próxima. Sem expurgo, os códigos até 400 são improdutivos. O retorno é procurado por contrato e data, não pela posição física da linha. Nas O.S. conferidas pelo XLSX do Sheets, a classificação de origem vale para os totais e pagamentos. A taxa divide revisitas produtivas pelas O.S. produtivas. O cálculo do pagamento não usa `QT_REVISITA` nem os pontos do Técnico Certificado.
 
+**Manutenção preventiva indoor I** não é marcada como revisita nem gera revisita para outra O.S., qualquer que seja o código de baixa. A preventiva não impede um retorno válido posterior na mesma janela. Se ela for o único retorno na janela, não conta como revisita mesmo quando o XLSX tiver `Prod = 1`. A regra não muda a classificação de produtividade, cancelamento ou expurgo.
+
 Revise as regras para a cidade e competência. A prévia de pagamentos sempre usa o mês inteiro: filtros de técnico, bairro ou data não reduzem o fechamento. O fechamento exige as três bases e os dados de pagamento completos para os técnicos elegíveis. Guarda regras e valores do momento em uma cópia que não pode ser alterada pelo aplicativo. Importar ou fechar exige um administrador ativo; o banco também valida permissão, revisão e imutabilidade.
 
 ## Ativação
