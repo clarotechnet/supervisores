@@ -243,6 +243,52 @@ describe("Revisitas VT", () => {
     expect(rows.find((r) => r.os === "3")).toMatchObject({ productive: true, revisited: false });
     expect(vtSummaries(rows, () => "Total")[0]).toMatchObject({ productive: 4, revisits: 1 });
   });
+  it.each([516, 302, 570, 0, 1])(
+    "não usa manutenção preventiva indoor I como retorno com baixa %i",
+    (code) => {
+      const original = order("original", "2026-11-13", 516);
+      const preventive = order("preventiva", "2026-11-16", code, "C1", {
+        service: "  Manutenção Preventiva  Indoor I  ",
+      });
+      const rows = classifyVtOrders([preventive, original]);
+      expect(rows.find((r) => r.os === original.os)).toMatchObject({
+        productive: true,
+        revisited: false,
+        returnOs: "",
+      });
+      expect(rows.find((r) => r.os === preventive.os)).toMatchObject({
+        productive: code > 400,
+        improductive: code === 302,
+        cancelled: code === 0 || code === 1,
+        revisited: false,
+      });
+    },
+  );
+  it("ignora a preventiva no vínculo mesmo quando o XLSX marcou a original como revisitada", () => {
+    const rows = classifyVtOrders([
+      order("original", "2026-11-13", 516, "C1", {
+        sheetClassification: { improductive: false, revisited: true, expunged: false },
+      }),
+      order("preventiva", "2026-11-16", 516, "C1", {
+        service: "MANUTENCAO PREVENTIVA INDOOR I",
+      }),
+    ]);
+    expect(vtSummaries(rows, () => "Total")[0]).toMatchObject({ productive: 2, revisits: 0 });
+    expect(rows.find((r) => r.os === "original")?.returnOs).toBe("");
+  });
+  it("preserva um retorno técnico válido depois de uma preventiva sem contá-lo duas vezes", () => {
+    const rows = classifyVtOrders([
+      order("retorno", "2026-11-17", 516),
+      order("preventiva", "2026-11-16", 516, "C1", {
+        service: "MANUTENCAO PREVENTIVA INDOOR I",
+      }),
+      order("original", "2026-11-13", 516),
+    ]);
+    expect(rows.filter((r) => r.revisited).map((r) => [r.os, r.returnOs])).toEqual([
+      ["original", "retorno"],
+    ]);
+    expect(vtSummaries(rows, () => "Total")[0]).toMatchObject({ productive: 3, revisits: 1 });
+  });
   it("considera 400 improdutivo, expurgo entra no volume e retorno improdutivo não conta", () => {
     const rows = classifyVtOrders([
       order("1", "2026-11-01", 400, "BOUND"),

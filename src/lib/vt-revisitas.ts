@@ -470,6 +470,14 @@ export function vtArea(order: VtOrder): string {
 
 const expungeWithFollowup = new Set([570, 203, 204, 112]);
 const noiseRemoval = (order: VtOrder) => nameKey(order.service) === "LIMPEZA DE RUIDO INDOOR";
+const isPreventiveIndoor = (order: VtOrder) =>
+  nameKey(order.service) === "MANUTENCAO PREVENTIVA INDOOR I";
+
+function inVtRevisitWindow(day: string, followupDay?: string) {
+  if (!followupDay || followupDay.slice(0, 7) !== day.slice(0, 7)) return false;
+  const gap = (Date.parse(followupDay) - Date.parse(day)) / 86400000;
+  return gap > 0 && gap <= 9;
+}
 
 /** Preserves the Sheets thresholds, but matches subsequent visits by contract and timestamp. */
 export function classifyVtOrders(orders: readonly VtOrder[]): VtClassified[] {
@@ -503,23 +511,38 @@ export function classifyVtOrders(orders: readonly VtOrder[]): VtClassified[] {
       const improductive = !cancelled && (sheet?.improductive ?? (!expunged && order.code <= 400));
       return { cancelled, expunged, improductive, productive: !cancelled && !improductive };
     });
+    // Preserve the full sequence for productivity and expurgo; skip preventive visits only for revisits.
+    const preventive = list.map(isPreventiveIndoor);
+    const nextForRevisit = new Array<number>(list.length + 1).fill(list.length);
+    for (let i = list.length - 1; i >= 0; i--) {
+      nextForRevisit[i] = preventive[i + 1] ? nextForRevisit[i + 1]! : i + 1;
+    }
     list.forEach((order, i) => {
       const outcome = outcomes[i]!;
-      const next = list[i + 1];
-      const gap = next ? (Date.parse(next.day) - Date.parse(order.day)) / 86400000 : Infinity;
-      const inWindow =
-        !!next && gap > 0 && gap <= 9 && next.day.slice(0, 7) === order.day.slice(0, 7);
+      const nextIndex = nextForRevisit[i]!;
+      const next = list[nextIndex];
+      const inWindow = inVtRevisitWindow(order.day, next?.day);
       const automatic = Boolean(
         order.code >= 400 &&
         inWindow &&
         nameKey(order.description) !== "CANCELAMENTO" &&
-        outcomes[i + 1]?.productive &&
-        (outcomes[i + 2]?.productive ?? true),
+        outcomes[nextIndex]?.productive &&
+        (outcomes[nextForRevisit[nextIndex]!]?.productive ?? true),
       );
+      const sheetRevisit = order.sheetClassification?.revisited;
+      const onlyPreventiveReturn =
+        sheetRevisit === true &&
+        !preventive[i] &&
+        !inWindow &&
+        list
+          .slice(i + 1, nextIndex)
+          .some((following) => inVtRevisitWindow(order.day, following.day));
       const revisited =
         outcome.productive &&
         !outcome.expunged &&
-        (order.sheetClassification?.revisited ?? automatic);
+        !preventive[i] &&
+        !onlyPreventiveReturn &&
+        (sheetRevisit ?? automatic);
       records.push({
         ...order,
         ...outcome,
