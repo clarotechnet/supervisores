@@ -6,12 +6,88 @@ import {
   type VtImportKind,
 } from "./vt-revisitas";
 
+const SPREADSHEET_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+const UNREADABLE_XLSX =
+  "Não foi possível ler o arquivo. Abra-o no Excel e salve como Pasta de Trabalho do Excel (.xlsx).";
+const isSpreadsheetPart = (path: string) =>
+  /^xl\/(?:workbook|sharedStrings|styles|worksheets\/sheet\d+)\.xml$/.test(path);
+
+function unprefixSpreadsheetXml(xml: string) {
+  const root =
+    /^(?:\s*<\?xml\b[^?]*\?>)?\s*<([A-Za-z_][\w.-]*):(?:workbook|worksheet|styleSheet|sst)(?=[\s/>])([^<>]*)>/.exec(
+      xml,
+    );
+  if (!root) return undefined;
+  const [, prefix, attributes = ""] = root;
+  const namespaces = new Map(
+    [...attributes.matchAll(/\s+(xmlns(?::[\w.-]+)?)\s*=\s*(["'])([^]*?)\2/g)].map(
+      ([, key, , value]) => [key, value],
+    ),
+  );
+  const defaultNamespace = namespaces.get("xmlns");
+  if (
+    namespaces.get(`xmlns:${prefix}`) !== SPREADSHEET_NS ||
+    (defaultNamespace !== undefined && defaultNamespace !== SPREADSHEET_NS)
+  )
+    return undefined;
+  let needsDefault = defaultNamespace === undefined;
+  // ExcelJS looks up bare tag names. Keep text, attributes and other namespaces intact.
+  return xml.replace(
+    /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<(\/?)([A-Za-z_][\w.-]*):([A-Za-z_][\w.-]*)(?=[\s/>])/g,
+    (tag, close: string, namespace: string, name: string) => {
+      if (prefix !== namespace) return tag;
+      const declaration = needsDefault ? ` xmlns="${SPREADSHEET_NS}"` : "";
+      needsDefault = false;
+      return `<${close}${name}${declaration}`;
+    },
+  );
+}
+
+async function normalizePrefixedXlsx(bytes: ArrayBuffer) {
+  const { strFromU8, strToU8, unzipSync, zipSync } = await import("fflate");
+  const source = new Uint8Array(bytes);
+  let remaining = 128 * 1024 * 1024;
+  const unzipParts = (select: (name: string) => boolean) =>
+    unzipSync(source, {
+      filter: ({ name, originalSize }) => {
+        if (!select(name)) return false;
+        remaining -= originalSize;
+        if (remaining < 0) throw Error("O XLSX excede o limite de descompactação.");
+        return true;
+      },
+    });
+  const main = unzipParts(isSpreadsheetPart);
+  let changed = false;
+  for (const [path, part] of Object.entries(main)) {
+    const xml = unprefixSpreadsheetXml(strFromU8(part));
+    if (xml !== undefined) {
+      main[path] = strToU8(xml);
+      changed = true;
+    }
+  }
+  if (!changed) return undefined;
+  const other = unzipParts((path) => !isSpreadsheetPart(path));
+  return zipSync({ ...other, ...main }, { level: 1 }).buffer;
+}
+
 export async function readVtWorkbook(file: File, kind: VtImportKind, city: VtCity, month: string) {
   if (!/\.xlsx$/i.test(file.name) || file.size > 16 * 1024 * 1024)
     throw Error("Selecione um arquivo XLSX de até 16 MB.");
   const { default: ExcelJS } = await import("exceljs");
-  const book = new ExcelJS.Workbook();
-  await book.xlsx.load(await file.arrayBuffer());
+  const bytes = await file.arrayBuffer();
+  let book = new ExcelJS.Workbook();
+  try {
+    await book.xlsx.load(bytes);
+  } catch (originalError) {
+    try {
+      const compatible = await normalizePrefixedXlsx(bytes);
+      if (!compatible) throw originalError;
+      book = new ExcelJS.Workbook();
+      await book.xlsx.load(compatible);
+    } catch (cause) {
+      throw new Error(UNREADABLE_XLSX, { cause });
+    }
+  }
   const candidates = book.worksheets
     .filter((sheet) => sheet.actualRowCount >= 2)
     .map((sheet) => {

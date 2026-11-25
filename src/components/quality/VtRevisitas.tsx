@@ -30,10 +30,10 @@ import { useVtAttendanceLinks } from "@/hooks/useVtAttendanceLinks";
 import { nameKey, type QualityLogin } from "@/lib/quality-directory";
 import {
   classifyVtOrders,
+  prepareVtOrderImport,
   VT_CITIES,
   VT_IMPORT_LABELS,
   VT_SHEET_RULES,
-  vtOrderKey,
   vtOrderMatchesCategory,
   vtSeconds,
   vtTeamPayments,
@@ -85,6 +85,7 @@ type Preview = {
   pendingLines: number[];
   fromSheet: boolean;
   newRows: number;
+  retainedClassifications: number;
   revision: number;
 };
 type View = "orders" | "charts" | "days" | "entries" | "payment";
@@ -272,21 +273,25 @@ export function VtRevisitas() {
     setFeedback(undefined);
     try {
       const imported = await readVtWorkbook(file, kind, city, month);
-      const { rows, duplicates, pendingLines } = imported;
-      // Periods imported before the change can still have the original (O.S.-only) IDs.
-      const ids = new Set(
-        imported.kind === "orders"
-          ? orders.map(vtOrderKey)
-          : (data?.[imported.kind] ?? []).map((row) => row.id),
-      );
+      const { duplicates, pendingLines } = imported;
+      let prepared: Pick<Preview, "rows" | "newRows" | "retainedClassifications">;
+      if (imported.kind === "orders") {
+        prepared = prepareVtOrderImport(orders, imported.rows);
+      } else {
+        const ids = new Set(data?.[imported.kind]?.map((row) => row.id));
+        prepared = {
+          rows: imported.rows,
+          newRows: imported.rows.filter((row) => !ids.has(row.id)).length,
+          retainedClassifications: 0,
+        };
+      }
       setPreview({
+        ...prepared,
         kind,
         file: file.name,
-        rows,
         duplicates,
         pendingLines,
         fromSheet: imported.kind === "orders" && imported.fromSheet,
-        newRows: rows.filter((r) => !ids.has(r.id)).length,
         revision: data?.revision ?? 0,
       });
     } catch (e) {
@@ -1061,6 +1066,12 @@ export function VtRevisitas() {
                     <span className="mt-2 block font-medium text-foreground">
                       Vamos usar Prod, Improd e Expurgadas do Sheets somente nas O.S. desta cidade e
                       competência. Nenhuma O.S. de outro período será alterada.
+                    </span>
+                  )}
+                  {preview.retainedClassifications > 0 && (
+                    <span className="mt-2 block font-medium text-foreground">
+                      O.S. com classificação conferida que será mantida:{" "}
+                      {preview.retainedClassifications}.
                     </span>
                   )}
                   {preview.pendingLines.length > 0 && (

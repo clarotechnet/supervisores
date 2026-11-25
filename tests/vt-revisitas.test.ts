@@ -1,11 +1,13 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 import type { QualityLogin } from "../src/lib/quality-directory";
 import {
   classifyVtOrders,
   parseVtAttendance,
   parseVtOrders,
+  prepareVtOrderImport,
   VT_SHEET_RULES,
   vtDate,
   vtOrderKey,
@@ -409,6 +411,129 @@ describe("Revisitas VT", () => {
       rows: [{ os: "2", sheetClassification: { revisited: false } }],
     });
   }, 20_000);
+  it.each([
+    ["Fortaleza", "fortaleza"],
+    ["Natal", "natal"],
+    ["Parnamirim", "natal"],
+  ] as const)(
+    "lê o XLSX com namespace prefixado para %s sem mudar a classificação",
+    async (municipality, city) => {
+      const { default: ExcelJS } = await import("exceljs");
+      const book = new ExcelJS.Workbook();
+      book.addWorksheet("Revisitas Imperium 2.0").addRows([
+        [...heading, "Mês", "Equipe", "Prod", "Improd", "Expurgadas"],
+        [
+          ...line("2", municipality, new Date("2026-11-12T00:00:00Z")),
+          "novembro 26",
+          "VT",
+          { formula: "0", result: 0 },
+          1,
+          0,
+        ],
+      ]);
+      const bytes = new Uint8Array(await book.xlsx.writeBuffer());
+      const parts = unzipSync(bytes);
+      for (const name of [
+        "xl/workbook.xml",
+        "xl/styles.xml",
+        "xl/sharedStrings.xml",
+        "xl/worksheets/sheet1.xml",
+      ]) {
+        parts[name] = strToU8(
+          strFromU8(parts[name]!)
+            .replace(
+              'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"',
+              'xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"',
+            )
+            .replace(/<(\/?)([\w.-]+)(?=[\s/>])/g, "<$1x:$2"),
+        );
+      }
+      const read = (data: Uint8Array) =>
+        readVtWorkbook(
+          new File([Uint8Array.from(data)], "revisitas.xlsx"),
+          "orders",
+          city,
+          "2026-11",
+        );
+      const ordinary = await read(bytes);
+      expect(ordinary).toMatchObject({
+        kind: "orders",
+        fromSheet: true,
+        rows: [
+          {
+            os: "2",
+            day: "2026-11-12",
+            sheetClassification: { revisited: false, improductive: true, expunged: false },
+          },
+        ],
+      });
+      await expect(read(zipSync(parts))).resolves.toStrictEqual(ordinary);
+    },
+  );
+  it.each(["FORTALEZA", "NATAL", "PARNAMIRIM"])(
+    "mantém a O.S. conferida como improdutiva ao reimportar o relatório bruto de %s",
+    (municipality) => {
+      const raw = order("1", "2026-11-12", 203, "C1", { municipality });
+      const checked = {
+        ...raw,
+        sheetClassification: { revisited: false, improductive: true, expunged: false },
+      };
+      const cancelled = order("2", "2026-11-13", 0, "C1", { municipality });
+      const effectiveVisit = order("3", "2026-11-23", 505, "C1", { municipality });
+      const prepared = prepareVtOrderImport([checked], [raw, cancelled, effectiveVisit]);
+      expect(prepared).toMatchObject({ newRows: 2, retainedClassifications: 1 });
+      expect(prepared.rows[0]?.sheetClassification).toEqual(checked.sheetClassification);
+      const rows = classifyVtOrders(prepared.rows);
+      expect(rows.find((r) => r.os === raw.os)).toMatchObject({
+        productive: false,
+        improductive: true,
+        expunged: false,
+      });
+      expect(vtSummaries(rows, () => "Total")[0]).toMatchObject({
+        productive: 1,
+        improductive: 1,
+        cancelled: 1,
+        expunged: 0,
+      });
+    },
+  );
+  it("aceita nova classificação do Sheets e não reaproveita uma conferência de outra baixa", () => {
+    const raw = order("1", "2026-11-12", 204);
+    const previous = {
+      ...raw,
+      sheetClassification: { revisited: false, improductive: true, expunged: false },
+    };
+    const correction = {
+      ...raw,
+      sheetClassification: { revisited: false, improductive: false, expunged: true },
+    };
+    expect(prepareVtOrderImport([previous], [correction])).toEqual({
+      rows: [correction],
+      newRows: 0,
+      retainedClassifications: 0,
+    });
+    for (const changed of [
+      { ...raw, code: 505 },
+      { ...raw, contract: "C2" },
+    ]) {
+      expect(prepareVtOrderImport([previous], [changed])).toEqual({
+        rows: [changed],
+        newRows: 0,
+        retainedClassifications: 0,
+      });
+    }
+    const otherAttendance = { ...raw, wo: "WO2" };
+    expect(prepareVtOrderImport([previous], [otherAttendance])).toEqual({
+      rows: [otherAttendance],
+      newRows: 1,
+      retainedClassifications: 0,
+    });
+  });
+  it("avisa em português quando o arquivo não pode ser lido como XLSX", async () => {
+    await expect(
+      readVtWorkbook(new File(["inválido"], "revisitas.xlsx"), "orders", "fortaleza", "2026-11"),
+    ).rejects.toThrow(/salve como pasta de trabalho do excel/i);
+  });
   it("interpreta relatórios acumulados e diferencia ausência de zero", () => {
     const matrix = [
       ["Técnico", "Login", "Dias Trabalhados"],
