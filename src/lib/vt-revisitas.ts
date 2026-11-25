@@ -179,6 +179,28 @@ export function vtOrderKey({ os, wo, day }: Pick<VtOrder, "os" | "wo" | "day">) 
   return `OS:${escape(os)}|WO:${escape(wo)}|D:${day}`;
 }
 
+export function prepareVtOrderImport(existing: readonly VtOrder[], incoming: readonly VtOrder[]) {
+  const saved = new Map(existing.map((order) => [vtOrderKey(order), order]));
+  let newRows = 0;
+  let retainedClassifications = 0;
+  const rows = incoming.map((order) => {
+    const previous = saved.get(vtOrderKey(order));
+    if (!previous) newRows++;
+    if (
+      order.sheetClassification ||
+      !previous?.sheetClassification ||
+      previous.code !== order.code ||
+      previous.contract !== order.contract ||
+      nameKey(previous.service) !== nameKey(order.service)
+    )
+      return order;
+    // A raw daily upload has no Sheets verdict. Don't undo a reviewed attendance.
+    retainedClassifications++;
+    return { ...order, sheetClassification: previous.sheetClassification };
+  });
+  return { rows, newRows, retainedClassifications };
+}
+
 export function vtOrdersLayout(matrix: unknown[][]) {
   for (const [at, row] of matrix.slice(0, 20).entries()) {
     const keys = row.map(header);
