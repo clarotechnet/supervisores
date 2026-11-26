@@ -34,7 +34,8 @@ import {
   VT_CITIES,
   VT_IMPORT_LABELS,
   VT_SHEET_RULES,
-  vtOrderMatchesCategory,
+  vtFilterOrderDetails,
+  vtOrderServiceOptions,
   vtSeconds,
   vtTeamPayments,
   vtTeamScope,
@@ -117,6 +118,7 @@ export function VtRevisitas() {
   const [orderMetric, setOrderMetric] = useState<VtOrderMetric>("all");
   const category = orderMetric === "revisit-rate" ? "revisit" : orderMetric;
   const [search, setSearch] = useState("");
+  const [service, setService] = useState("");
   const [rowLimit, setRowLimit] = useState(75);
   const [rulesByPeriod, setRulesByPeriod] = useState<Record<string, VtRules>>({});
   const { links, setLink, hasUnsavedLinks } = useVtAttendanceLinks(user?.id, city, month);
@@ -183,17 +185,10 @@ export function VtRevisitas() {
       ),
     [team.rows, techLogin, area, dateFrom, dateTo],
   );
+  const serviceOptions = useMemo(() => vtOrderServiceOptions(currentRows), [currentRows]);
   const detail = useMemo(
-    () =>
-      currentRows.filter(
-        (r) =>
-          vtOrderMatchesCategory(r, category) &&
-          (!search ||
-            nameKey(`${r.os} ${r.wo} ${r.contract} ${r.neighborhood} ${r.service}`).includes(
-              nameKey(search),
-            )),
-      ),
-    [currentRows, category, search],
+    () => vtFilterOrderDetails(currentRows, { category, search, service }),
+    [currentRows, category, search, service],
   );
   const chartModel = useMemo(
     () => vtChartModel(currentRows, classified, month, dateFrom, dateTo),
@@ -238,6 +233,7 @@ export function VtRevisitas() {
     setDateTo("");
     changeOrderMetric("all");
     setSearch("");
+    setService("");
   }
   function changeScope(nextCity: VtCity, nextMonth: string) {
     if (!/^20\d{2}-(0[1-9]|1[0-2])$/.test(nextMonth)) return;
@@ -352,14 +348,21 @@ export function VtRevisitas() {
     <VtRevisitasOrders
       rows={detail}
       rowLimit={rowLimit}
+      exportScope={{ city, month, technician: activeTech?.name ?? "" }}
       search={search}
       category={category}
+      service={service}
+      serviceOptions={serviceOptions}
       inCharts={inCharts}
       onSearch={(value) => {
         setSearch(value);
         setRowLimit(75);
       }}
       onCategory={changeOrderMetric}
+      onService={(value) => {
+        setService(value);
+        setRowLimit(75);
+      }}
       onMore={() => setRowLimit((n) => n + 75)}
     />
   );
@@ -647,8 +650,9 @@ export function VtRevisitas() {
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
                 {view === "orders" && "Clique em um indicador para filtrar a tabela. "}
-                Taxa = revisitas produtivas ÷ O.S. produtivas. Expurgadas não somam revisita e podem
-                permanecer na base de produtivas, como no Sheets.
+                Taxa = revisitas produtivas ÷ O.S. produtivas. Expurgadas não entram nas produtivas,
+                improdutivas nem revisitas. Preventiva Indoor I segue a baixa e não gera revisita.
+                Trocas de equipamento streaming não somam produtivas.
               </p>
               {classified.length > team.rows.length && (
                 <p className="mt-1 text-xs text-muted-foreground">
@@ -668,8 +672,8 @@ export function VtRevisitas() {
               )}
               {sheetRows > 0 && (
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {number.format(sheetRows)} O.S. do recorte com classificação importada do Sheets.
-                  {sheetRows < currentRows.length && " As demais seguem o cálculo por contrato."}
+                  {number.format(sheetRows)} O.S. do recorte têm classificação informada no XLSX do
+                  Sheets. As regras do painel para preventivas e expurgos prevalecem.
                 </p>
               )}
             </>
@@ -694,11 +698,13 @@ export function VtRevisitas() {
                   setTech(login);
                   changeOrderMetric(area ? "revisit" : "all");
                   setSearch("");
+                  setService("");
                 }}
                 onArea={(selected) => {
                   setArea(selected);
                   changeOrderMetric("revisit");
                   setSearch("");
+                  setService("");
                 }}
               />
             )}

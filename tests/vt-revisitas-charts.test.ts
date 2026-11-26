@@ -29,7 +29,7 @@ describe("Gráficos de revisitas VT", () => {
       order("1", "2026-11-01"),
       order("2", "2026-11-03", { technician: "Bia Teste" }),
       order("3", "2026-11-01", { code: 302, time: "07:00:00" }),
-      order("4", "2026-11-03", { technician: "Bia Teste", contract: "B", expunge: true }),
+      order("4", "2026-11-03", { technician: "Bia Teste", contract: "B", code: 473 }),
       order("5", "2026-11-10", { contract: "C" }),
       order("6", "2026-11-01", { code: 0, contract: "CANCELADO" }),
     ]);
@@ -69,6 +69,29 @@ describe("Gráficos de revisitas VT", () => {
     expect(vtChartMetrics(model.total)).toContainEqual(["O.S. canceladas", 1, "cancelled"]);
     expect(vtChartModel(base, base, "2026-11", "", "").to).toBe("2026-11-10");
     expect(vtMonthEnd("2028-02")).toBe("2028-02-29");
+  });
+
+  it("mostra O.S. expurgadas apenas no indicador de expurgadas e no total do recorte", () => {
+    const rows = classifyVtOrders([
+      order("produtiva", "2026-11-01", { contract: "P" }),
+      order("improdutiva", "2026-11-01", { contract: "I", code: 106 }),
+      order("expurgada-204", "2026-11-01", { contract: "E1", code: 204 }),
+      order("expurgada-conferida", "2026-11-01", {
+        contract: "E2",
+        code: 583,
+        sheetClassification: { expunged: true, improductive: true, revisited: true },
+      }),
+    ]);
+    const model = vtChartModel(rows, rows, "2026-11", "", "");
+    expect(vtChartMetrics(model.total)).toEqual([
+      ["O.S. no recorte", 4, "all"],
+      ["O.S. produtivas", 1, "productive"],
+      ["Revisitas produtivas", 0, "revisit"],
+      ["Taxa de revisita", "0,00%", "revisit-rate"],
+      ["O.S. improdutivas", 1, "improductive"],
+      ["O.S. canceladas", 0, "cancelled"],
+      ["O.S. expurgadas", 2, "expunge"],
+    ]);
   });
 
   it("reconhece abreviações, não mistura municípios e informa bairros não localizados", () => {

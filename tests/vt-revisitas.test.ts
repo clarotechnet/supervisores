@@ -10,8 +10,10 @@ import {
   prepareVtOrderImport,
   VT_SHEET_RULES,
   vtDate,
+  vtFilterOrderDetails,
   vtOrderKey,
   vtOrderMatchesCategory,
+  vtOrderServiceOptions,
   vtPayments,
   vtSeconds,
   vtSummaries,
@@ -80,6 +82,43 @@ const registered = (
 ): QualityLogin => ({ login, full_name, city, sector, supervisor: "" });
 
 describe("Revisitas VT", () => {
+  it("lista serviços sem duplicar grafias e combina o filtro de serviço com classificação e busca", () => {
+    const rows = classifyVtOrders([
+      order("1", "2026-11-25", 203, "C1", {
+        neighborhood: "TIROL",
+        service: "VISITA TECNICA - VIRTUA",
+      }),
+      order("2", "2026-11-24", 540, "C2", {
+        neighborhood: "TIROL",
+        service: "Visita Técnica - Virtua",
+      }),
+      order("3", "2026-11-23", 570, "C3", {
+        neighborhood: "TIROL",
+        service: "MANUTENCAO PREVENTIVA INDOOR I",
+      }),
+      order("4", "2026-11-22", 204, "C4", {
+        neighborhood: "IGAPO",
+        service: " VISITA TECNICA -  VIRTUA ",
+      }),
+      order("5", "2026-11-21", 517, "C5", { service: "" }),
+    ]);
+    expect(vtOrderServiceOptions(rows)).toEqual([
+      { value: "MANUTENCAO PREVENTIVA INDOOR I", label: "MANUTENCAO PREVENTIVA INDOOR I" },
+      { value: "VISITA TECNICA - VIRTUA", label: "VISITA TECNICA - VIRTUA" },
+    ]);
+    const filters = {
+      category: "expunge",
+      search: "Tírol",
+      service: "VISITA TECNICA - VIRTUA",
+    } as const;
+    expect(vtFilterOrderDetails(rows, filters).map((row) => row.os)).toEqual(["1"]);
+    expect(vtFilterOrderDetails(rows, { ...filters, service: "" }).map((row) => row.os)).toEqual([
+      "1",
+      "3",
+    ]);
+    expect(vtFilterOrderDetails(rows, { category: "all", search: "", service: "" })).toEqual(rows);
+  });
+
   it("só paga logins VT da cidade, mas preserva o retorno feito pela Adesão", () => {
     const directory = [
       registered("Z1", "Ana Rodrigues de Almeida"),
@@ -243,9 +282,17 @@ describe("Revisitas VT", () => {
     expect(rows.find((r) => r.os === "3")).toMatchObject({ productive: true, revisited: false });
     expect(vtSummaries(rows, () => "Total")[0]).toMatchObject({ productive: 4, revisits: 1 });
   });
-  it.each([516, 302, 570, 0, 1])(
-    "não usa manutenção preventiva indoor I como retorno com baixa %i",
-    (code) => {
+  it.each([
+    [516, "productive"],
+    [510, "productive"],
+    [302, "improductive"],
+    [106, "improductive"],
+    [570, "expunge"],
+    [0, "cancelled"],
+    [1, "cancelled"],
+  ] as const)(
+    "classifica a preventiva com baixa %i na categoria %s sem contar o retorno como revisita",
+    (code, category) => {
       const original = order("original", "2026-11-13", 516);
       const preventive = order("preventiva", "2026-11-16", code, "C1", {
         service: "  Manutenção Preventiva  Indoor I  ",
@@ -253,14 +300,17 @@ describe("Revisitas VT", () => {
       const rows = classifyVtOrders([preventive, original]);
       expect(rows.find((r) => r.os === original.os)).toMatchObject({
         productive: true,
+        expunged: false,
         revisited: false,
         returnOs: "",
       });
       expect(rows.find((r) => r.os === preventive.os)).toMatchObject({
-        productive: code > 400,
-        improductive: code === 302,
-        cancelled: code === 0 || code === 1,
+        productive: category === "productive",
+        improductive: category === "improductive",
+        expunged: category === "expunge",
+        cancelled: category === "cancelled",
         revisited: false,
+        returnOs: "",
       });
     },
   );
@@ -273,7 +323,11 @@ describe("Revisitas VT", () => {
         service: "MANUTENCAO PREVENTIVA INDOOR I",
       }),
     ]);
-    expect(vtSummaries(rows, () => "Total")[0]).toMatchObject({ productive: 2, revisits: 0 });
+    expect(vtSummaries(rows, () => "Total")[0]).toMatchObject({
+      productive: 2,
+      expunged: 0,
+      revisits: 0,
+    });
     expect(rows.find((r) => r.os === "original")?.returnOs).toBe("");
   });
   it("preserva um retorno técnico válido depois de uma preventiva sem contá-lo duas vezes", () => {
@@ -287,9 +341,104 @@ describe("Revisitas VT", () => {
     expect(rows.filter((r) => r.revisited).map((r) => [r.os, r.returnOs])).toEqual([
       ["original", "retorno"],
     ]);
-    expect(vtSummaries(rows, () => "Total")[0]).toMatchObject({ productive: 3, revisits: 1 });
+    expect(vtSummaries(rows, () => "Total")[0]).toMatchObject({
+      productive: 3,
+      expunged: 0,
+      revisits: 1,
+    });
   });
-  it("considera 400 improdutivo, expurgo entra no volume e retorno improdutivo não conta", () => {
+  it("mantém a visita de 08/11 como retorno de 04/11 apesar do cancelamento fora da janela", () => {
+    const contract = "3618480";
+    const rows = classifyVtOrders([
+      order("original", "2026-11-04", 538, contract),
+      order("retorno", "2026-11-08", 516, contract, { service: "VISITA TECNICA STREAMING" }),
+      order("preventiva", "2026-11-13", 302, contract, {
+        service: "MANUTENCAO PREVENTIVA INDOOR I",
+      }),
+      order("cancelada", "2026-11-16", 1, contract),
+    ]);
+    expect(rows.find((r) => r.os === "original")).toMatchObject({
+      productive: true,
+      revisited: true,
+      returnOs: "retorno",
+    });
+    expect(rows.filter((r) => vtOrderMatchesCategory(r, "productive")).map((r) => r.os)).toEqual([
+      "retorno",
+      "original",
+    ]);
+    expect(rows.find((r) => r.os === "preventiva")).toMatchObject({
+      expunged: false,
+      productive: false,
+      improductive: true,
+      revisited: false,
+    });
+  });
+  it("mantém a baixa 106 de uma visita comum como improdutiva mesmo com retorno cancelado", () => {
+    const rows = classifyVtOrders([
+      order("baixa106", "2026-11-11", 106),
+      order("cancelada", "2026-11-12", 1),
+    ]);
+    expect(rows.find((r) => r.os === "baixa106")).toMatchObject({
+      improductive: true,
+      expunged: false,
+      productive: false,
+    });
+  });
+  it("usa a baixa da preventiva mesmo com expurgo, improdutividade ou revisita marcados no XLSX", () => {
+    const service = "MANUTENCAO PREVENTIVA INDOOR I";
+    const rows = classifyVtOrders([
+      order("baixa510", "2026-11-13", 510, "C1", {
+        service,
+        sheetClassification: { improductive: false, expunged: true, revisited: false },
+      }),
+      order("baixa516", "2026-11-13", 516, "C2", {
+        service,
+        sheetClassification: { improductive: true, expunged: false, revisited: true },
+      }),
+      order("baixa302", "2026-11-13", 302, "C3", {
+        service,
+        sheetClassification: { improductive: false, expunged: false, revisited: true },
+      }),
+    ]);
+    expect(rows.filter((r) => vtOrderMatchesCategory(r, "productive")).map((r) => r.code)).toEqual([
+      516, 510,
+    ]);
+    expect(
+      rows.filter((r) => vtOrderMatchesCategory(r, "improductive")).map((r) => r.code),
+    ).toEqual([302]);
+    expect(vtSummaries(rows, () => "Total")[0]).toMatchObject({
+      productive: 2,
+      improductive: 1,
+      expunged: 0,
+      revisits: 0,
+    });
+  });
+  it("não inclui troca de equipamento streaming nas produtivas nem no cálculo de revisitas", () => {
+    const rows = classifyVtOrders([
+      order("original", "2026-11-18", 517),
+      order("troca", "2026-11-20", 516, "C1", {
+        service: " Troca de  Equipamento Streaming ",
+        sheetClassification: { improductive: false, expunged: false, revisited: true },
+      }),
+      order("retorno", "2026-11-21", 516, "C1", { service: "VISITA TECNICA STREAMING" }),
+    ]);
+    expect(rows.find((r) => r.os === "troca")).toMatchObject({
+      productive: false,
+      improductive: false,
+      revisited: false,
+      returnOs: "",
+    });
+    expect(rows.find((r) => r.os === "original")).toMatchObject({
+      revisited: true,
+      returnOs: "retorno",
+    });
+    expect(vtSummaries(rows, () => "Total")[0]).toMatchObject({
+      orders: 3,
+      productive: 2,
+      revisits: 1,
+    });
+  });
+  it("considera 400 improdutivo e separa expurgos do volume produtivo", () => {
     const rows = classifyVtOrders([
       order("1", "2026-11-01", 400, "BOUND"),
       order("2", "2026-11-02", 516, "BOUND"),
@@ -303,9 +452,9 @@ describe("Revisitas VT", () => {
     ]);
     const get = (os: string) => rows.find((r) => r.os === os);
     expect(get("1")).toMatchObject({ improductive: true, productive: false, revisited: false });
-    expect(get("3")).toMatchObject({ expunged: true, productive: true, revisited: false });
+    expect(get("3")).toMatchObject({ expunged: true, productive: false, revisited: false });
     expect(get("5")).toMatchObject({ revisited: false });
-    expect(get("7")).toMatchObject({ expunged: true, productive: true });
+    expect(get("7")).toMatchObject({ expunged: false, productive: false, improductive: true });
     expect(get("8")).toMatchObject({ revisited: false });
   });
   it("separa os códigos 0 e 1 de improdutivas, produtivas e expurgadas", () => {
@@ -331,7 +480,11 @@ describe("Revisitas VT", () => {
       });
     }
     expect(rows.find((r) => r.os === "1")).toMatchObject({ productive: true, revisited: false });
-    expect(rows.find((r) => r.os === "3")).toMatchObject({ expunged: true, revisited: false });
+    expect(rows.find((r) => r.os === "3")).toMatchObject({
+      expunged: false,
+      productive: true,
+      revisited: false,
+    });
     expect(
       rows.filter((r) => vtOrderMatchesCategory(r, "improductive")).map((r) => r.code),
     ).toEqual([400]);
@@ -342,40 +495,84 @@ describe("Revisitas VT", () => {
       revisits: 0,
       improductive: 1,
       cancelled: 2,
-      expunged: 1,
+      expunged: 0,
     });
   });
-  it.each([570, 203, 204, 112])(
-    "só expurga automaticamente a baixa %s com próxima O.S. do contrato",
+  it.each([203, 204, 570, 473, 583])(
+    "expurga a baixa %s sem retorno, inclusive de planilha antiga",
     (code) => {
-      const initial = order("1", "2026-11-01", code, "C1");
-      const next = order("2", "2026-11-02", 517, "C1");
-      expect(classifyVtOrders([initial])[0]).toMatchObject({
-        expunged: false,
-        improductive: code <= 400,
-      });
-      expect(classifyVtOrders([next, initial]).find((r) => r.os === "1")).toMatchObject({
-        productive: true,
-        improductive: false,
-        expunged: true,
-        revisited: false,
+      const rows = classifyVtOrders([
+        order("relatorio", "2026-11-24", code, "C1"),
+        order("planilha", "2026-11-24", code, "C2", {
+          sheetClassification: { expunged: false, improductive: true, revisited: true },
+        }),
+      ]);
+      for (const row of rows) {
+        expect(vtOrderMatchesCategory(row, "all")).toBe(true);
+        expect(vtOrderMatchesCategory(row, "expunge")).toBe(true);
+        expect(vtOrderMatchesCategory(row, "productive")).toBe(false);
+        expect(vtOrderMatchesCategory(row, "improductive")).toBe(false);
+        expect(vtOrderMatchesCategory(row, "revisit")).toBe(false);
+      }
+      expect(vtSummaries(rows, () => "Total")[0]).toMatchObject({
+        orders: 2,
+        productive: 0,
+        improductive: 0,
+        expunged: 2,
+        revisits: 0,
       });
     },
   );
-  it("considera a limpeza de ruído no contrato para o expurgo", () => {
+  it.each([549, 540])("mantém produtiva a Visita Técnica – Virtua com baixa %s", (code) => {
+    const service = " Visita Técnica - Virtua ";
+    const rows = classifyVtOrders([
+      order("visita", "2026-11-23", code, "C1", { service }),
+      order("cancelada", "2026-11-24", 1, "C1"),
+      order("importada", "2026-11-23", code, "C2", {
+        service,
+        sheetClassification: { expunged: false, improductive: true, revisited: false },
+      }),
+    ]);
+    expect(
+      rows
+        .filter((r) => r.productive)
+        .map((r) => r.os)
+        .sort(),
+    ).toEqual(["importada", "visita"]);
+    expect(rows.every((r) => !r.expunged)).toBe(true);
+  });
+  it("não expurga fora da lista por limpeza de ruído, retorno ou marcação antiga", () => {
     const cleaning = { service: "Limpeza de Ruído Indoor" };
     const rows = classifyVtOrders([
       order("1", "2026-11-01", 106, "C1", cleaning),
       order("2", "2026-11-02", 517, "C1"),
       order("3", "2026-11-01", 517, "C2"),
       order("4", "2026-11-02", 106, "C2", cleaning),
+      order("antiga-112", "2026-11-01", 112, "C3", {
+        sheetClassification: { expunged: true, improductive: false, revisited: false },
+      }),
+      order("retorno-112", "2026-11-02", 517, "C3"),
     ]);
-    expect(
-      rows
-        .filter((r) => r.expunged)
-        .map((r) => r.os)
-        .sort(),
-    ).toEqual(["1", "3"]);
+    expect(rows.some((r) => r.expunged)).toBe(false);
+    expect(rows.find((r) => r.os === "antiga-112")).toMatchObject({
+      improductive: true,
+      productive: false,
+    });
+  });
+  it("ignora expurgos no vínculo sem bloquear um retorno produtivo real", () => {
+    const rows = classifyVtOrders([
+      order("original", "2026-11-01", 517, "C1"),
+      order("expurgada-1", "2026-11-02", 203, "C1"),
+      order("retorno", "2026-11-03", 516, "C1"),
+      order("expurgada-2", "2026-11-04", 204, "C1"),
+      order("sem-retorno", "2026-11-01", 517, "C2", {
+        sheetClassification: { revisited: true, expunged: false, improductive: false },
+      }),
+      order("unico-expurgo", "2026-11-03", 583, "C2"),
+    ]);
+    expect(rows.filter((r) => r.revisited).map((r) => [r.os, r.returnOs])).toEqual([
+      ["original", "retorno"],
+    ]);
   });
   it("usa Prod, Improd e Expurgadas do Sheets sem recalcular as ordens conferidas", () => {
     const columns = [...heading, "Mês", "Equipe", "Prod", "Improd", "Expurgadas"];
@@ -403,11 +600,12 @@ describe("Revisitas VT", () => {
       exp,
     ];
     const lines = [
-      item("1", "01/11/2026", 203, 0, 1, 0),
-      item("2", "02/11/2026", 517, 0, 0, 0),
-      item("3", "03/11/2026", 570, 1, 0, 0),
-      item("4", "04/11/2026", 106, 0, 0, 1),
-      item("5", "04/11/2026", 0, 0, 1, 0),
+      item("1", "01/11/2026", 302, 0, 1, 0),
+      item("2", "02/11/2026", 302, 0, 0, 0),
+      item("3", "03/11/2026", 517, 1, 0, 0),
+      item("4", "04/11/2026", 473, 0, 1, 1),
+      item("8", "05/11/2026", 517, 0, 0, 0),
+      item("5", "06/11/2026", 0, 0, 1, 1),
       item("6", "01/10/2026", 517, null, 0, 0),
       item("7", "04/11/2026", 517, null, 0, 0, "Natal"),
     ];
@@ -420,14 +618,24 @@ describe("Revisitas VT", () => {
     expect(classifiedByOs.get("3")).toMatchObject({
       productive: true,
       revisited: true,
-      returnOs: "4",
+      returnOs: "8",
       expunged: false,
     });
-    expect(classifiedByOs.get("4")).toMatchObject({ productive: true, expunged: true });
-    expect(classifiedByOs.get("5")).toMatchObject({ cancelled: true, improductive: false });
+    expect(classifiedByOs.get("4")).toMatchObject({
+      productive: false,
+      improductive: false,
+      expunged: true,
+    });
+    expect(classifiedByOs.get("5")).toMatchObject({
+      cancelled: true,
+      improductive: false,
+      expunged: false,
+    });
     expect(vtSummaries(classified, () => "Total")[0]).toMatchObject({
-      orders: 5,
+      orders: 6,
       productive: 3,
+      improductive: 1,
+      expunged: 1,
       revisits: 1,
     });
     expect(() =>
@@ -519,7 +727,7 @@ describe("Revisitas VT", () => {
   it.each(["FORTALEZA", "NATAL", "PARNAMIRIM"])(
     "mantém a O.S. conferida como improdutiva ao reimportar o relatório bruto de %s",
     (municipality) => {
-      const raw = order("1", "2026-11-12", 203, "C1", { municipality });
+      const raw = order("1", "2026-11-12", 517, "C1", { municipality });
       const checked = {
         ...raw,
         sheetClassification: { revisited: false, improductive: true, expunged: false },
@@ -743,11 +951,19 @@ it.skipIf(!batchDir)(
 const samples = process.env["VT_XLSX_SAMPLE_DIR"];
 describe.skipIf(!samples)("XLSX fornecidos (leitura, sem copiar dados para o repositório)", () => {
   it.each([
-    ["revisitas_Fortaleza.xlsx", "fortaleza", 63, 47],
-    ["Revisitas_Natal_Parnamirim.xlsx", "natal", 110, 64],
+    [
+      "revisitas_Fortaleza.xlsx",
+      "fortaleza",
+      { orders: 63, productive: 43, improductive: 1, expunged: 4, cancelled: 15, revisits: 0 },
+    ],
+    [
+      "Revisitas_Natal_Parnamirim.xlsx",
+      "natal",
+      { orders: 110, productive: 58, improductive: 35, expunged: 7, cancelled: 10, revisits: 0 },
+    ],
   ] as const)(
-    "valida %s e suas O.S. produtivas",
-    async (name, city, count, productive) => {
+    "valida %s e o total de O.S. por classificação",
+    async (name, city, totals) => {
       const bytes = await readFile(join(samples!, name));
       const result = await readVtWorkbook(
         new File([Uint8Array.from(bytes)], name),
@@ -755,15 +971,15 @@ describe.skipIf(!samples)("XLSX fornecidos (leitura, sem copiar dados para o rep
         city,
         "2026-11",
       );
-      expect(result.rows).toHaveLength(count);
+      expect(result.rows).toHaveLength(totals.orders);
       const unmapped = (result.rows as VtOrder[]).filter((row) => !vtMapArea(row)?.point);
       // "B VISTA" could stand for either Bela Vista or Boa Vista / Castelão.
       expect([...new Set(unmapped.map((row) => row.neighborhood))]).toEqual(
         city === "fortaleza" ? ["B VISTA"] : [],
       );
-      expect(classifyVtOrders(result.rows as VtOrder[]).filter((r) => r.productive)).toHaveLength(
-        productive,
-      );
+      expect(
+        vtSummaries(classifyVtOrders(result.rows as VtOrder[]), () => "Total")[0],
+      ).toMatchObject(totals);
     },
     20000,
   );
