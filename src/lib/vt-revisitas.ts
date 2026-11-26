@@ -460,6 +460,47 @@ export function vtOrderMatchesCategory(order: VtClassified, category: VtOrderCat
   return category === "all" || order[orderCategoryFlag[category]];
 }
 
+export function vtOrderClassification(row: VtClassified) {
+  if (row.cancelled) return "Cancelada";
+  if (row.expunged) return "Expurgada";
+  if (row.revisited) return "Revisita produtiva";
+  if (row.improductive) return "Improdutiva";
+  return row.productive ? "Produtiva" : "Fora da produtividade VT";
+}
+
+export interface VtOrderServiceOption {
+  value: string;
+  label: string;
+}
+
+export function vtOrderServiceOptions(rows: readonly Pick<VtOrder, "service">[]) {
+  const options = new Map<string, VtOrderServiceOption>();
+  for (const { service } of rows) {
+    const value = nameKey(service);
+    if (value && !options.has(value)) {
+      options.set(value, { value, label: service.trim().replace(/\s+/g, " ") });
+    }
+  }
+  return [...options.values()].sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
+}
+
+export function vtFilterOrderDetails(
+  rows: readonly VtClassified[],
+  { category, search, service }: { category: VtOrderCategory; search: string; service: string },
+) {
+  const query = nameKey(search);
+  const serviceKey = nameKey(service);
+  return rows.filter(
+    (row) =>
+      vtOrderMatchesCategory(row, category) &&
+      (!serviceKey || nameKey(row.service) === serviceKey) &&
+      (!query ||
+        nameKey(`${row.os} ${row.wo} ${row.contract} ${row.neighborhood} ${row.service}`).includes(
+          query,
+        )),
+  );
+}
+
 export function vtArea(order: VtOrder): string {
   if (!order.neighborhood) return "";
   // Preserve homonymous neighborhoods in the two municipalities of the Natal region.
@@ -468,10 +509,12 @@ export function vtArea(order: VtOrder): string {
     : order.neighborhood;
 }
 
-const expungeWithFollowup = new Set([570, 203, 204, 112]);
-const noiseRemoval = (order: VtOrder) => nameKey(order.service) === "LIMPEZA DE RUIDO INDOOR";
+const expungedCodes = new Set([203, 204, 570, 473, 583]);
+const productiveVirtuaCodes = new Set([549, 540]);
 const isPreventiveIndoor = (order: VtOrder) =>
   nameKey(order.service) === "MANUTENCAO PREVENTIVA INDOOR I";
+const isStreamingEquipmentSwap = (order: VtOrder) =>
+  nameKey(order.service) === "TROCA DE EQUIPAMENTO STREAMING";
 
 function inVtRevisitWindow(day: string, followupDay?: string) {
   if (!followupDay || followupDay.slice(0, 7) !== day.slice(0, 7)) return false;
@@ -479,7 +522,7 @@ function inVtRevisitWindow(day: string, followupDay?: string) {
   return gap > 0 && gap <= 9;
 }
 
-/** Preserves the Sheets thresholds, but matches subsequent visits by contract and timestamp. */
+/** Applies VT exclusions before counting productivity or matching returns by contract. */
 export function classifyVtOrders(orders: readonly VtOrder[]): VtClassified[] {
   const buckets = new Map<string, VtOrder[]>();
   for (const order of orders) {
@@ -494,54 +537,62 @@ export function classifyVtOrders(orders: readonly VtOrder[]): VtClassified[] {
       (a, b) =>
         a.day.localeCompare(b.day) || a.time.localeCompare(b.time) || a.id.localeCompare(b.id),
     );
+    const preventiveIndoor = list.map(isPreventiveIndoor);
+    const equipmentSwap = list.map(isStreamingEquipmentSwap);
+    // Preventivas seguem a baixa; marcações antigas de expurgo também são reavaliadas.
+    const sheetFlags = list.map((order, i) =>
+      preventiveIndoor[i] || order.sheetClassification?.expunged
+        ? undefined
+        : order.sheetClassification,
+    );
     const outcomes = list.map((order, i) => {
-      const next = list[i + 1];
-      const cancelled = order.code === 0 || order.code === 1;
-      const sheet = order.sheetClassification;
-      // A revisita cancelada (1) continua expurgando a O.S. anterior, não a si mesma.
-      const expunged =
+      const expunged = expungedCodes.has(order.code);
+      const cancelled = !expunged && (order.code === 0 || order.code === 1);
+      const productiveVirtua =
+        productiveVirtuaCodes.has(order.code) &&
+        nameKey(order.service) === "VISITA TECNICA - VIRTUA";
+      const improductive =
+        !expunged &&
         !cancelled &&
-        (sheet?.expunged ??
-          (order.expunge ||
-            (!!next &&
-              (expungeWithFollowup.has(order.code) ||
-                noiseRemoval(order) ||
-                noiseRemoval(next) ||
-                next.code === 1))));
-      const improductive = !cancelled && (sheet?.improductive ?? (!expunged && order.code <= 400));
-      return { cancelled, expunged, improductive, productive: !cancelled && !improductive };
+        !productiveVirtua &&
+        (sheetFlags[i]?.improductive ?? order.code <= 400);
+      const productive = !cancelled && !expunged && !improductive && !equipmentSwap[i];
+      return { cancelled, expunged, improductive, productive };
     });
-    // Preserve the full sequence for productivity and expurgo; skip preventive visits only for revisits.
-    const preventive = list.map(isPreventiveIndoor);
+    // Mesmo produtiva, a preventiva não inicia nem confirma um vínculo de revisita.
+    const skipForRevisit = outcomes.map(
+      (outcome, i) => outcome.expunged || equipmentSwap[i] || preventiveIndoor[i],
+    );
     const nextForRevisit = new Array<number>(list.length + 1).fill(list.length);
     for (let i = list.length - 1; i >= 0; i--) {
-      nextForRevisit[i] = preventive[i + 1] ? nextForRevisit[i + 1]! : i + 1;
+      nextForRevisit[i] = skipForRevisit[i + 1] ? nextForRevisit[i + 1]! : i + 1;
     }
     list.forEach((order, i) => {
       const outcome = outcomes[i]!;
       const nextIndex = nextForRevisit[i]!;
       const next = list[nextIndex];
       const inWindow = inVtRevisitWindow(order.day, next?.day);
+      const laterIndex = nextForRevisit[nextIndex]!;
+      const laterInWindow = inVtRevisitWindow(order.day, list[laterIndex]?.day);
       const automatic = Boolean(
         order.code >= 400 &&
         inWindow &&
         nameKey(order.description) !== "CANCELAMENTO" &&
         outcomes[nextIndex]?.productive &&
-        (outcomes[nextForRevisit[nextIndex]!]?.productive ?? true),
+        (!laterInWindow || outcomes[laterIndex]?.productive),
       );
-      const sheetRevisit = order.sheetClassification?.revisited;
-      const onlyPreventiveReturn =
+      const sheetRevisit = sheetFlags[i]?.revisited;
+      const onlyExcludedReturn =
         sheetRevisit === true &&
-        !preventive[i] &&
+        !skipForRevisit[i] &&
         !inWindow &&
         list
           .slice(i + 1, nextIndex)
           .some((following) => inVtRevisitWindow(order.day, following.day));
       const revisited =
         outcome.productive &&
-        !outcome.expunged &&
-        !preventive[i] &&
-        !onlyPreventiveReturn &&
+        !skipForRevisit[i] &&
+        !onlyExcludedReturn &&
         (sheetRevisit ?? automatic);
       records.push({
         ...order,
